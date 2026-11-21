@@ -31,15 +31,18 @@ local COMPUTER, TURTLE = "computercraft:computer_advanced", "computercraft:turtl
 
 -- What each kind of turtle is made of. "@sapling" is replaced by the base's
 -- configured sapling. Loadout is handed to the new turtle in this order, so a
--- forester's saplings land in slot 1.
+-- forester's saplings land in slot 1. `optional` items are handed over only if
+-- storage has them: without a wireless modem the turtle talks through a wired
+-- modem at its home slot instead.
+local WIRELESS = { "computercraft:wireless_modem_normal", 1, optional = true }
 C.ROLES = {
   miner = {
     upgrades = { "minecraft:diamond_pickaxe", C.SCANNER_ITEM },
-    loadout = { { "computercraft:wireless_modem_normal", 1 }, { "minecraft:coal", 32 } },
+    loadout = { WIRELESS, { "minecraft:coal", 32 } },
   },
   forester = {
     upgrades = { "minecraft:diamond_pickaxe", "minecraft:compass" },
-    loadout = { { "@sapling", 16 }, { "computercraft:wireless_modem_normal", 1 }, { "minecraft:coal", 16 } },
+    loadout = { { "@sapling", 16 }, WIRELESS, { "minecraft:coal", 16 } },
   },
 }
 
@@ -66,8 +69,10 @@ function C.parts(role, sapling)
     for _, item in pairs(step.grid) do need[item] = (need[item] or 0) + 1 end
   end
   for _, l in ipairs(C.ROLES[role].loadout) do
-    local item = l[1] == "@sapling" and sapling or l[1]
-    need[item] = (need[item] or 0) + l[2]
+    if not l.optional then
+      local item = l[1] == "@sapling" and sapling or l[1]
+      need[item] = (need[item] or 0) + l[2]
+    end
   end
   return need
 end

@@ -400,8 +400,19 @@ local function turtleEnv(T)
   env.write = env.print
   env.read = function() return "0" end
   env.sleep = function() yield() end
+  -- a block next to the turtle, by side (left/right are its upgrade slots)
+  local function adjacent(side)
+    if side == "top" then return W.get(T.x, T.y + 1, T.z) end
+    if side == "bottom" then return W.get(T.x, T.y - 1, T.z) end
+    local h = side == "front" and T.h or side == "back" and (T.h + 2) % 4
+    if h then local d = DIRS[h]; return W.get(T.x + d[1], T.y, T.z + d[2]) end
+  end
+  local function ptype(side)
+    if side == "left" or side == "right" then return PTYPE[T[side] or ""] end
+    if adjacent(side) == "computercraft:wired_modem_full" then return "modem" end
+  end
   env.peripheral = {
-    getType = function(side) return PTYPE[T[side] or ""] end,
+    getType = ptype,
     find = function(t)
       for _, side in ipairs({ "left", "right" }) do
         if PTYPE[T[side] or ""] == t then
@@ -429,7 +440,7 @@ local function turtleEnv(T)
     clock = function() return W.clock end,
   }, { __index = os })
   env.rednet = {
-    open = function(side) assert(PTYPE[T[side] or ""] == "modem", "rednet.open: no modem on " .. side); T.rednet = true end,
+    open = function(side) assert(ptype(side) == "modem", "rednet.open: no modem on " .. side); T.rednet = true end,
     close = function() T.rednet = false end,
     send = function(to, msg) assert(T.rednet, "rednet not open"); bus.deliver(T.id, msg) end,
     broadcast = function(msg) assert(T.rednet, "rednet not open"); bus.deliver(T.id, msg) end,
@@ -542,12 +553,14 @@ newInv("minecraft:trapped_chest_0", 0, 1, 0)
 -- storage barrels (no position needed: only reached over the network)
 newInv("minecraft:barrel_0"); newInv("minecraft:barrel_1")
 -- the miner home slot: 4 east of the build spot, facing north, chest behind it
+-- and a wired modem (cabled to the base) in front of it: no wireless modems
 newInv("minecraft:chest_0", 4, 0, 0)
+W.set(4, 0, -2, "computercraft:wired_modem_full")
 
 local stockParts = {
   { "minecraft:gold_ingot", 40 }, { "minecraft:redstone", 5 }, { "minecraft:glass_pane", 5 },
   { "minecraft:chest", 5 }, { "minecraft:diamond_pickaxe", 1 }, { "advancedperipherals:geo_scanner", 1 },
-  { "computercraft:wireless_modem_normal", 2 }, { "minecraft:coal", 64 },
+  { "minecraft:coal", 64 },
 }
 for _, p in ipairs(stockParts) do W.inv["minecraft:barrel_0"].insert(p[1], p[2]) end
 
@@ -559,7 +572,8 @@ for _, name in ipairs(manifest.turtle) do A.files[name] = repoFile(name) end
 A.files["agent.cfg"] = ser({ role = "assembler", base = 0 })
 
 -- ----------------------------------------------------------------- run it --
-print("scenario: the base builds a miner, it installs itself, walks home and fills a stock rule")
+print("scenario: the base builds a miner (no wireless modems: wired at home), it installs itself,")
+print("          flies home and fills a stock rule")
 bootTurtle(A)
 local function runUntil(cond, maxTicks)
   for tick = 1, maxTicks do
@@ -599,6 +613,10 @@ if M then
   check(M.x == 4 and M.y == 0 and M.z == -1 and M.h == 0,
     ("walked to its home slot facing north (%d,%d,%d h%d)"):format(M.x, M.y, M.z, M.h))
   check(cfg.home and cfg.home.y == 64, "home Y recorded from the base config")
+  local wireless = false
+  for i = 1, 16 do if M.inv[i] and M.inv[i].name:find("wireless") then wireless = true end end
+  check(not wireless and M.left ~= "computercraft:wireless_modem_normal", "it has no wireless modem: talks over the wired one at home")
+  check(F.orders[1].arrived and F.homesTaken.miner[1] == 2, "its reserved home slot now belongs to it")
 end
 check((stock()["minecraft:raw_iron"] or 0) >= 6, "raw iron drained into storage: " .. tostring(stock()["minecraft:raw_iron"]))
 check(W.inv["minecraft:chest_0"].count("minecraft:raw_iron") == 0, "home chest emptied by the base")

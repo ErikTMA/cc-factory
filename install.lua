@@ -42,7 +42,8 @@ local function writeTable(path, t)
 end
 
 writeTable("/agent.cfg", { base = inst.base, role = inst.role, order = inst.order,
-                           trees = inst.trees, wait = inst.wait, needsHome = true })
+                           trees = inst.trees, wait = inst.wait, needsHome = true,
+                           slot = inst.slot, homeY = inst.homeY })
 local v = fs.open("/version", "w")
 v.write(inst.version)
 v.close()

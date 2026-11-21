@@ -208,6 +208,19 @@ local function failOrder(F, o, why)
   F.note = ("Build #%d failed: %s"):format(o.id, why)
 end
 
+-- First free home slot for `role`, claimed for `owner` (a turtle id, or
+-- "order:<n>" while the turtle is still being built). nil if none is free.
+local function claimHome(F, role, owner)
+  F.homesTaken[role] = F.homesTaken[role] or {}
+  local taken = F.homesTaken[role]
+  for i, slot in ipairs(F.cfg.homes[role] or {}) do
+    if taken[i] == nil or taken[i] == owner then
+      taken[i] = owner
+      return i, slot
+    end
+  end
+end
+
 -- The assembler's side of a build: it reports, we stage and say what's next.
 local function handleAssembler(F, from, msg)
   local o = activeOrder(F)
@@ -218,9 +231,16 @@ local function handleAssembler(F, from, msg)
   if msg.state == "idle" then
     if not o or o.state ~= "queued" then return { type = "ok" } end
     if next(M.missingParts(F, o.role)) then return { type = "ok" } end
-    o.state, o.assembler, o.step = "building", from, 1
+    -- the new turtle gets its home slot with its install data: it can fly there
+    -- without talking first (there may be no modem at the build spot)
+    local index, slot = claimHome(F, o.role, "order:" .. o.id)
+    if not index then
+      F.note = ("No free %s home slot: add one to factory.cfg"):format(o.role)
+      return { type = "ok" }
+    end
+    o.state, o.assembler, o.step, o.home = "building", from, 1, index
     F.deps.writeInstall({ role = o.role, order = o.id, trees = F.cfg.forester.trees,
-                          wait = F.cfg.forester.wait })
+                          wait = F.cfg.forester.wait, slot = copy(slot), homeY = F.cfg.build.y })
     local steps = C.buildSteps(o.role)
     local ok, why = stage(F, stepItems(steps[1]))
     if not ok then failOrder(F, o, why); return { type = "ok" } end
@@ -240,10 +260,13 @@ local function handleAssembler(F, from, msg)
     return { type = "place", order = o.id }
   elseif msg.state == "placed" then
     local items, list = {}, {}
+    local stock = F.deps.storage.list()
     for _, l in ipairs(C.ROLES[o.role].loadout) do
       local item = l[1] == "@sapling" and F.cfg.forester.sapling or l[1]
-      items[item] = (items[item] or 0) + l[2]
-      list[#list + 1] = { item, l[2] }
+      if not l.optional or (stock[item] or 0) >= l[2] then
+        items[item] = (items[item] or 0) + l[2]
+        list[#list + 1] = { item, l[2] }
+      end
     end
     local ok, why = stage(F, items)
     if not ok then failOrder(F, o, why); return { type = "abort" } end
@@ -260,17 +283,10 @@ end
 -- A new turtle asks where it lives: the first free home slot for its role.
 local function assignHome(F, from, msg)
   local role = msg.role
-  for _, o in ipairs(F.orders) do
-    if o.id == msg.order then o.arrived = true end -- now counted as a turtle itself
-  end
-  F.homesTaken[role] = F.homesTaken[role] or {}
-  local taken = F.homesTaken[role]
-  for i, slot in ipairs(F.cfg.homes[role] or {}) do
-    if taken[i] == nil or taken[i] == from then
-      taken[i] = from
-      F.note = ("%s goes to %s home %d"):format(label(F, from), role, i)
-      return { type = "home", home = copy(slot), y = F.cfg.build.y, index = i }
-    end
+  local i, slot = claimHome(F, role, from)
+  if i then
+    F.note = ("%s goes to %s home %d"):format(label(F, from), role, i)
+    return { type = "home", home = copy(slot), y = F.cfg.build.y, index = i }
   end
   F.note = ("No free %s home slot for %s: add one to factory.cfg"):format(role, label(F, from))
   return { type = "wait" }
@@ -287,6 +303,19 @@ function M.handle(F, from, msg)
                       delivered = msg.total or prev.delivered }
   local t = F.turtles[from]
   local reply = { type = "ok" }
+
+  -- a built turtle reporting for the first time: its order is done, and its
+  -- reserved home slot now belongs to it. (`buildOrder` is the order a turtle
+  -- was built by; the assembler's `order` is the build it is working on.)
+  if msg.buildOrder then
+    for _, o in ipairs(F.orders) do
+      if o.id == msg.buildOrder and not o.arrived then
+        o.arrived = true
+        local taken = F.homesTaken[o.role] or {}
+        if o.home and taken[o.home] == "order:" .. o.id then taken[o.home] = from end
+      end
+    end
+  end
 
   if msg.state == "new" then
     reply = assignHome(F, from, msg)

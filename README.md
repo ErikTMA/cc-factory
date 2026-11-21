@@ -1,117 +1,150 @@
 # cc-factory — a self-growing ComputerCraft turtle factory (ATM10)
 
-Work in progress: see [PLAN.md](PLAN.md). What works today is below.
+A base computer with a touch monitor runs a turtle factory:
 
-## Ore miners
+- **Ore miners** dig a shaft to a Y level and mine only the ore they were
+  asked for (Advanced Peripherals Geo Scanner), then unload into their chest.
+- **Foresters** run a tree farm and deliver logs.
+- **Stock rules** ("keep 256 raw iron") queue mining jobs on their own.
+- **Fleet targets** ("3 miners") make the base **build new turtles**: an
+  assembler turtle crafts them from parts in storage, places them, and they
+  install themselves from a disk, fly to a home slot and start working.
+- **Code updates** come from this repository: press UPDATE on the base and
+  every turtle gets the new version the next time it is home.
 
-Mining turtles with an Advanced Peripherals Geo Scanner, dispatched from a
-base computer with a touch monitor. Any number of turtles: queue jobs on the
-monitor ("32 iron", "8 diamond", "all ores at Y -20"), and each turtle that is
-home takes the next job, digs a shaft down to the job's Y level, mines only the
-ore it was asked for (nearest first, so it follows veins), comes up to unload
-into its own chest and reports back.
+Built and tested for ATM10 8.6 (Minecraft 1.21.1, CC: Tweaked 1.120.2,
+Advanced Peripherals 0.8.2a). Facts it relies on were checked against those
+jars; see [PLAN.md](PLAN.md).
 
-Verified against the GamePortal ATM10 8.6 server: CC: Tweaked 1.120.2, Advanced
-Peripherals 0.8.2a, Geo Scanner config `scanBlocksMaxFreeRadius = 8`,
-`scanBlocksCooldown = 2000` ms. No KubeJS overrides for these recipes.
+## Quick start
 
-## Items
+1. Place an **advanced computer** with a **wireless modem** and an **advanced
+   monitor** (4 wide × 3 high is comfortable). This is the base.
+2. On it run:
 
-Per turtle:
+   ```
+   wget run https://raw.githubusercontent.com/ErikTMA/cc-factory/main/bootstrap.lua
+   ```
 
-| Craft | Recipe |
+   It downloads everything and starts the base. It writes `/factory.cfg` with
+   defaults on first start: `edit factory.cfg` to set things up, then reboot.
+3. Add turtles (by hand, or let the base build them — see below).
+
+## Turtles
+
+| Role | Turtle | Notes |
+|---|---|---|
+| miner | Advanced Turtle + Diamond Pickaxe + **Geo Scanner** | wireless modem + coal in its inventory, chest behind its home spot |
+| forester | Advanced Turtle + Diamond Pickaxe + **Compass** | saplings in slot 1, wireless modem + coal, chest behind, a lane of dirt/grass spots (see `forester.lua`) |
+| assembler | Advanced Turtle + **Crafting Table** + **Wireless Modem** | builds the others (see below) |
+
+Upgrades are crafted next to the turtle in a crafting grid (pickaxe left of
+the turtle, scanner/compass right of it, both in one craft).
+
+**Installing a turtle by hand** (built turtles install themselves): on the
+turtle run
+
+```
+wget run https://raw.githubusercontent.com/ErikTMA/cc-factory/main/bootstrap.lua miner
+```
+
+(or `forester` / `assembler`). It pins itself to the first base that answers.
+A miner set up by hand asks for its Y once (F3); a forester needs its saplings
+in slot 1 first.
+
+### Recipes (verified against the pack)
+
+| Item | Recipe |
 |---|---|
-| Advanced Computer | 7 gold ingot, 1 redstone dust, 1 glass pane |
-| Advanced Turtle | 7 gold ingot, 1 Advanced Computer, 1 wooden chest |
-| Diamond Pickaxe | 3 diamond, 2 stick |
-| Wired Modem | 8 stone, 1 redstone dust |
-| Wired Modem (full block) | 1 Wired Modem, crafted on its own |
-| Peripheral Casing | 4 iron ingot, 4 iron bars, 1 block of redstone |
-| Observer | 6 cobblestone, 2 redstone dust, 1 nether quartz |
-| Geo Scanner | 4 diamond, 1 Wired Modem (full block), 1 Peripheral Casing, 2 block of redstone, 1 Observer |
-| Wireless Modem (goes in its inventory) | 8 stone, 1 ender pearl |
+| Advanced Computer | 7 gold ingot, 1 redstone, 1 glass pane |
+| Advanced Turtle | 7 gold ingot, 1 Advanced Computer, 1 chest |
+| Geo Scanner | 4 diamond, 1 Wired Modem (full block), 1 Peripheral Casing, 2 redstone block, 1 observer |
+| Peripheral Casing | 4 iron ingot, 4 iron bars, 1 redstone block |
+| Wired Modem / full block | 8 stone + 1 redstone; then craft it alone |
+| Wireless Modem | 8 stone, 1 ender pearl |
+| Advanced Monitor ×4 | 8 gold ingot, 1 glass pane |
 
-Assemble: **Advanced Turtle + Diamond Pickaxe**, then **+ Geo Scanner**. Plus a
-chest behind its home spot, and coal.
+## The base's network
 
-Base: 1 Advanced Computer, Advanced Monitors (8 gold + 1 glass pane makes 4;
-4 wide × 3 high is comfortable), 1 Wireless Modem.
+Connect these to the base with **wired modems and cable**. The base tells
+them apart by block type, nothing to configure:
 
-## Files
-
-| File | Goes on |
+| Block | Use |
 |---|---|
-| `oreconf.lua` | mining turtles **and** base (shared presets and protocol) |
-| `tmove.lua` | every turtle (journaled moves, see below) |
-| `oreminer.lua`, `startup.lua` | each mining turtle |
-| `forester.lua`, `startup.lua` | each forester turtle |
-| `base.lua` | base computer (`shell.run("base")` in its startup to auto-start) |
+| **barrels** | storage (or an AE2 **ME Bridge** / RS **RS Bridge** instead) |
+| **chests** | turtle home chests: the base drains them into storage every 10 s |
+| **trapped chest** | the assembler's supply chest |
+| **disk drive** (with a floppy) | the installer disk, under the build spot |
 
-## Forester
+## Building turtles automatically
 
-A tree-farm turtle: an Advanced Turtle with a Diamond Pickaxe (it breaks wood
-fine) and a **Compass** (craft the turtle with a plain compass; Advanced
-Peripherals turns it into a compass upgrade). Saplings in **slot 1** (top
-left) — only that kind is planted; bone meal in slot 2 is optional.
+```
+        [trapped chest]          <- supply chest (wired to the base)
+        [  assembler  ] -> [build spot]   (keep empty)
+                           [disk drive]   <- under the build spot, with a floppy
+```
 
-Place it with a chest behind it and a lane of air in front, with dirt/grass on
-both sides of the lane every 3 blocks (`forester.lua` has a diagram). Run
-`forester [spots per side] [seconds between rounds]` (default 6 and 300). Each
-round it plants empty spots, fells grown trees (including sideways branches)
-and replants, then empties wood into the chest, keeping 16 logs for fuel.
+- The assembler faces the build spot. The disk drive must be **under the build
+  spot**, not next to the assembler (a computer boots from an attached disk).
+- Put the parts in storage. Per turtle: 14 gold ingots, 1 redstone, 1 glass
+  pane, 1 chest, 1 diamond pickaxe, a Geo Scanner (miner) or compass
+  (forester), 1 wireless modem, coal (and 16 saplings for a forester).
+- In `factory.cfg` set `build.y` (Y of the build spot), the home slots, and the
+  fleet:
+
+  ```lua
+  build = { y = 64 },
+  homes = {
+    miner = { { east = 4, north = 0, facing = "north" },
+              { east = 6, north = 0, facing = "north" } },
+  },
+  fleet = { miner = 2 },
+  ```
+
+  A home slot is an offset from the build spot. Build each slot yourself: a
+  chest (wired to the base) behind the spot, room in front. New turtles fly 3
+  blocks above the build spot to get there and never dig inside the base.
+- The FACTORY tab shows what each role still needs and has a BUILD button.
+
+## Stock rules
+
+```lua
+rules = {
+  { item = "minecraft:raw_iron", min = 256, job = { only = "iron", y = 16, quantity = 64 } },
+  { item = "minecraft:diamond", min = 32, job = { only = "diamond", y = -58, quantity = 16 } },
+},
+```
+
+When storage holds less than `min`, the base queues the job (once; the next
+one when it is done and stock is still low). Miners dig with a pickaxe, so
+rules are about the drops: `raw_iron`, `raw_gold`, `raw_copper`, `diamond`,
+`coal`, `redstone`, `lapis_lazuli`, `emerald`.
+
+## The monitor
+
+- **TURTLES**: every turtle (role, state, job, mined, fuel, last seen) and
+  what is being fetched per ore. Tap a turtle, then STOP to call it home.
+- **JOBS**: pick an ore (sets its best Y), Y, quantity, "only <ore>" or "all
+  ores", then START. Every press queues one job; idle miners take them.
+- **FACTORY**: storage kind, code version, UPDATE, stock rules, fleet and
+  builds.
 
 ## Restarts
 
-Every turtle move is journaled (`tmove.lua`): before moving it records its fuel
-level, and since a move costs exactly one fuel, after a server restart it knows
-whether the last move happened. Turns cost no fuel, so the facing is measured
-again on resume — by the Geo Scanner on mining turtles, by the compass on
-foresters. Without this a turtle stopped mid-move ends up one block off for
-good and empties its inventory onto the ground instead of into the chest.
+Every turtle move is journaled (`tmove.lua`): before moving it records its
+fuel, and since a move costs exactly one fuel it knows after a restart whether
+the move happened. Turns are free, so the heading is measured again on resume
+(Geo Scanner or compass). Miners never unload without a chest in front.
 
-## Use
-
-1. Place each turtle at the surface near the base (within wireless range,
-   ideally in a row facing the same way) with a chest directly **behind** it,
-   coal and a wireless modem in its inventory.
-2. On each turtle, first time: `oreminer serve`. It asks its Y (F3), works out
-   which way it faces, and from then on waits for jobs. `startup.lua` brings it
-   back to that after restarts, resuming a half-done job first.
-3. On the base: `base`. Tap an ore (sets its best Y; adjust with -8/-1/+1/+8),
-   pick the quantity, "only <ore>" or "all ores", then **START**. Press START
-   again to queue more jobs; each idle turtle takes the next one.
-4. The monitor lists every turtle (state, job, mined, fuel, last seen) and a
-   per-ore summary (mined in total, how many turtles on it, how many queued).
-   Tap a turtle, then **STOP**, to call it home — it gets the message the next
-   time it comes up to unload. With no turtle selected the button cancels the
-   last queued job.
-
-Turtles only talk to the base while at home (swapping the modem in for the
-scanner), so the status updates when they come up to unload or finish.
-
-Each job gets its own sector (lanes) at its Y level, so turtles never mine the
-same area twice. Turtles don't know absolute coordinates, so this assumes their
-homes are close together.
-
-Without the base, a turtle can still be run by hand:
-`oreminer diamond`, `oreminer diamond qty=32`, `oreminer y=-30 only=osmium`,
-options `at=<Y> lanes=<n> length=<n>`.
-
-It only works while its chunk is loaded: stay nearby or force-load the area.
-It never digs computers, turtles, chests, barrels, shulkers or spawners.
-
-## Test
+## Tests
 
 ```bash
-docker run --rm -v "$PWD":/w -w /w/test nickblah/lua:5.2 lua sim.lua ../oreminer.lua
-docker run --rm -v "$PWD":/w -w /w/test nickblah/lua:5.2 lua forester_sim.lua ../forester.lua
+test/run.sh
 ```
 
-Runs the turtle and base programs unmodified against a simulated world,
-turtles, Geo Scanner, equipment swaps and rednet: hand runs in all four
-directions, interrupt + resume, trips home when full, protected blocks, the
-shaft to a target Y with an ore filter, a fleet of 3 turtles taking 3 queued
-jobs at once (exact quantities, separate sectors, monitor output), STOP from
-the base, and a server stop right after a move or a turn. The forester harness
-grows trees over time and with bone meal and covers felling with branches,
-replanting, fuel from logs, and restarts mid-tree and mid-turn.
+Three offline harnesses (Lua 5.2 in Docker) run the real programs against a
+simulated world: the miner and dispatcher (hand runs, resume, service trips,
+fleets, STOP, server stops mid-move/turn), the forester, and the **whole
+factory** — base with real storage over fake barrels/chests, the assembler
+crafting the way CC does, a new turtle booting from the installer disk,
+flying home, filling a stock rule, and taking a code update.

@@ -85,7 +85,7 @@ function T.toHomeSlot()
   local cfg = link.config()
   refuel()
   while not cfg.slot do
-    local r = link.talk("new", { order = cfg.order })
+    local r = link.talk("new")
     if r and r.type == "home" then
       cfg.slot, cfg.homeY = r.home, r.y
       link.saveConfig(cfg)

@@ -1,9 +1,11 @@
 -- link: every turtle's connection to the base computer.
 --
--- Turtles only talk to the base while at home. A turtle whose upgrade slots are
--- both in use (pickaxe + Geo Scanner, pickaxe + compass) keeps a wireless modem
--- in its inventory and swaps it in for the second upgrade just for the talk.
--- A turtle with a modem equipped permanently (the assembler) just uses it.
+-- Turtles only talk to the base while at home, through the first of:
+--   1. a modem equipped as an upgrade (e.g. the assembler's wireless modem)
+--   2. a modem block next to it at home (top, bottom, front or back), e.g. a
+--      wired modem cabled to the base: no ender pearls needed
+--   3. a wireless modem from its inventory, swapped in for the Geo Scanner or
+--      compass just for the talk
 --
 -- talk(state, extra) sends a status and returns the base's reply. Replies may
 -- carry a code update (the turtle writes the files and reboots) or a new role.
@@ -79,8 +81,17 @@ end
 -- Items a turtle must never unload: its modem and the upgrade it swaps.
 function L.isKeptItem(name) return C.MODEM_ITEMS[name] or SWAPPABLE[name] or false end
 
+-- A modem block next to the turtle (wired or wireless). Left and right are a
+-- turtle's upgrade slots, so only these sides can be blocks.
+local function adjacentModem()
+  for _, side in ipairs({ "front", "back", "top", "bottom" }) do
+    if peripheral.getType(side) == "modem" then return side end
+  end
+end
+
 function L.hasModem()
-  return L.equippedSide("modem") ~= nil or L.findItem(function(n) return C.MODEM_ITEMS[n] end) ~= nil
+  return L.equippedSide("modem") ~= nil or adjacentModem() ~= nil
+      or L.findItem(function(n) return C.MODEM_ITEMS[n] end) ~= nil
 end
 
 -- Put the borrowed upgrade back if the modem is in its place (e.g. after a
@@ -96,7 +107,7 @@ end
 
 -- Run fn() with a wireless modem equipped and rednet open; nil if no modem.
 function L.withModem(fn)
-  local side = L.equippedSide("modem")
+  local side = L.equippedSide("modem") or adjacentModem()
   local swapped = false
   if not side then
     local slot = L.findItem(function(n) return C.MODEM_ITEMS[n] end)
@@ -146,7 +157,8 @@ function L.talk(state, extra, updates)
   local cfg = L.config()
   local reply = L.withModem(function()
     local msg = { type = "status", state = state, label = os.getComputerLabel(),
-                  role = cfg.role, version = L.version(), fuel = turtle.getFuelLevel(),
+                  role = cfg.role, buildOrder = cfg.order, version = L.version(),
+                  fuel = turtle.getFuelLevel(),
                   equipment = equipment() }
     for k, v in pairs(extra or {}) do msg[k] = v end
     if cfg.base then rednet.send(cfg.base, msg, C.PROTOCOL) else rednet.broadcast(msg, C.PROTOCOL) end

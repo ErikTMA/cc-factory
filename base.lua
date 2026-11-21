@@ -212,9 +212,13 @@ for k, v in pairs(factory.DEFAULT_CONFIG) do if config[k] == nil then config[k] 
 local manifest = fs.exists("/manifest.lua") and dofile("/manifest.lua")
 local release = manifest and dist.load(manifest, "/dist")
 
-local wireless = peripheral.find("modem", function(_, m) return m.isWireless() end)
-if not wireless then error("Attach a wireless modem", 0) end
-rednet.open(peripheral.getName(wireless))
+-- talk to turtles over every modem: wireless, and wired (turtles at home
+-- slots with a wired modem next to them, cabled to this network)
+local modems = 0
+for _, name in ipairs(peripheral.getNames()) do
+  if peripheral.getType(name) == "modem" then rednet.open(name); modems = modems + 1 end
+end
+if modems == 0 then error("Attach a modem (wired and/or wireless)", 0) end
 
 local F = factory.new(config, {
   storage = storage.open(peripheral),

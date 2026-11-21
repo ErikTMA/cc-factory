@@ -1,12 +1,14 @@
 -- bootstrap: install or update cc-factory on the base computer from GitHub.
 --
--- First time, on the base computer:
+-- On the base computer (first time; later the base's UPDATE button runs it):
 --   wget run https://raw.githubusercontent.com/ErikTMA/cc-factory/main/bootstrap.lua
--- Later, the base's UPDATE button runs it again.
+-- It downloads the base files into / and the turtle files into /dist (the base
+-- hands those to turtles over rednet), and makes the base start on boot.
 --
--- It fetches the newest commit, downloads the base files into / and the turtle
--- files into /dist (the base hands those to turtles), and makes the base start
--- on boot. Turtles never need http.
+-- On a turtle you set up by hand (built ones install from the disk):
+--   wget run https://raw.githubusercontent.com/ErikTMA/cc-factory/main/bootstrap.lua miner
+-- (or forester / assembler). It installs the turtle files, sets the role and
+-- reboots; the turtle pins itself to the first base that answers it.
 
 local REPO = "ErikTMA/cc-factory"
 local BRANCH = "main"
@@ -38,11 +40,26 @@ local function write(path, content)
   f.close()
 end
 
+local args = { ... }
+local role = args[1]
+if turtle and not role then error("On a turtle, give its role: bootstrap miner|forester|assembler", 0) end
+
 local ref = latestCommit()
 local function raw(name) return get(("https://raw.githubusercontent.com/%s/%s/%s"):format(REPO, ref, name)) end
 
 print("cc-factory: fetching " .. ref:sub(1, 12))
 local manifest = load(raw("manifest.lua"), "manifest", "t", {})()
+
+if role then
+  local files = {}
+  for _, name in ipairs(manifest.turtle) do files["/" .. name] = raw(name) end
+  for path, content in pairs(files) do write(path, content) end
+  local cfg = fs.exists("/agent.cfg") and textutils.unserialize(fs.open("/agent.cfg", "r").readAll()) or {}
+  cfg.role = role
+  write("/agent.cfg", textutils.serialize(cfg))
+  print(("cc-factory %s installed as %s. Rebooting."):format(ref:sub(1, 12), role))
+  os.reboot()
+end
 
 -- download everything first, write after: a failed download changes nothing
 local files = {}
