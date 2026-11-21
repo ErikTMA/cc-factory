@@ -35,6 +35,11 @@ local CFG = {
   reach = 32,        -- never further than this from where it started (x and z) ...
   height = 16,       -- ... and up/down
   maxSearch = 20000, -- cells one path search may visit before it gives up
+  maxUnknown = 12,   -- a planned way may cross at most this many unknown cells
+                     -- (enough to go over a ~5-high wall, not to "tunnel" through
+                     -- earth that has never been seen)
+  unknownCost = 3,   -- an unknown cell counts as this many steps when planning
+  maxTries = 3,      -- give up on a side after its way was blocked this often
   maxSteps = 4000,
   minFuel = 100,     -- refuel from its inventory below this
   askMargin = 150,   -- go ask the base for fuel while this much above the need is left
@@ -331,17 +336,30 @@ end
 -- and of every open cell next to a network block (a home spot is such a cell:
 -- its chest is one further).
 local given = {} -- sides it gave up on (no way there)
+local tries = {} -- [side] = times its way was blocked
 local function nextToNetwork(x, y, z)
   for _, n in ipairs(SIX) do
     if isNetwork(MAP[key(x + n[1], y + n[2], z + n[3])] or nil) then return true end
   end
   return false
 end
+-- a chest can only be a home if a network block is within 2 of it (others,
+-- e.g. a player's storage wall, are not worth looking at)
+local function nearNetwork(x, y, z)
+  for dx = -2, 2 do for dy = -2, 2 do for dz = -2, 2 do
+    if math.abs(dx) + math.abs(dy) + math.abs(dz) <= 2 and isNetwork(MAP[key(x + dx, y + dy, z + dz)] or nil) then
+      return true
+    end
+  end end end
+  return false
+end
+
 local function unseenSides()
   local want = {}
   for k, name in pairs(MAP) do
     local x, y, z = unkey(k)
-    if (name and (isNetwork(name) or isHomeChest(name))) or (name == false and nextToNetwork(x, y, z)) then
+    if (name and isNetwork(name)) or (name and isHomeChest(name) and nearNetwork(x, y, z))
+       or (name == false and nextToNetwork(x, y, z)) then
       for _, n in ipairs(SIX) do
         local nx, ny, nz = x + n[1], y + n[2], z + n[3]
         local nk = key(nx, ny, nz)
@@ -358,30 +376,45 @@ local function breathe()
   os.pullEvent("surveyor_yield")
 end
 
--- Shortest way (breadth-first, every step costs 1) from here to a cell next
--- to one of `targets`, through open air and through unknown cells (treated as
--- open until seen), inside the bounds, visiting at most CFG.maxSearch cells.
--- Returns the moves, or nil.
+-- Cheapest way from here to a cell next to one of `targets`: known open air
+-- costs 1 a step, an unknown cell (treated as open until seen) costs
+-- CFG.unknownCost, and a way may cross at most CFG.maxUnknown unknown cells:
+-- it goes over walls, but doesn't imagine tunnels through earth it never saw.
+-- Inside the bounds, visiting at most CFG.maxSearch cells.
+-- Returns the moves and the target side it goes to see, or nil.
 local function planToSee(targets)
   local start = key(S.pos.x, S.pos.y, S.pos.z)
-  local prev, queue, head = { [start] = false }, { start }, 1
-  while queue[head] and head <= CFG.maxSearch do
-    if head % 2000 == 0 then breathe() end
-    local cur = queue[head]
-    head = head + 1
-    local x, y, z = unkey(cur)
-    for _, n in ipairs(SIX) do
-      local nx, ny, nz = x + n[1], y + n[2], z + n[3]
-      local nk = key(nx, ny, nz)
-      if targets[nk] and cur ~= start then
-        local moves, k = {}, cur
-        while prev[k] do table.insert(moves, 1, prev[k][2]); k = prev[k][1] end
-        return moves
-      end
-      if prev[nk] == nil and (MAP[nk] == false or MAP[nk] == nil) and not blocked[nk] and not targets[nk]
-         and inBounds(nx, ny, nz) then
-        prev[nk] = { cur, n[4] }
-        queue[#queue + 1] = nk
+  local prev, cost, unk = { [start] = false }, { [start] = 0 }, { [start] = 0 }
+  local buckets, at, visited = { [0] = { start } }, 0, 0
+  local maxCost = 0
+  while at <= maxCost and visited <= CFG.maxSearch do
+    local bucket = buckets[at]
+    local cur = bucket and table.remove(bucket)
+    if not cur then
+      at = at + 1
+    elseif cost[cur] == at then -- (skip stale entries)
+      visited = visited + 1
+      if visited % 2000 == 0 then breathe() end
+      local x, y, z = unkey(cur)
+      for _, n in ipairs(SIX) do
+        local nx, ny, nz = x + n[1], y + n[2], z + n[3]
+        local nk = key(nx, ny, nz)
+        if targets[nk] and cur ~= start then
+          local moves, k = {}, cur
+          while prev[k] do table.insert(moves, 1, prev[k][2]); k = prev[k][1] end
+          return moves, nk
+        end
+        local open, unknown = MAP[nk] == false, MAP[nk] == nil
+        if (open or unknown) and not blocked[nk] and not targets[nk] and inBounds(nx, ny, nz) then
+          local u = unk[cur] + (unknown and 1 or 0)
+          local c = at + (unknown and CFG.unknownCost or 1)
+          if u <= CFG.maxUnknown and (cost[nk] == nil or c < cost[nk]) then
+            cost[nk], unk[nk], prev[nk] = c, u, { cur, n[4] }
+            buckets[c] = buckets[c] or {}
+            table.insert(buckets[c], nk)
+            if c > maxCost then maxCost = c end
+          end
+        end
       end
     end
   end
@@ -394,6 +427,7 @@ end
 
 -- Walk a planned way, looking around at every cell; stop as soon as the next
 -- cell turns out not to be open (then it plans again with what it learned).
+-- Returns true when it got all the way.
 local function walkSeeing(moves)
   for _, how in ipairs(moves) do
     local nk = cellAfter(how)
@@ -402,10 +436,11 @@ local function walkSeeing(moves)
       -- and stop instead of planning the same way forever
       error("surveyor: unseen cell next to me at " .. nk, 0)
     end
-    if MAP[nk] ~= false then return end
-    if not stepTo(how) then blocked[nk] = true; return end
+    if MAP[nk] ~= false then return false end
+    if not stepTo(how) then blocked[nk] = true; return false end
     look()
   end
+  return true
 end
 
 local function explore()
@@ -414,7 +449,7 @@ local function explore()
   while (S.steps or 0) < CFG.maxSteps do
     local targets = unseenSides()
     if next(targets) == nil then break end
-    local moves = planToSee(targets)
+    local moves, target = planToSee(targets)
     if not moves then
       for k in pairs(targets) do given[k] = true end -- no way to any of them
       break
@@ -432,7 +467,11 @@ local function explore()
     end
     if fuelled ~= "replan" then
       local before = S.steps or 0
-      walkSeeing(moves)
+      if not walkSeeing(moves) and MAP[target] == nil then
+        -- the way there was blocked: after a few tries this side is out of reach
+        tries[target] = (tries[target] or 0) + 1
+        if tries[target] >= CFG.maxTries then given[target] = true end
+      end
       if (S.steps or 0) == before and #moves > 0 and fuel() < 1 then break end
     end
   end

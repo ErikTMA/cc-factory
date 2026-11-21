@@ -1403,6 +1403,38 @@ do
   check(T2.fuel == 5 and (T2.files["ask.out"] or ""):find("modem is off"), "off the network: no fuel, and why: " .. tostring(T2.files["ask.out"]))
 end
 
+print("scenario: a cable buried in the ground and a chest wall nearby: the survey ends, it")
+print("          doesn't try to tunnel in its head or look at chests far from the network")
+do
+  local ox, oz = 700, 400
+  for x = ox - 20, ox + 20 do for z = oz - 20, oz + 40 do for y = -6, -1 do W.set(x, y, z, "minecraft:stone") end end end
+  W.set(ox, 0, oz, "computercraft:computer_advanced")
+  W.set(ox, 0, oz + 1, "computercraft:wired_modem_full")          -- behind the computer, on the ground
+  W.set(ox, -1, oz + 1, "computercraft:cable")                     -- then down into the ground
+  for z = oz + 1, oz + 20 do W.set(ox, -2, z, "computercraft:cable") end -- buried
+  W.set(ox, -1, oz + 21, "computercraft:cable")
+  W.set(ox, 0, oz + 21, "computercraft:wired_modem_full")         -- up at the home
+  newInv("minecraft:chest_90", ox, 0, oz + 23)                   -- home spot (ox,0,oz+22)
+  -- a player's chest wall right next to the base, not on the network
+  for x = ox - 12, ox - 1 do for y = 0, 1 do W.set(x, y, oz - 1, "minecraft:chest") end end
+  local T = surveyorOnTop(90, ox, oz, 32)
+  local maxZ, minX = oz, ox
+  bootTurtle(T)
+  local ok = runUntil(function()
+    maxZ, minX = math.max(maxZ, T.z), math.min(minX, T.x)
+    return T.files["surveyor.state"] and T.files["surveyor.state"]:find("done")
+  end, 400000)
+  local st = textutils.unserialize(T.files["surveyor.state"] or "{}") or {}
+  check(ok, "the survey finished")
+  check((st.steps or 0) < 400, "in a bounded number of steps: " .. tostring(st.steps))
+  check(minX > ox - 6, "didn't walk along the chest wall: furthest west " .. (minX - ox))
+  -- (a cable buried all the way can't be followed without digging: that home
+  -- is registered with $home or `home <role>`, as SETUP says)
+  check(homeAt("minecraft:chest_90") == nil, "the home behind a fully buried cable is not guessed")
+  check(T.x == ox and T.y == 1 and T.z == oz, "back on the computer")
+  check((T.files["surveyor.log"] or ""):find("out of reach"), "reports the buried sides as out of reach")
+end
+
 print("scenario: a modem that only touches a turtle goes off when it leaves; one with a barrel stays on")
 do
   local function probe(id, x, withBarrel)
