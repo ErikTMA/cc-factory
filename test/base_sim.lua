@@ -133,36 +133,70 @@ env.shell = { run = function() return true end }
 env.dofile = function(p) return assert(load(assert(files[norm(p)], p), p, "t", env))() end
 env.require = function(name) return assert(load(assert(files[name .. ".lua"], name), name, "t", env))() end
 
-print("scenario: base.lua boots and runs (no monitor, no chat box, wired modem only)")
-local main = coroutine.create(function() return assert(load(files["base.lua"], "base", "t", env))() end)
-local ok, err = coroutine.resume(main)
-local steps, crashed = 0, nil
-if not ok then crashed = err end
--- drive: deliver queued events, else fire the next timer; a turtle talks at step 50
-while not crashed and coroutine.status(main) ~= "dead" and steps < 3000 do
-  steps = steps + 1
-  local ev
-  if steps == 50 then
-    ev = { "rednet_message", 7, { type = "status", state = "idle", role = "miner", label = "miner-7", fuel = 500 }, "oreminer" }
-  elseif #queue > 0 then
-    ev = table.remove(queue, 1)
-  else
-    local id, at
-    for tid, t in pairs(timers) do if not at or t < at then id, at = tid, t end end
-    if not id then break end
-    timers[id] = nil
-    clock = math.max(clock, at)
-    ev = { "timer", id }
-  end
-  ok, err = coroutine.resume(main, table.unpack(ev))
+-- GitHub's latest commit (the auto-updater asks it)
+local githubSha = nil
+env.http = { get = function()
+  if not githubSha then return nil end
+  return { readAll = function() return '{"sha": "' .. githubSha .. '"}' end, close = function() end }
+end }
+
+-- Boot base.lua and drive it: queued events first, else the next timer. A
+-- turtle talks at step 50; `during(step)` may change the world. Returns the
+-- error that ended it (nil = still running), steps and the sim clock.
+local function boot(maxSteps, during)
+  queue, timers, clock, sent = {}, {}, 0, {}
+  local main = coroutine.create(function() return assert(load(files["base.lua"], "base", "t", env))() end)
+  local ok, err = coroutine.resume(main)
+  local steps, crashed = 0, nil
   if not ok then crashed = err end
+  while not crashed and coroutine.status(main) ~= "dead" and steps < maxSteps do
+    steps = steps + 1
+    if during then during(steps) end
+    local ev
+    if steps == 50 then
+      ev = { "rednet_message", 7, { type = "status", state = "idle", role = "miner", label = "miner-7", fuel = 500 }, "oreminer" }
+    elseif #queue > 0 then
+      ev = table.remove(queue, 1)
+    else
+      local id, at
+      for tid, t in pairs(timers) do if not at or t < at then id, at = tid, t end end
+      if not id then break end
+      timers[id] = nil
+      clock = math.max(clock, at)
+      ev = { "timer", id }
+    end
+    ok, err = coroutine.resume(main, table.unpack(ev))
+    if not ok then crashed = err end
+  end
+  return crashed, steps, coroutine.status(main)
 end
+
+print("scenario: base.lua boots and runs (no monitor, no chat box, wired modem only)")
+files["release"] = "aaa"
+githubSha = "aaa"
+local crashed, steps, status = boot(3000)
 check(not crashed, "no crash: " .. tostring(crashed))
-check(steps >= 3000 or coroutine.status(main) ~= "dead", "still running after " .. steps .. " events")
+check(steps >= 3000 or status ~= "dead", "still running after " .. steps .. " events")
 check(clock >= 30, ("ran through %d s of ticks"):format(clock))
 check(#sent >= 1 and sent[1].to == 7 and sent[1].msg.type == "ok", "answered the turtle")
 check(files["base.state"] ~= nil, "saved its state")
 check(files["factory.cfg"] ~= nil, "wrote factory.cfg with defaults on first start")
+
+print("scenario: new files copied in while it runs: the updater restarts it (no download)")
+files["release"] = "aaa"
+githubSha = "bbb"
+local downloads = 0
+env.shell.run = function(p) if p:find("bootstrap") then downloads = downloads + 1 end; return true end
+crashed = boot(20000, function(step) if step == 10 then files["release"] = "bbb" end end)
+check(crashed == "REBOOT", "it rebooted into the new files: " .. tostring(crashed))
+check(downloads == 0, "without downloading again")
+
+print("scenario: a newer commit on GitHub, nothing on disk: it downloads and restarts")
+files["release"] = "bbb"
+githubSha = "ccc"
+downloads = 0
+crashed = boot(20000)
+check(downloads == 1 and crashed == "REBOOT", ("downloaded %d time(s), then: %s"):format(downloads, tostring(crashed)))
 
 print(failures == 0 and "ALL PASSED" or (failures .. " FAILURE(S)"))
 os.exit(failures == 0 and 0 or 1)

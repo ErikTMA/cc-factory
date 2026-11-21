@@ -365,13 +365,24 @@ local function installedRelease()
   return r
 end
 
+-- the release this base STARTED with: what runs in memory. The /release file
+-- can be newer (files copied in while it runs); then a restart is enough.
+local RUNNING = installedRelease()
+
 local function updater()
   sleep(60)
   while true do
     if F.cfg.autoUpdate ~= false then
       local sha = latestCommit()
       -- only a real commit id counts (the API can be rate limited)
-      if sha and sha ~= installedRelease() then update() end
+      if sha and sha ~= RUNNING then
+        if sha == installedRelease() then
+          persist()
+          os.reboot() -- the new code is already on disk: just start it
+        else
+          update()
+        end
+      end
     end
     sleep(UPDATE_EVERY)
   end
