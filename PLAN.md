@@ -18,7 +18,9 @@ over rednet. Friends-only server: base-ID pinning, no signing.
   `exportItem(filter, toName)`, `importItem(filter, fromName)`, `craftItem`,
   `isCraftable`. Argument order of import/export is from jar strings only:
   **verify-live** with `factory probe` before relying on the ME adapter.
-- Turtle upgrades: geo scanner (`geoScanner`), compass (`compass`, item
+- Peripheral types (jar strings, AP 0.8.2a): Geo Scanner is **`geo_scanner`**
+  (docs and older AP say `geoScanner`), `compass`, `me_bridge`, `rs_bridge`.
+- Turtle upgrades: geo scanner, compass (item
   `minecraft:compass`, `getFacing()`), crafting table (`workbench`).
 - `TurtleInventoryCrafting.tryCrafting` (decompiled): the recipe is read from a
   3x3 window of the 4x4 inventory and **every slot outside the window must be

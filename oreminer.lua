@@ -91,13 +91,13 @@ end
 -- The Geo Scanner shares its upgrade slot with the wireless modem (link.lua).
 local function ensureScanner()
   link.restoreUpgrade()
-  return link.equippedSide("geoScanner") ~= nil
+  return link.scanner() ~= nil
 end
 
 -- ---------------------------------------------------------------- scanner --
 local function scan()
   while true do
-    local scanner = peripheral.find("geoScanner")
+    local scanner = link.scanner()
     if not scanner then error("No Geo Scanner equipped", 0) end
     local blocks, err = scanner.scan(CFG.radius)
     if blocks then return blocks end

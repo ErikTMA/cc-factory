@@ -17,7 +17,9 @@ local CFG_FILE, VERSION_FILE = "agent.cfg", "version"
 
 -- Items that may sit in the upgrade slot that the modem borrows.
 local SWAPPABLE = { [C.SCANNER_ITEM] = true, ["minecraft:compass"] = true }
-local SWAPPABLE_TYPE = { geoScanner = true, compass = true }
+-- Geo Scanner type is "geo_scanner" in AP 0.8 (1.21) and "geoScanner" before.
+local SCANNER_TYPES = { "geo_scanner", "geoScanner" }
+local SWAPPABLE_TYPE = { geo_scanner = true, geoScanner = true, compass = true }
 
 local EQUIP = { left = turtle.equipLeft, right = turtle.equipRight }
 
@@ -56,6 +58,14 @@ end
 local function swappableSide()
   for _, side in ipairs({ "left", "right" }) do
     if SWAPPABLE_TYPE[peripheral.getType(side) or ""] then return side end
+  end
+end
+
+-- The equipped Geo Scanner peripheral (any AP version), or nil.
+function L.scanner()
+  for _, t in ipairs(SCANNER_TYPES) do
+    local p = peripheral.find(t)
+    if p then return p end
   end
 end
 

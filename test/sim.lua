@@ -160,7 +160,7 @@ local function newTurtle(W, startHeading, fuel, start)
   return T, api, scanner
 end
 
-local PTYPE = { ["advancedperipherals:geo_scanner"] = "geoScanner",
+local PTYPE = { ["advancedperipherals:geo_scanner"] = "geo_scanner", -- AP 0.8.2a type name
                 ["computercraft:wireless_modem_normal"] = "modem",
                 ["computercraft:wireless_modem_advanced"] = "modem" }
 
@@ -175,7 +175,7 @@ local function makeEnv(T, api, scanner, files, bus, id)
   env.peripheral = {
     getType = function(side) return PTYPE[T and T[side] or ""] end,
     find = function(t)
-      if t == "geoScanner" and T and (PTYPE[T.left or ""] == t or PTYPE[T.right or ""] == t) then return scanner end
+      if t == "geo_scanner" and T and (PTYPE[T.left or ""] == t or PTYPE[T.right or ""] == t) then return scanner end
     end,
   }
   env.os = setmetatable({ getComputerLabel = function() return T and T.label end,
