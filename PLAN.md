@@ -65,15 +65,30 @@ rednet. Turtles never need http.
 - [x] M0 miner + base dispatcher + forester + journaled moves (tested)
 - [x] M1 `link.lua`: one shared base link (modem swap at home, pinned base id,
       status/reply); oreminer + forester use it; forester reports to the base
-- [ ] M2 agent + updates: `startup.lua` agent (role from `agent.cfg`), version
+- [x] M2 agent + updates: `startup.lua` agent (role from `agent.cfg`), version
       in every status, base serves `/dist` (checksum version) in replies,
       turtle writes files + reboots; installer `disk/startup.lua`
-- [ ] M3 `storage.lua` port: chest backend (barrels/chests/trapped chest over
+- [x] M3 `storage.lua` port: chest backend (barrels/chests/trapped chest over
       wired modems) + bridge backend; base drains inputs, shows stock
-- [ ] M4 stock rules + fleet targets in `factory.cfg`: base auto-queues jobs
+- [x] M4 stock rules + fleet targets in `factory.cfg`: base auto-queues jobs
       and build orders
-- [ ] M5 `assembler.lua`: crafts turtle + upgrades from supplied parts, places
+- [x] M5 `assembler.lua`: crafts turtle + upgrades from supplied parts, places
       it on the build spot, gives it a modem and fuel, turns it on; new turtle
       asks the base for a home slot and walks there (no digging at the base)
-- [ ] M6 base UI tabs: Turtles / Stock / Jobs; harness coverage for all of it
-- [ ] M7 independent review pass (critic + security), fixes, deploy to server
+- [x] M6 base UI tabs: Turtles / Stock / Jobs; harness coverage for all of it
+- [ ] M7 (next) independent review pass (critic + security), fixes, deploy to server
+
+## Bugs the harnesses caught on the way (each test was red before its fix)
+
+- Geo Scanner peripheral type is `geo_scanner` in AP 0.8.2a; `geoScanner`
+  found nothing, every miner would have stopped at start.
+- A server stop right after a move or turn left a turtle 1 (move) to 19 (turn)
+  blocks off home; it then unloaded onto the ground. Fixed by tmove journaling
+  plus re-measuring the heading on resume.
+- Forester: dug items land in the selected slot, so logs filled slot 1/2 and
+  were never delivered or burned; it ran dry.
+- Miner: a job less than 12 blocks below home surfaced wherever it was, walked
+  the surface into its own chest and unloaded 2 blocks off home. Every trip
+  that touches the home level now uses the shaft, and unload refuses to drop
+  anything without a chest in front.
+- Idle miners would have polled the base every tick.

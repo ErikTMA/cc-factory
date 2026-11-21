@@ -191,11 +191,16 @@ local function goDirect(t)
   return vertical()
 end
 
--- Travel between the surface and the mining level always goes through the
--- shaft at x=0,z=0, so every trip reuses one hole instead of digging new ones.
-local SHAFT_SWITCH = 12 -- vertical distance that counts as changing level
+-- Every trip that leaves or reaches the home level, or changes level a lot,
+-- goes through the shaft at x=0,z=0: one hole at home instead of digging up
+-- through the surface (and the base) wherever the turtle happens to be.
+local SHAFT_SWITCH = 12 -- vertical distance that counts as changing level underground
 local function goTo(t)
-  if math.abs(t.y - S.pos.y) <= SHAFT_SWITCH then return goDirect(t) end
+  -- (mining at the home level itself, dy = 0, has no shaft: it works in its
+  -- own tunnels around home)
+  local viaShaft = S.dy ~= 0 and t.y ~= S.pos.y
+                   and (t.y == HOME.y or S.pos.y == HOME.y or math.abs(t.y - S.pos.y) > SHAFT_SWITCH)
+  if not viaShaft then return goDirect(t) end
   return goDirect({ x = 0, y = S.pos.y, z = 0 })
      and goDirect({ x = 0, y = t.y, z = 0 })
      and goDirect(t)
@@ -240,6 +245,11 @@ end
 
 local function unload()
   turnTo((S.homeHeading + 2) % 4) -- chest is behind the start position
+  -- never empty the inventory anywhere but into the home chest
+  local ok, b = turtle.inspect()
+  if not (ok and b.name:find("chest")) then
+    error("No chest behind me: I'm not where I think home is. Not unloading.", 0)
+  end
   local keptFuel = false
   for i = 1, 16 do
     turtle.select(i)
@@ -352,7 +362,7 @@ local function run()
     if not finished() then S.lane, S.progress = S.lane + 1, 0 end
     save()
   end
-  goTo(HOME)
+  if not goTo(HOME) then error("Cannot reach home", 0) end
   unload()
   turnTo(S.homeHeading)
   S.done = true

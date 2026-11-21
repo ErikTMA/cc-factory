@@ -1,0 +1,678 @@
+-- End-to-end harness: the whole factory with the real code everywhere.
+--
+-- Base: factory.lua + storage.lua + dist.lua over a fake peripheral network
+-- (barrels, a turtle home chest, the trapped supply chest, the installer disk
+-- drive). Assembler: assembler.lua on a crafty turtle that crafts the way CC
+-- does (only the 3x3 window may hold items). New turtles boot like CC: from the
+-- disk under the build spot if it has a startup file, else their own
+-- startup.lua; os.reboot reboots them. Everything runs as coroutines.
+--
+-- Usage: lua factory_sim.lua <repo dir>
+local REPO = arg[1] or ".."
+
+local failures = 0
+local function check(cond, msg)
+  if cond then print("  ok   " .. msg) else print("  FAIL " .. msg); failures = failures + 1 end
+end
+local function readFile(path) local f = assert(io.open(path)); local s = f:read("*a"); f:close(); return s end
+local VERBOSE = os.getenv("VERBOSE")
+
+-- ------------------------------------------------------------ serialize --
+local function ser(v)
+  if type(v) == "table" then
+    local p = {}
+    for k, x in pairs(v) do p[#p + 1] = "[" .. ser(k) .. "]=" .. ser(x) end
+    return "{" .. table.concat(p, ",") .. "}"
+  elseif type(v) == "string" then return string.format("%q", v) end
+  return tostring(v)
+end
+local textutils = { serialize = ser, unserialize = function(s) return load("return " .. s)() end }
+
+-- ------------------------------------------------------------------- vfs --
+-- A computer's filesystem: a flat table path -> content, plus mounts
+-- (e.g. disk -> the disk's table).
+local function newFS(files, mounts)
+  mounts = mounts or {}
+  local function norm(p) p = p:gsub("^/+", ""):gsub("/+$", ""); return p end
+  local function resolve(p)
+    p = norm(p)
+    local first, rest = p:match("^([^/]+)/?(.*)$")
+    if first and mounts[first] then return mounts[first], rest end
+    return files, p
+  end
+  local fs = {}
+  function fs.combine(a, b) a, b = norm(a), norm(b); if a == "" then return b end; if b == "" then return a end; return a .. "/" .. b end
+  function fs.getDir(p) p = norm(p); return p:match("^(.*)/[^/]*$") or "" end
+  function fs.exists(p)
+    local t, r = resolve(p)
+    if r == "" then return true end
+    if t[r] then return true end
+    for k in pairs(t) do if k:sub(1, #r + 1) == r .. "/" then return true end end
+    return false
+  end
+  function fs.isDir(p) local t, r = resolve(p); return fs.exists(p) and t[r] == nil end
+  function fs.makeDir() end
+  function fs.list(p)
+    local t, r = resolve(p)
+    local out, seen = {}, {}
+    local prefix = r == "" and "" or r .. "/"
+    for k in pairs(t) do
+      if k:sub(1, #prefix) == prefix then
+        local name = k:sub(#prefix + 1):match("^([^/]+)")
+        if name and not seen[name] then seen[name] = true; out[#out + 1] = name end
+      end
+    end
+    table.sort(out)
+    return out
+  end
+  function fs.open(p, mode)
+    local t, r = resolve(p)
+    if mode == "r" then
+      if not t[r] then return nil end
+      local c = t[r]
+      return { readAll = function() return c end, close = function() end }
+    end
+    local buf = {}
+    return { write = function(s) buf[#buf + 1] = s end, close = function() t[r] = table.concat(buf) end }
+  end
+  function fs.delete(p)
+    local t, r = resolve(p)
+    for k in pairs(t) do if k == r or k:sub(1, #r + 1) == r .. "/" then t[k] = nil end end
+  end
+  function fs.move(a, b) local ta, ra = resolve(a); local tb, rb = resolve(b); tb[rb] = ta[ra]; ta[ra] = nil end
+  function fs.copy(a, b) local ta, ra = resolve(a); local tb, rb = resolve(b); tb[rb] = ta[ra] end
+  return fs
+end
+
+-- ----------------------------------------------------------------- world --
+local DIRS = { [0] = { 0, -1 }, { 1, 0 }, { 0, 1 }, { -1, 0 } } -- dx, dz; 0 = north
+local W = { b = {}, inv = {}, turtles = {}, clock = 0 }
+local function k(x, y, z) return x .. "," .. y .. "," .. z end
+function W.get(x, y, z) return W.b[k(x, y, z)] end
+function W.set(x, y, z, v) W.b[k(x, y, z)] = v end
+
+-- Inventories (chests, barrels) live at a position and have a peripheral name.
+local function newInv(name, x, y, z, size)
+  local I = { name = name, slots = {}, size = size or 27, x = x, y = y, z = z }
+  W.inv[name] = I
+  if x then W.invAt = W.invAt or {}; W.invAt[k(x, y, z)] = I; W.set(x, y, z, name:match("^(.-)_%d+$")) end
+  function I.insert(item, n, toSlot)
+    local moved = 0
+    local order = {}
+    if toSlot then order = { toSlot } else for i = 1, I.size do order[#order + 1] = i end end
+    for _, i in ipairs(order) do
+      local s = I.slots[i]
+      if s and s.name == item and s.count < 64 then
+        local m = math.min(64 - s.count, n - moved); s.count = s.count + m; moved = moved + m
+      end
+      if moved >= n then return moved end
+    end
+    for _, i in ipairs(order) do
+      if not I.slots[i] and moved < n then
+        local m = math.min(64, n - moved); I.slots[i] = { name = item, count = m }; moved = moved + m
+      end
+    end
+    return moved
+  end
+  function I.take(slot, n)
+    local s = I.slots[slot]
+    if not s then return nil, 0 end
+    local m = math.min(n or s.count, s.count)
+    s.count = s.count - m
+    if s.count == 0 then I.slots[slot] = nil end
+    return s.name, m
+  end
+  function I.firstSlot()
+    for i = 1, I.size do if I.slots[i] then return i end end
+  end
+  function I.count(item)
+    local n = 0
+    for _, s in pairs(I.slots) do if s.name == item then n = n + s.count end end
+    return n
+  end
+  return I
+end
+
+-- ----------------------------------------------------- peripheral network --
+-- The base's view: every inventory plus the disk drive, by name.
+local DISK = {}
+local function baseNetwork()
+  local api = {}
+  function api.getNames()
+    local n = { "drive_0" }
+    for name in pairs(W.inv) do n[#n + 1] = name end
+    table.sort(n)
+    return n
+  end
+  function api.hasType(name, t)
+    if name == "drive_0" then return t == "drive" end
+    return W.inv[name] ~= nil and t == "inventory"
+  end
+  function api.call(name, method, ...)
+    local a = { ... }
+    if name == "drive_0" then
+      if method == "hasData" then return true end
+      if method == "getMountPath" then return "disk" end
+    end
+    local I = assert(W.inv[name], name)
+    if method == "list" then
+      local out = {}
+      for i, s in pairs(I.slots) do out[i] = { name = s.name, count = s.count } end
+      return out
+    elseif method == "pushItems" then
+      local to, slot, limit, toSlot = W.inv[a[1]], a[2], a[3], a[4]
+      local s = I.slots[slot]
+      if not s or not to then return 0 end
+      local n = math.min(limit or s.count, s.count)
+      local moved = to.insert(s.name, n, toSlot)
+      I.take(slot, moved)
+      return moved
+    end
+    error("unknown method " .. method)
+  end
+  return api
+end
+
+-- ---------------------------------------------------------------- turtles --
+local PTYPE = { ["advancedperipherals:geo_scanner"] = "geo_scanner", ["minecraft:compass"] = "compass",
+                ["computercraft:wireless_modem_normal"] = "modem", ["minecraft:crafting_table"] = "workbench" }
+local TURTLE_ITEM = "computercraft:turtle_advanced"
+local DROPS = { ["minecraft:iron_ore"] = "minecraft:raw_iron", ["minecraft:stone"] = "minecraft:cobblestone" }
+
+local bus = { inbox = {}, sent = {} }
+
+local function newTurtleEntity(id, x, y, z, h, files)
+  local T = { id = id, x = x, y = y, z = z, h = h, fuel = 0, sel = 1, inv = {}, files = files or {},
+              label = nil, on = false }
+  W.turtles[id] = T
+  W.set(x, y, z, TURTLE_ITEM)
+  return T
+end
+
+local function turtleAt(x, y, z)
+  for _, T in pairs(W.turtles) do if T.x == x and T.y == y and T.z == z then return T end end
+end
+
+local function addItem(T, item, n, meta)
+  for kk = 0, 15 do
+    local i = (T.sel - 1 + kk) % 16 + 1
+    local s = T.inv[i]
+    if s and s.name == item and s.count < 64 and not meta and not s.meta then s.count = s.count + n; return true end
+    if not s then T.inv[i] = { name = item, count = n, meta = meta }; return true end
+  end
+  return false
+end
+
+-- crafting the way TurtleInventoryCrafting does it
+local GRID = { 1, 2, 3, 5, 6, 7, 9, 10, 11 }
+local IS_GRID = {}
+for _, c in ipairs(GRID) do IS_GRID[c] = true end
+local function craft(T)
+  for i = 1, 16 do if T.inv[i] and not IS_GRID[i] then return false end end
+  local g = {}
+  for _, c in ipairs(GRID) do g[c] = T.inv[c] and T.inv[c].name end
+  local G, R, P = "minecraft:gold_ingot", "minecraft:redstone", "minecraft:glass_pane"
+  local function is(pattern)
+    for _, c in ipairs(GRID) do if g[c] ~= pattern[c] then return false end end
+    return true
+  end
+  local result, meta
+  if is({ [1] = G, [2] = G, [3] = G, [5] = G, [6] = R, [7] = G, [9] = G, [10] = P, [11] = G }) then
+    result = "computercraft:computer_advanced"
+  elseif is({ [1] = G, [2] = G, [3] = G, [5] = G, [6] = "computercraft:computer_advanced", [7] = G,
+              [9] = G, [10] = "minecraft:chest", [11] = G }) then
+    result = TURTLE_ITEM
+  elseif g[2] == TURTLE_ITEM and g[1] and g[3] and PTYPE[g[3]] and g[1]:find("pickaxe") then
+    local count = 0
+    for _, c in ipairs(GRID) do if g[c] then count = count + 1 end end
+    if count ~= 3 then return false end
+    result, meta = TURTLE_ITEM, { right = g[1], left = g[3] }
+  else
+    return false
+  end
+  for _, c in ipairs(GRID) do
+    if T.inv[c] then T.inv[c].count = T.inv[c].count - 1; if T.inv[c].count == 0 then T.inv[c] = nil end end
+  end
+  return addItem(T, result, 1, meta)
+end
+
+local scheduler = { cos = {} }
+local function yield() local _, main = coroutine.running(); if not main then coroutine.yield() end end
+
+local bootTurtle -- forward
+
+local function turtleApi(T)
+  local function front() local d = DIRS[T.h]; return T.x + d[1], T.y, T.z + d[2] end
+  local function at(dir)
+    if dir == "up" then return T.x, T.y + 1, T.z elseif dir == "down" then return T.x, T.y - 1, T.z end
+    return front()
+  end
+  local function move(x, y, z)
+    if W.get(x, y, z) or T.fuel < 1 then return false end
+    W.set(T.x, T.y, T.z, nil)
+    T.fuel = T.fuel - 1; T.x, T.y, T.z = x, y, z
+    W.set(x, y, z, TURTLE_ITEM)
+    yield()
+    return true
+  end
+  local function dig(x, y, z)
+    local b = W.get(x, y, z)
+    if not b or b == "minecraft:bedrock" or b:find("^computercraft") or b:find("chest") or b:find("barrel")
+       or b == "drive" then return false end
+    W.set(x, y, z, nil)
+    addItem(T, DROPS[b] or b, 1)
+    return true
+  end
+  local function insp(b) if b then return true, { name = b, tags = {} } end; return false, "No block" end
+  local function invAt(x, y, z) return W.invAt and W.invAt[k(x, y, z)] end
+  local function suck(dir, n)
+    local I = invAt(at(dir))
+    if not I then return false end
+    local slot = I.firstSlot()
+    if not slot then return false end
+    local s = I.slots[slot]
+    local m = math.min(n or s.count, s.count)
+    local item = s.name
+    I.take(slot, m)
+    addItem(T, item, m)
+    return true
+  end
+  local function drop(dir, n)
+    local s = T.inv[T.sel]
+    if not s then return false end
+    local m = math.min(n or s.count, s.count)
+    local x, y, z = at(dir)
+    local I = invAt(x, y, z)
+    local other = turtleAt(x, y, z)
+    if I then
+      m = I.insert(s.name, m)
+    elseif other then
+      for i = 1, 16 do
+        if not other.inv[i] then other.inv[i] = { name = s.name, count = m, meta = s.meta }; break end
+        if other.inv[i].name == s.name and i == 16 then m = 0 end
+      end
+    end
+    s.count = s.count - m
+    if s.count == 0 then T.inv[T.sel] = nil end
+    return m > 0
+  end
+  local api = {}
+  function api.forward() return move(front()) end
+  function api.back() local d = DIRS[T.h]; return move(T.x - d[1], T.y, T.z - d[2]) end
+  function api.up() return move(T.x, T.y + 1, T.z) end
+  function api.down() return move(T.x, T.y - 1, T.z) end
+  function api.turnLeft() T.h = (T.h + 3) % 4; return true end
+  function api.turnRight() T.h = (T.h + 1) % 4; return true end
+  function api.dig() return dig(at("fwd")) end
+  function api.digUp() return dig(at("up")) end
+  function api.digDown() return dig(at("down")) end
+  function api.detect() return W.get(at("fwd")) ~= nil end
+  function api.detectUp() return W.get(at("up")) ~= nil end
+  function api.detectDown() return W.get(at("down")) ~= nil end
+  function api.inspect() return insp(W.get(at("fwd"))) end
+  function api.inspectUp() return insp(W.get(at("up"))) end
+  function api.inspectDown() return insp(W.get(at("down"))) end
+  function api.attack() return false end
+  api.attackUp, api.attackDown = api.attack, api.attack
+  function api.suck(n) return suck("fwd", n) end
+  function api.suckUp(n) return suck("up", n) end
+  function api.suckDown(n) return suck("down", n) end
+  function api.drop(n) return drop("fwd", n) end
+  function api.dropUp(n) return drop("up", n) end
+  function api.dropDown(n) return drop("down", n) end
+  function api.getFuelLevel() return T.fuel end
+  function api.getFuelLimit() return 20000 end
+  function api.select(i) T.sel = i; return true end
+  function api.getItemCount(i) return T.inv[i] and T.inv[i].count or 0 end
+  function api.getItemDetail(i) local s = T.inv[i]; return s and { name = s.name, count = s.count } or nil end
+  function api.transferTo(to, n)
+    local s = T.inv[T.sel]
+    if not s or to == T.sel then return false end
+    n = math.min(n or s.count, s.count)
+    local d = T.inv[to]
+    if d and (d.name ~= s.name or d.meta or s.meta) then return false end
+    if d then d.count = d.count + n else T.inv[to] = { name = s.name, count = n, meta = s.meta } end
+    s.count = s.count - n
+    if s.count == 0 then T.inv[T.sel] = nil end
+    return true
+  end
+  function api.refuel(n)
+    local s = T.inv[T.sel]
+    if not s or (s.name ~= "minecraft:coal" and s.name ~= "minecraft:charcoal") then return false end
+    if n == 0 then return true end
+    n = math.min(n or s.count, s.count)
+    T.fuel = T.fuel + 80 * n; s.count = s.count - n
+    if s.count == 0 then T.inv[T.sel] = nil end
+    return true
+  end
+  function api.place()
+    local s = T.inv[T.sel]
+    if not s or s.name ~= TURTLE_ITEM then return false end
+    local x, y, z = front()
+    if W.get(x, y, z) then return false end
+    local id = scheduler.nextId; scheduler.nextId = id + 1
+    local N = newTurtleEntity(id, x, y, z, T.h)
+    N.left, N.right = s.meta and s.meta.left, s.meta and s.meta.right
+    T.inv[T.sel] = nil
+    return true
+  end
+  local function equip(side)
+    local cur, new = T[side], T.inv[T.sel]
+    T[side] = new and new.name or nil
+    T.inv[T.sel] = cur and { name = cur, count = 1 } or nil
+    return true
+  end
+  function api.equipLeft() return equip("left") end
+  function api.equipRight() return equip("right") end
+  if T.left == "minecraft:crafting_table" or T.right == "minecraft:crafting_table" then
+    function api.craft() return craft(T) end
+  end
+  return api, front
+end
+
+local function scannerFor(T)
+  return { scan = function(r)
+    local out = {}
+    for x = -r, r do for y = -r, r do for z = -r, r do
+      local b = W.get(T.x + x, T.y + y, T.z + z)
+      if b then
+        local tags = b:find("_ore$") and { "c:ores" } or {}
+        out[#out + 1] = { name = b, tags = tags, x = x, y = y, z = z }
+      end
+    end end end
+    return out
+  end }
+end
+
+-- A turtle computer's Lua environment
+local function turtleEnv(T)
+  local api, front = turtleApi(T)
+  local mounts = {}
+  -- the installer disk is attached when the drive is right below the turtle
+  local function diskAttached() return W.get(T.x, T.y - 1, T.z) == "drive" end
+  if diskAttached() then mounts.disk = DISK end
+  local env = setmetatable({}, { __index = _G })
+  env.turtle = api
+  env.textutils = textutils
+  env.fs = newFS(T.files, mounts)
+  env.colors = setmetatable({}, { __index = function(_, kk) return kk end })
+  env.print = VERBOSE and function(...) print("[" .. T.id .. "]", ...) end or function() end
+  env.write = env.print
+  env.read = function() return "0" end
+  env.sleep = function() yield() end
+  env.peripheral = {
+    getType = function(side) return PTYPE[T[side] or ""] end,
+    find = function(t)
+      for _, side in ipairs({ "left", "right" }) do
+        if PTYPE[T[side] or ""] == t then
+          if t == "geo_scanner" then return scannerFor(T) end
+          if t == "compass" then return { getFacing = function() return ({ [0] = "north", "east", "south", "west" })[T.h] end } end
+          return {}
+        end
+      end
+    end,
+    call = function(side, method)
+      if side == "front" and method == "turnOn" then
+        local x, y, z = front()
+        local N = turtleAt(x, y, z)
+        if N and not N.on then bootTurtle(N) end
+        return
+      end
+      error("peripheral.call " .. side .. " " .. method)
+    end,
+  }
+  env.os = setmetatable({
+    getComputerID = function() return T.id end,
+    getComputerLabel = function() return T.label end,
+    setComputerLabel = function(l) T.label = l end,
+    reboot = function() error("REBOOT", 0) end,
+    clock = function() return W.clock end,
+  }, { __index = os })
+  env.rednet = {
+    open = function(side) assert(PTYPE[T[side] or ""] == "modem", "rednet.open: no modem on " .. side); T.rednet = true end,
+    close = function() T.rednet = false end,
+    send = function(to, msg) assert(T.rednet, "rednet not open"); bus.deliver(T.id, msg) end,
+    broadcast = function(msg) assert(T.rednet, "rednet not open"); bus.deliver(T.id, msg) end,
+    receive = function()
+      local q = bus.inbox[T.id]
+      if q and #q > 0 then return 0, table.remove(q, 1) end
+      return nil
+    end,
+  }
+  env.require = function(name)
+    local src = T.files[name .. ".lua"]
+    assert(src, "require " .. name .. ": not installed on turtle " .. T.id)
+    return assert(load(src, name, "t", env))()
+  end
+  env.shell = {}
+  local running = {}
+  function env.shell.getRunningProgram() return running[#running] end
+  function env.shell.run(path, ...)
+    local p = path:gsub("^/", "")
+    if not p:find("%.lua$") and not env.fs.exists(p) then p = p .. ".lua" end
+    local fh = env.fs.open(p, "r")
+    assert(fh, "shell.run: no program " .. p)
+    local fn = assert(load(fh.readAll(), p, "t", env))
+    running[#running + 1] = p
+    fn(...)
+    running[#running] = nil
+    return true
+  end
+  return env
+end
+
+-- CC boot: disk startup if an attached disk has one, else /startup.lua.
+-- os.reboot (error "REBOOT") boots again.
+bootTurtle = function(T)
+  T.on = true
+  T.boots = (T.boots or 0) + 1
+  local co = coroutine.create(function()
+    while true do
+      local env = turtleEnv(T)
+      local ok, err = pcall(function()
+        if env.fs.exists("disk/startup.lua") then env.shell.run("disk/startup.lua")
+        elseif env.fs.exists("startup.lua") then env.shell.run("startup.lua") end
+      end)
+      if ok then return end
+      if err ~= "REBOOT" then error(err, 0) end
+      T.boots = T.boots + 1
+    end
+  end)
+  scheduler.cos[#scheduler.cos + 1] = { T = T, co = co }
+end
+
+-- --------------------------------------------------------------- the base --
+local repoFile = function(name) return readFile(REPO .. "/" .. name) end
+local manifest = load(repoFile("manifest.lua"), "manifest", "t", {})()
+
+local baseFiles = {}
+for _, name in ipairs(manifest.base) do baseFiles[name] = repoFile(name) end
+for _, name in ipairs(manifest.turtle) do baseFiles["dist/" .. name] = repoFile(name) end
+baseFiles["dist/" .. manifest.installer] = repoFile(manifest.installer)
+
+local baseEnv = setmetatable({}, { __index = _G })
+baseEnv.fs = newFS(baseFiles, { disk = DISK })
+baseEnv.textutils = textutils
+baseEnv.colors = setmetatable({}, { __index = function(_, kk) return kk end })
+baseEnv.os = setmetatable({ getComputerID = function() return 0 end }, { __index = os })
+baseEnv.require = function(name) return assert(load(assert(baseFiles[name .. ".lua"], name), name, "t", baseEnv))() end
+local factory = baseEnv.require("factory")
+local storage = baseEnv.require("storage")
+local dist = baseEnv.require("dist")
+local net = baseNetwork()
+
+local release = dist.load(manifest, "/dist")
+
+local config = {
+  build = { y = 64 },
+  homes = { miner = { { east = 4, north = 0, facing = "north" } } },
+  fleet = { miner = 1 },
+  rules = { { item = "minecraft:raw_iron", min = 6, job = { only = "iron", y = 54, quantity = 8, lanes = 1, length = 16 } } },
+  forester = { sapling = "minecraft:oak_sapling", trees = 3, wait = 10 },
+  job = { lanes = 1, length = 16 },
+}
+local F = factory.new(config, {
+  storage = storage.open(net),
+  now = function() return W.clock end,
+  dist = release,
+  writeInstall = function(install) install.base = 0; dist.writeDisk(net, release, install) end,
+})
+
+function bus.deliver(from, msg)
+  local reply = factory.handle(F, from, msg)
+  bus.sent[#bus.sent + 1] = { from = from, msg = msg, reply = reply }
+  if VERBOSE then print(("  [bus] %s %s -> %s"):format(from, tostring(msg.state), reply and reply.type or "nil")) end
+  if reply then bus.inbox[from] = bus.inbox[from] or {}; table.insert(bus.inbox[from], reply) end
+end
+
+-- ----------------------------------------------------------------- layout --
+-- ground at y = -1, an iron layer at y = -10 (absolute Y 54), air above 0
+for x = -12, 24 do for z = -30, 12 do
+  for y = -14, -1 do
+    local b = "minecraft:stone"
+    if y == -10 and (x + z) % 3 == 0 then b = "minecraft:iron_ore" end
+    if y == -14 then b = "minecraft:bedrock" end
+    W.set(x, y, z, b)
+  end
+end end
+-- assembler at (0,0,0) facing north; build spot (0,0,-1); drive under it;
+-- supply trapped chest above the assembler
+W.set(0, -1, -1, "drive")
+newInv("minecraft:trapped_chest_0", 0, 1, 0)
+-- storage barrels (no position needed: only reached over the network)
+newInv("minecraft:barrel_0"); newInv("minecraft:barrel_1")
+-- the miner home slot: 4 east of the build spot, facing north, chest behind it
+newInv("minecraft:chest_0", 4, 0, 0)
+
+local stockParts = {
+  { "minecraft:gold_ingot", 40 }, { "minecraft:redstone", 5 }, { "minecraft:glass_pane", 5 },
+  { "minecraft:chest", 5 }, { "minecraft:diamond_pickaxe", 1 }, { "advancedperipherals:geo_scanner", 1 },
+  { "computercraft:wireless_modem_normal", 2 }, { "minecraft:coal", 64 },
+}
+for _, p in ipairs(stockParts) do W.inv["minecraft:barrel_0"].insert(p[1], p[2]) end
+
+-- the assembler turtle, installed by hand (as you would do the very first one)
+scheduler.nextId = 2
+local A = newTurtleEntity(1, 0, 0, 0, 0)
+A.left, A.right = "minecraft:crafting_table", "computercraft:wireless_modem_normal"
+for _, name in ipairs(manifest.turtle) do A.files[name] = repoFile(name) end
+A.files["agent.cfg"] = ser({ role = "assembler", base = 0 })
+
+-- ----------------------------------------------------------------- run it --
+print("scenario: the base builds a miner, it installs itself, walks home and fills a stock rule")
+bootTurtle(A)
+local function runUntil(cond, maxTicks)
+  for tick = 1, maxTicks do
+    W.clock = W.clock + 1
+    for _, c in ipairs(scheduler.cos) do
+      if coroutine.status(c.co) ~= "dead" then
+        local ok, err = coroutine.resume(c.co)
+        if not ok then c.err = err; print("  turtle " .. c.T.id .. " crashed: " .. tostring(err)) end
+      end
+    end
+    if tick % 20 == 0 then
+      local ok, err = pcall(factory.tick, F)
+      if not ok then print("  tick failed: " .. tostring(err)); return false end
+    end
+    if cond() then return true end
+  end
+  return false
+end
+
+local stock = function() return F.deps.storage.list() end
+local done = runUntil(function()
+  local M = W.turtles[2]
+  return M and (stock()["minecraft:raw_iron"] or 0) >= 6 and F.turtles[2] and F.turtles[2].state == "idle"
+end, 200000)
+check(done, "reached: miner built, installed, home, rule filled")
+
+local M = W.turtles[2]
+check(F.orders[1] and F.orders[1].state == "built", "build order #1 built: " .. tostring(F.orders[1] and F.orders[1].state))
+check(M ~= nil, "a new turtle was placed on the build spot")
+if M then
+  check(M.right == "minecraft:diamond_pickaxe" and M.left == "advancedperipherals:geo_scanner",
+    "it has a pickaxe and a Geo Scanner")
+  local cfg = M.files["agent.cfg"] and textutils.unserialize(M.files["agent.cfg"]) or {}
+  check(cfg.role == "miner" and cfg.base == 0, "installed as a miner pinned to the base")
+  check(M.files["version"] == release.version, "installed the base's code version")
+  check(M.label == "miner-2", "labelled miner-2: " .. tostring(M.label))
+  check(M.x == 4 and M.y == 0 and M.z == -1 and M.h == 0,
+    ("walked to its home slot facing north (%d,%d,%d h%d)"):format(M.x, M.y, M.z, M.h))
+  check(cfg.home and cfg.home.y == 64, "home Y recorded from the base config")
+end
+check((stock()["minecraft:raw_iron"] or 0) >= 6, "raw iron drained into storage: " .. tostring(stock()["minecraft:raw_iron"]))
+check(W.inv["minecraft:chest_0"].count("minecraft:raw_iron") == 0, "home chest emptied by the base")
+check(stock()["minecraft:gold_ingot"] == 40 - 14, "14 gold used: " .. tostring(stock()["minecraft:gold_ingot"]))
+check(stock()["advancedperipherals:geo_scanner"] == nil, "geo scanner used")
+local supplyLeft = 0
+for _ in pairs(W.inv["minecraft:trapped_chest_0"].slots) do supplyLeft = supplyLeft + 1 end
+check(supplyLeft == 0, "supply chest empty after the build")
+local aLeft = 0
+for _ in pairs(A.inv) do aLeft = aLeft + 1 end
+check(aLeft == 0, "assembler inventory empty")
+check(W.get(0, 0, -1) == nil, "build spot free again")
+
+print("scenario: every monitor tab renders with live data")
+do
+  local UIlib = assert(load(baseFiles["base.lua"], "base", "t", baseEnv))("--lib")
+  local UI = { F = F, buttons = {}, stock = F.deps.storage.list() }
+  for _, tab in ipairs({ "TURTLES", "JOBS", "FACTORY" }) do
+    UI.tab = tab
+    local screen = {}
+    local mon = { getSize = function() return 57, 30 end, clear = function() end,
+                  setCursorPos = function(_, y) screen.y = y end, setTextColor = function() end,
+                  setBackgroundColor = function() end,
+                  write = function(t) screen[screen.y] = (screen[screen.y] or "") .. t end }
+    local ok, err = pcall(UIlib.draw, UI, mon)
+    local text = ""
+    for i = 1, 30 do text = text .. (screen[i] or "") .. "\n" end
+    check(ok, tab .. " tab draws (" .. tostring(err) .. ")")
+    if tab == "TURTLES" then check(text:find("miner%-2") and text:find("assembler"), "lists the miner and the assembler") end
+    if tab == "FACTORY" then
+      check(text:find("raw_iron") ~= nil, "shows the stock rule")
+      check(text:find("miner%s+1 / 1") ~= nil, "shows the fleet target met")
+      check(text:find("#1 miner: built") ~= nil, "shows the build")
+    end
+    -- every button's action runs without error
+    for _, b in ipairs(UI.buttons) do
+      if b.label ~= "UPDATE" then
+        local okb, errb = pcall(b.action)
+        if not okb then check(false, tab .. " button " .. b.label .. ": " .. tostring(errb)) end
+      end
+    end
+  end
+end
+
+print("scenario: a code update reaches the idle miner")
+do
+  -- a new release: change one turtle file, as bootstrap would after a push
+  baseFiles["dist/oreminer.lua"] = baseFiles["dist/oreminer.lua"] .. "\n-- v2\n"
+  local r2 = dist.load(manifest, "/dist")
+  F.deps.dist = r2
+  check(r2.version ~= release.version, "new release has a new version")
+  local bootsBefore = M and M.boots or 0
+  local ok = runUntil(function() return M and M.files["version"] == r2.version and F.turtles[2].version == r2.version end, 20000)
+  check(ok, "miner installed the update and reports the new version")
+  check(M and M.files["oreminer.lua"]:find("%-%- v2") ~= nil, "new file content on the turtle")
+  check(M and M.boots > bootsBefore, "it rebooted into the new code")
+end
+
+print("scenario: the installer disk never installs onto the base")
+do
+  local files = { ["startup.lua"] = "BASE_STARTUP_RAN = true" }
+  local env = setmetatable({ turtle = nil }, { __index = _G })
+  env.fs = newFS(files, { disk = DISK })
+  env.textutils = textutils
+  env.shell = { getRunningProgram = function() return "disk/startup.lua" end,
+                run = function(p) BASE_STARTUP_RAN = (p == "/startup.lua") end }
+  env.os = setmetatable({ reboot = function() error("REBOOT") end }, { __index = os })
+  local fn = assert(load(DISK["startup.lua"], "installer", "t", env))
+  BASE_STARTUP_RAN = false
+  local ok, err = pcall(fn)
+  check(ok, "installer exits quietly on a computer (" .. tostring(err) .. ")")
+  check(BASE_STARTUP_RAN, "and runs the base's own startup instead")
+  check(files["agent.cfg"] == nil and files["oreminer.lua"] == nil, "nothing copied onto the base")
+end
+
+print(failures == 0 and "ALL PASSED" or (failures .. " FAILURE(S)"))
+os.exit(failures == 0 and 0 or 1)
