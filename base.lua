@@ -399,7 +399,9 @@ local function say(user, text)
 end
 
 local function chatter()
-  if not chatBox then return sleep(math.huge) end
+  if not chatBox then -- no Chat Box: nothing to do, ever (CC's sleep refuses math.huge)
+    while true do os.pullEvent("cc_factory_never") end
+  end
   while true do
     local _, user, message = os.pullEvent("chat")
     if type(message) == "string" and message:sub(1, 1) == "$" then
