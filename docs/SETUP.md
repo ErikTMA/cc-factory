@@ -1,0 +1,141 @@
+# Setting up cc-factory, step by step
+
+Build it in this order: each step works on its own, and the later ones need
+the earlier ones. Made for All The Mods 10 (Minecraft 1.21.1, CC: Tweaked,
+Advanced Peripherals, All The Ores).
+
+**One rule for everything on the network:** a block joins the base's network
+through a **wired modem** on it, connected by **network cable** to the base
+computer. **Right-click each modem once** so its red ring lights up: the chat
+then says the block is connected. A modem that isn't lit does nothing.
+
+## 1. The base computer
+
+![The base, seen from above](img/base-top.svg)
+
+- An **advanced computer** with an **advanced monitor** (4 wide × 3 high is
+  comfortable) and a **wired modem**.
+- On the computer, run:
+
+  ```
+  wget run https://raw.githubusercontent.com/ErikTMA/cc-factory/main/bootstrap.lua
+  ```
+
+  It downloads everything and starts the base (it also starts by itself after
+  a server restart). Settings are in `factory.cfg` (`edit factory.cfg`, then
+  `reboot`).
+- The base sorts what's on its network **by block type**, no configuration:
+
+  | Block | What the base does with it |
+  |---|---|
+  | barrel | storage |
+  | chest (plain) | a turtle's home chest: emptied into storage every 10 s |
+  | trapped chest | the assembler's supply chest |
+  | furnace / blast furnace | smelting |
+  | disk drive with a floppy | the installer disk |
+
+## 2. The first miner (by hand)
+
+![A miner home, seen from the side](img/miner-home.svg)
+
+- Craft an **advanced turtle**, then craft it together with a **diamond
+  pickaxe** (left of it) and a **Geo Scanner** (right of it).
+- Build its home: a plain **chest** behind it and a **wired modem** in front
+  of it (cabled to the base), or give it a **wireless modem** in its inventory.
+  Keep the block above it free. The miner digs its shaft straight down from
+  here.
+- Put coal in it and run:
+
+  ```
+  wget run https://raw.githubusercontent.com/ErikTMA/cc-factory/main/bootstrap.lua miner
+  ```
+
+  It asks for its Y once (F3), then waits for jobs. Send it one from the
+  monitor's **JOBS** tab.
+
+## 3. Storage, furnaces, stock rules
+
+- Add **barrels** (storage) and **furnaces** with modems. The base keeps the
+  furnaces fuelled and smelts raw ore, logs into charcoal, cobblestone into
+  stone and sand into glass.
+- **Stock rules** in `factory.cfg` keep items in stock by queuing mining jobs:
+
+  ```lua
+  rules = {
+    { item = "minecraft:raw_iron", min = 256, job = { only = "iron", y = 16, quantity = 64 } },
+  },
+  ```
+- **HAMMER** on the FACTORY tab doubles ores with an All The Ores ore hammer
+  (1 raw ore → 2 dust → 2 ingots). The base crafts the hammer itself.
+
+## 4. Foresters
+
+![A forester pen, seen from above](img/forester-pen.svg)
+
+- A forester is an advanced turtle with a **diamond pickaxe** and a
+  **compass**.
+- Fence off a pen with a dirt or grass floor. Put the forester inside, facing
+  in, with its chest directly behind it (in the fence line) and its wired
+  modem **under** it. Saplings go in **slot 1** (top left), coal anywhere.
+- First start: it walks the pen once and remembers it, then plants every 3rd
+  cell. Run `forester rescan` after changing the fence.
+
+## 5. The surveyor: let the base find the homes
+
+![Surveyor, top view](img/surveyor-top.svg)
+
+Instead of typing coordinates, let a turtle find the homes:
+
+- Build each home as in steps 2 and 4: chest behind, modem next to the spot.
+- Place a **plain advanced turtle** (no upgrades needed) **in front of the base
+  computer**. Give it some coal and a few cobblestone (one per home), and run:
+
+  ```
+  wget run https://raw.githubusercontent.com/ErikTMA/cc-factory/main/bootstrap.lua surveyor
+  surveyor north
+  ```
+
+  (`north` = the way it faces, from F3). It follows the cables (climbing walls,
+  never digging), drops a cobblestone into each home chest so the base knows
+  which chest it is, and registers the homes. It also finds the installer disk
+  drive, which tells the base where the build spot is.
+- On the monitor's **FACTORY** tab, **tap a home** to set its role: miner,
+  forester or off.
+
+Cables buried inside walls, with no open air next to them, are not found.
+Use the chat fallback for those (coming soon).
+
+## 6. The assembler: the base builds turtles
+
+![Assembler and build spot, seen from the side](img/assembler-side.svg)
+
+- An advanced turtle with a **crafting table** and a **wireless modem**,
+  facing the **build spot** (keep it empty). A **trapped chest** goes on top of
+  the assembler and a **disk drive with a floppy** goes **under the build
+  spot**: never next to the assembler. Install it with
+  `bootstrap.lua assembler`.
+- Set a fleet target in `factory.cfg`, e.g. `fleet = { miner = 3 }`, and give
+  each new turtle a home (step 5, or `homes` in `factory.cfg`).
+- The base then crafts every part from storage, the assembler builds the
+  turtle, and it installs itself from the disk, flies home and starts working.
+  Raw inputs it needs: raw ores, diamonds, redstone, coal, cobblestone, sand,
+  logs, and **nether quartz** (for the Geo Scanner's observer: bring that
+  yourself).
+
+## 7. GPS (coming soon)
+
+Four GPS turtles the factory builds itself (an iron turtle plus a wireless
+modem each), flying to fixed points high above the base. Not all at the same
+height: a flat square can't tell above from below. With GPS, any turtle knows
+its position, and `home miner` on a turtle registers its spot.
+
+## When something doesn't work
+
+| Symptom | Check |
+|---|---|
+| the base doesn't see a chest or furnace | its modem's red ring is lit (right-click it) |
+| a turtle never gets a job | its home has a modem next to it, or it carries a wireless modem |
+| the assembler waits forever | FACTORY tab shows which raw items are missing |
+| a turtle installs itself again and again | the disk drive must be under the build spot, not next to the assembler |
+| the surveyor misses a home | a modem next to the home spot, the chest is a plain chest, the cable is reachable from open air |
+| the forester says "not closed" | a gap in the fence; fix it and run `forester rescan` |

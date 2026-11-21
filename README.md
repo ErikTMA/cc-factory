@@ -16,6 +16,8 @@ Built and tested for ATM10 8.6 (Minecraft 1.21.1, CC: Tweaked 1.120.2,
 Advanced Peripherals 0.8.2a). Facts it relies on were checked against those
 jars; see [PLAN.md](PLAN.md).
 
+**New here? Follow the illustrated [setup guide](docs/SETUP.md).**
+
 ## Quick start
 
 1. Place an **advanced computer** with a **wireless modem** and an **advanced
