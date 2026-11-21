@@ -70,6 +70,19 @@ then says the block is connected. A modem that isn't lit does nothing.
   ```
 - **HAMMER** on the FACTORY tab doubles ores with an All The Ores ore hammer
   (1 raw ore → 2 dust → 2 ingots). The base crafts the hammer itself.
+- **TINY FUEL** on the FACTORY tab makes the furnaces burn tiny charcoal (or
+  tiny coal) instead of whole pieces: the assembler crafts it (1 → 8) and each
+  furnace gets exactly one per item it smelts (a blast furnace one per two),
+  so nothing burns away when a furnace runs out of work. It's for furnaces
+  only: for a turtle 8 tiny coal are worth exactly one coal, so turtles get
+  whole coal first. Tiny coal from Utilitarian and Actually Additions both
+  count as fuel everywhere.
+- **Fuel on request:** a turtle low on fuel asks the base, and the base pushes
+  coal (charcoal, then tiny) from storage straight into it. That only works
+  while the turtle touches a **wired modem that is enabled** (right-click it
+  while the turtle is there: the chat says the turtle is connected). Miners
+  ask at home, foresters after a round, the surveyor makes a trip to the
+  nearest modem it knows.
 
 ## 4. Foresters
 

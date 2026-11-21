@@ -22,7 +22,7 @@ M.QTY = { 8, 16, 32, 64, 128, 256, 0 } -- job sizes on the monitor; 0 = no limit
 
 local PERSIST = { "turtles", "queue", "nextJobId", "nextSector", "totals", "counted",
                   "orders", "nextOrderId", "homes", "nextHomeId", "buildSpot", "gpsWanted", "anchor", "ruleJobs", "lastFail", "failStreak",
-                  "hammer", "craft", "nextCraftId", "crafted" }
+                  "hammer", "tinyFuel", "craft", "nextCraftId", "crafted" }
 
 local CRAFT_PAUSE = 60      -- seconds without craft jobs after one failed
 
@@ -423,6 +423,11 @@ end
 
 -- The assembler's side of a build: it reports, we stage and say what's next.
 -- ------------------------------------------------------------- crafting --
+function M.toggleTinyFuel(F)
+  F.tinyFuel = not F.tinyFuel
+  F.note = "Furnaces on tiny coal (crafted from charcoal/coal): " .. (F.tinyFuel and "ON" or "OFF")
+end
+
 function M.toggleHammer(F)
   F.hammer = not F.hammer
   F.note = "Ore doubling with hammers: " .. (F.hammer and "ON" or "OFF")
@@ -446,6 +451,9 @@ local function startCraft(F, from)
   if cfgp.enabled == false or now(F) < (F.craftPauseUntil or 0) then return nil end
   local stock = usableStock(F)
   local wanted = production.wantedForFleet(shortRoles(F), F.cfg.forester.sapling)
+  if F.tinyFuel then -- after the turtle parts: they matter more
+    for _, w in ipairs(production.wantedTiny(stock, cfgp)) do wanted[#wanted + 1] = w end
+  end
   local job, missing = production.plan(stock, F.hammer, wanted)
   F.prod.missing = missing
   if not job then return nil end
@@ -660,7 +668,9 @@ function M.handle(F, from, msg)
     end
   end
 
-  if msg.state == "new" then
+  if msg.wantFuel then
+    reply = M.deliverFuel(F, from, msg.wantFuel)
+  elseif msg.state == "new" then
     reply = assignHome(F, from, msg)
   elseif msg.state == "registerHome" then
     reply = registerHome(F, from, msg)
@@ -712,6 +722,33 @@ function M.handle(F, from, msg)
   return reply
 end
 
+-- Fuel on request: push `need` fuel worth of coal (best kinds first, see
+-- oreconf.FUEL_ORDER) from storage straight into the turtle, if it is on the
+-- wired network. Coal below the furnaces' reserve is the turtles' anyway.
+-- Returns the reply for the turtle.
+function M.deliverFuel(F, from, need)
+  local S = F.deps.storage
+  local name = S.findTurtle and S.findTurtle(from)
+  if not name then
+    F.note = ("%s wants fuel but isn't on the network (enable the modem next to it)"):format(label(F, from))
+    return { type = "nofuel", reason = "not on the network: right-click the modem next to me" }
+  end
+  local stock = S.list()
+  local given = 0
+  for _, item in ipairs(C.FUEL_ORDER) do
+    if given >= need then break end
+    local per = C.FUEL[item]
+    local n = math.min(stock[item] or 0, math.ceil((need - given) / per), 64)
+    if n > 0 then given = given + per * S.send(name, item, n) end
+  end
+  if given == 0 then
+    F.note = ("%s wants fuel; storage has none"):format(label(F, from))
+    return { type = "nofuel", reason = "no coal or charcoal in storage" }
+  end
+  F.note = ("Gave %s %d fuel"):format(label(F, from), given)
+  return { type = "fuel", fuel = given }
+end
+
 -- How much of `item` the factory has, counting what the furnaces and hammers
 -- turn it into: a rule for raw iron also counts iron dust and iron ingots
 -- (they get smelted as soon as they arrive).
@@ -758,7 +795,7 @@ function M.tick(F)
   local stock = S.list()
   local cfgp = F.cfg.production or {}
   if cfgp.enabled ~= false and S.furnaces then
-    F.prod.furnaces = production.smelt(S, cfgp, F.hammer, stock)
+    F.prod.furnaces = production.smelt(S, cfgp, F.hammer, stock, F.tinyFuel)
     stock = S.list()
   end
   -- a craft job whose assembler went silent

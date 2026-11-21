@@ -57,6 +57,16 @@ local function base(api)
     return out
   end
   function S.slots(name) return api.call(name, "list") or {} end
+  -- A turtle on the wired network (a modem touching it, enabled) by its
+  -- computer ID: its network name, or nil. Its inventory takes pushItems.
+  function S.findTurtle(id)
+    for _, n in ipairs(api.getNames()) do
+      if api.hasType(n, "turtle") then
+        local ok, tid = pcall(api.call, n, "getID")
+        if ok and tid == id then return n end
+      end
+    end
+  end
   function S.count(item) return S.list()[item] or 0 end
   function S.drainInputs()
     local moved = 0

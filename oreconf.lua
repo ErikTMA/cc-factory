@@ -22,6 +22,24 @@ local C = {
   SCANNER_ITEM = "advancedperipherals:geo_scanner",
 }
 
+-- ----------------------------------------------------------------- fuel --
+-- Turtle fuel per item (CC: burn ticks * 5 / 100; checked in the 1.120.2 jar).
+-- Tiny coal (Utilitarian, Actually Additions; 200 ticks) is 10: 8 of them are
+-- worth one coal, so for turtles they're only less dense. Their gain is in
+-- furnaces: one tiny coal smelts exactly one item (production.lua).
+C.FUEL = {
+  ["minecraft:coal"] = 80, ["minecraft:charcoal"] = 80, ["minecraft:coal_block"] = 800,
+  ["utilitarian:tiny_coal"] = 10, ["utilitarian:tiny_charcoal"] = 10,
+  ["actuallyadditions:tiny_coal"] = 10, ["actuallyadditions:tiny_charcoal"] = 10,
+}
+-- What the base hands a turtle, best first: dense fuel, the tiny kinds last.
+C.FUEL_ORDER = { "minecraft:coal", "minecraft:charcoal", "minecraft:coal_block",
+  "utilitarian:tiny_charcoal", "utilitarian:tiny_coal",
+  "actuallyadditions:tiny_charcoal", "actuallyadditions:tiny_coal" }
+C.TINY = { "utilitarian:tiny_charcoal", "utilitarian:tiny_coal",
+  "actuallyadditions:tiny_charcoal", "actuallyadditions:tiny_coal" }
+function C.isFuel(name) return C.FUEL[name] ~= nil end
+
 -- ------------------------------------------------------------- building --
 -- Crafting grid cells in a turtle's inventory (slots 1-3, 5-7, 9-11).
 C.GRID_CELLS = { 1, 2, 3, 5, 6, 7, 9, 10, 11 }

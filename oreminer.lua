@@ -35,6 +35,7 @@ local CFG = {
   lanes = 3,           -- parallel lanes, each `spacing` to the right of the last
   length = 64,         -- lane length in blocks
   fuelMargin = 100,    -- head home when fuel < distance home + this
+  askFuelBelow = 1000, -- at home, ask the base for fuel below this
   stateFile = "oreminer.state",
   homeFile = "oreminer.home",
   -- ores whose name matches any of these are left alone
@@ -497,14 +498,25 @@ elseif args[1] == "serve" then
     error("serve needs a wireless modem in the turtle's inventory", 0)
   end
   log("Waiting for jobs from the base...")
+  local lastAsk
   while true do
     refuel() -- burn any fuel someone put in
+    -- low on fuel at home: ask the base (at most once a minute)
+    local f = turtle.getFuelLevel()
+    if f ~= "unlimited" and f < CFG.askFuelBelow and (not lastAsk or os.clock() - lastAsk > 60) then
+      lastAsk = os.clock()
+      local got, why = link.requestFuel(FUEL_TARGET - f)
+      log(got and ("The base gave me %d fuel"):format(got) or ("No fuel from the base: " .. tostring(why)))
+    end
     local reply = talk("idle")
     if type(reply) == "table" and reply.type == "job" then
       local j = reply.job
       -- rough fuel for the job: shaft both ways plus the furthest lane and back
       local reach = ((j.sector or 0) + (j.lanes or CFG.lanes)) * CFG.spacing + (j.length or CFG.length)
       local needFuel = 2 * (math.abs((j.y or home.y) - home.y) + reach) + CFG.fuelMargin
+      if turtle.getFuelLevel() ~= "unlimited" and turtle.getFuelLevel() < needFuel then
+        link.requestFuel(needFuel - turtle.getFuelLevel() + CFG.fuelMargin)
+      end
       if turtle.getFuelLevel() ~= "unlimited" and turtle.getFuelLevel() < needFuel then
         log(("Need about %d fuel for that job, have %d: handing it back"):format(needFuel, turtle.getFuelLevel()))
         link.talk("no fuel", { job = j, need = needFuel }, false)

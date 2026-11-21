@@ -36,6 +36,7 @@
 
 local tmove = require("tmove")
 local link = require("link")
+local C = require("oreconf")
 local nav = require("nav")
 
 local CFG = {
@@ -316,7 +317,7 @@ local function refuel()
   if turtle.getFuelLevel() == "unlimited" or turtle.getFuelLevel() >= CFG.fuelLow then return end
   for i = 1, 16 do
     local d = turtle.getItemDetail(i)
-    if d and (isLog(d) or d.name == "minecraft:coal" or d.name == "minecraft:charcoal") and not reserved(i, d) then
+    if d and (isLog(d) or C.isFuel(d.name)) and not reserved(i, d) then
       select(i)
       while turtle.getFuelLevel() < CFG.fuelTarget and turtle.getItemCount(i) > 0 do
         if not turtle.refuel(1) then break end
@@ -556,6 +557,12 @@ local function round()
   local noSoil = 0
   for _, k in ipairs(AREA.spots) do if not isSoil(AREA.cells[k]) then noSoil = noSoil + 1 end end
   if noSoil > 0 then log(("%d tree spots need dirt: put some dirt in me"):format(noSoil)) end
+  refuel()
+  local f = turtle.getFuelLevel()
+  if f ~= "unlimited" and f < CFG.fuelLow then
+    local got, why = link.requestFuel(CFG.fuelTarget - f)
+    log(got and ("The base gave me %d fuel"):format(got) or ("Low on fuel, none from the base: " .. tostring(why)))
+  end
   link.talk("resting", { delivered = delivered, total = S.delivered, sapling = S.sapling, needDirt = noSoil })
 end
 

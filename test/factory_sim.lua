@@ -138,14 +138,41 @@ end
 local DISK = {}
 local function baseNetwork()
   local api = {}
+  -- A turtle touching a full wired modem is on the network as turtle_<id>
+  -- (in the game the modem must be enabled; the sim assumes it is). Its
+  -- peripheral has getID, and its inventory takes pushItems (CC 1.120.2:
+  -- the peripheral's target is the turtle block, a Container).
+  local function netTurtle(name)
+    local id = tonumber((name or ""):match("^turtle_(%d+)$"))
+    local T = id and W.turtles[id]
+    if not T then return nil end
+    for _, d in ipairs({ { 1, 0, 0 }, { -1, 0, 0 }, { 0, 1, 0 }, { 0, -1, 0 }, { 0, 0, 1 }, { 0, 0, -1 } }) do
+      if W.get(T.x + d[1], T.y + d[2], T.z + d[3]) == "computercraft:wired_modem_full" then return T end
+    end
+  end
+  local function intoTurtle(T, item, n)
+    local moved = 0
+    for i = 1, 16 do
+      local s = T.inv[i]
+      if moved >= n then break end
+      if s and s.name == item and s.count < 64 then
+        local m = math.min(64 - s.count, n - moved); s.count = s.count + m; moved = moved + m
+      elseif not s then
+        local m = math.min(64, n - moved); T.inv[i] = { name = item, count = m }; moved = moved + m
+      end
+    end
+    return moved
+  end
   function api.getNames()
     local n = { "drive_0" }
     for name in pairs(W.inv) do n[#n + 1] = name end
+    for id in pairs(W.turtles) do if netTurtle("turtle_" .. id) then n[#n + 1] = "turtle_" .. id end end
     table.sort(n)
     return n
   end
   function api.hasType(name, t)
     if name == "drive_0" then return t == "drive" end
+    if netTurtle(name) then return t == "turtle" end
     return W.inv[name] ~= nil and t == "inventory"
   end
   function api.call(name, method, ...)
@@ -153,6 +180,11 @@ local function baseNetwork()
     if name == "drive_0" then
       if method == "hasData" then return true end
       if method == "getMountPath" then return "disk" end
+    end
+    local NT = netTurtle(name)
+    if NT then
+      if method == "getID" then return NT.id end
+      error("turtle peripheral: no method " .. method)
     end
     local I = assert(W.inv[name], name)
     if method == "list" then
@@ -165,6 +197,12 @@ local function baseNetwork()
     elseif method == "pushItems" then
       local to, slot, limit, toSlot = W.inv[a[1]], a[2], a[3], a[4]
       local s = I.slots[slot]
+      local TT = netTurtle(a[1])
+      if s and TT then
+        local moved = intoTurtle(TT, s.name, math.min(limit or s.count, s.count))
+        I.take(slot, moved)
+        return moved
+      end
       if not s or not to then return 0 end
       local n = math.min(limit or s.count, s.count)
       local moved = to.insert(s.name, n, toSlot)
@@ -1229,8 +1267,23 @@ do
   check((T.files["surveyor.log"] or ""):find("Survey done"), "it keeps a log: surveyor.log")
 end
 
-print("scenario: the same with only 4 coal: it stops exploring in time, marks the home, gets back")
+-- take every `item` out of storage (returns a function that puts it back)
+local function withoutInStorage(item)
+  local held = {}
+  for name, I in pairs(W.inv) do
+    if name:find("barrel") then
+      for slot, st in pairs(I.slots) do if st.name == item then held[#held + 1] = { I, st.count }; I.take(slot) end end
+    end
+  end
+  return function() for _, h in ipairs(held) do h[1].insert(item, h[2]) end end
+end
+
+print("scenario: the same with only 4 coal and none in storage: it stops exploring in time,")
+print("          marks the home, gets back")
 do
+  local backs = {}
+  for _, item in ipairs(baseEnv.require("oreconf").FUEL_ORDER) do backs[#backs + 1] = withoutInStorage(item) end
+  local function putBack() for _, b in ipairs(backs) do b() end end
   topLayout(140, 40, "minecraft:chest_78")
   local T = surveyorOnTop(62, 140, 40, 4)
   local lowest = math.huge
@@ -1244,6 +1297,96 @@ do
   check(homeAt("minecraft:chest_78") ~= nil, "registered the home")
   check(lowest > 0, "never ran dry: lowest fuel " .. lowest)
   check((T.files["surveyor.log"] or ""):find("stop exploring"), "said it stopped exploring for fuel")
+  check((T.files["surveyor.log"] or ""):find("No fuel from the base"), "it asked the base first (storage had none)")
+  putBack()
+end
+
+print("scenario: with 2 coal it makes a fuel run: the base pushes coal into it at a modem")
+do
+  W.inv["minecraft:barrel_0"].insert("minecraft:coal", 64)
+  topLayout(240, 40, "minecraft:chest_79")
+  local T = surveyorOnTop(64, 240, 40, 2)
+  local lowest, maxZ = math.huge, 40
+  bootTurtle(T)
+  local ok = runUntil(function()
+    lowest, maxZ = math.min(lowest, T.fuel), math.max(maxZ, T.z)
+    return T.files["surveyor.state"] and T.files["surveyor.state"]:find("done")
+  end, 400000)
+  check(ok, "the survey finished")
+  check((T.files["surveyor.log"] or ""):find("The base gave me"), "got fuel from the base")
+  check(maxZ >= 40 + 30, "so it explored the whole range: furthest z " .. maxZ)
+  check(homeAt("minecraft:chest_79") ~= nil, "registered the home")
+  check(T.x == 240 and T.y == 1 and T.z == 40 and lowest > 0, "back on the computer, never ran dry")
+end
+
+print("scenario: fuel on request: a turtle next to a modem gets coal pushed in; one off the network is told why")
+do
+  local barrel = W.inv["minecraft:barrel_0"]
+  barrel.insert("minecraft:coal", 64)
+  local coalBefore = 0
+  for _, I in pairs(W.inv) do if I.name:find("barrel") then coalBefore = coalBefore + I.count("minecraft:coal") end end
+  local ask = 'local link = require("link"); local got, why = link.requestFuel(500); ' ..
+              'local f = fs.open("ask.out", "w"); f.write(tostring(got) .. "|" .. tostring(why)); f.close()'
+  local function asker(id, x, z, extra)
+    local T = newTurtleEntity(id, x, 0, z, 0)
+    T.fuel = 5
+    for _, name in ipairs(manifest.turtle) do T.files[name] = repoFile(name) end
+    T.files["agent.cfg"] = ser({ role = "miner", base = 0 })
+    T.files["ask.lua"] = ask
+    if extra then extra(T) end
+    local env = turtleEnv(T)
+    local co = coroutine.create(function() env.shell.run("ask") end)
+    scheduler.cos[#scheduler.cos + 1] = { T = T, co = co }
+    runUntil(function() return coroutine.status(co) == "dead" end, 5000)
+    return T
+  end
+  W.set(300, 0, 299, "computercraft:wired_modem_full")
+  local T = asker(70, 300, 300)
+  local coalAfter = 0
+  for _, I in pairs(W.inv) do if I.name:find("barrel") then coalAfter = coalAfter + I.count("minecraft:coal") end end
+  check(T.fuel >= 505, "on the network: fuel 5 -> " .. T.fuel .. " (" .. tostring(T.files["ask.out"]) .. ")")
+  check(coalBefore - coalAfter == 7, "7 coal (560 fuel) left storage for 500 asked: " .. (coalBefore - coalAfter))
+  local T2 = asker(71, 310, 300, function(t) t.left = "computercraft:wireless_modem_normal" end)
+  check(T2.fuel == 5 and (T2.files["ask.out"] or ""):find("network"), "off the network: no fuel, and why: " .. tostring(T2.files["ask.out"]))
+end
+
+print("scenario: TINY FUEL: furnaces get one tiny coal per item (blast: per two); off: coal as before")
+do
+  local production = baseEnv.require("production")
+  local sent = {}
+  local fake = {
+    furnaces = function() return { { name = "furnace_a" }, { name = "blast_b", blast = true } } end,
+    slots = function() return {} end,
+    storeSlot = function() end,
+    send = function(to, item, n, _, slot) sent[#sent + 1] = { to, item, n, slot }; return n end,
+  }
+  local stock = { ["minecraft:raw_gold"] = 3, ["minecraft:raw_iron"] = 5, ["utilitarian:tiny_charcoal"] = 20,
+                  ["minecraft:coal"] = 100 }
+  local function fuelOf(to)
+    for _, x in ipairs(sent) do if x[1] == to and x[4] == 2 then return x[2], x[3] end end
+  end
+  production.smelt(fake, production.DEFAULTS, false, stock, true)
+  local i1, n1 = fuelOf("furnace_a")
+  local i2, n2 = fuelOf("blast_b")
+  check(i1 == "utilitarian:tiny_charcoal" and n1 == 3, "furnace, 3 raw gold: 3 tiny (" .. tostring(i1) .. " " .. tostring(n1) .. ")")
+  check(i2 == "utilitarian:tiny_charcoal" and n2 == 3, "blast furnace, 5 raw iron: 3 tiny (" .. tostring(i2) .. " " .. tostring(n2) .. ")")
+  sent = {}
+  production.smelt(fake, production.DEFAULTS, false, stock, false)
+  i1, n1 = fuelOf("furnace_a")
+  check(i1 == "minecraft:coal" and n1 == 8, "switch off: 8 coal as before (" .. tostring(i1) .. " " .. tostring(n1) .. ")")
+  -- the craft: wanted only with charcoal to make it from, then the REAL recipe
+  local w = production.wantedTiny({ ["minecraft:charcoal"] = 3 }, production.DEFAULTS)
+  check(w[1] and w[1][1] == "utilitarian:tiny_charcoal" and w[1][2] == 24, "wants 3 charcoal made into 24 tiny")
+  check(#production.wantedTiny({ ["minecraft:coal"] = 10 }, production.DEFAULTS) == 0, "never eats the turtles' coal reserve")
+  local job = production.plan({ ["minecraft:charcoal"] = 3 }, false, w)
+  check(job and job.item == "utilitarian:tiny_charcoal" and job.grid[1] == "minecraft:charcoal", "the planner makes it a craft job")
+  local CT = newTurtleEntity(72, 320, 0, 300, 0)
+  CT.right = "minecraft:crafting_table"
+  CT.inv[1] = { name = "minecraft:charcoal", count = 3 }
+  local env = turtleEnv(CT)
+  env.turtle.select(1)
+  check(env.turtle.craft() and CT.inv[1] and CT.inv[1].name == "utilitarian:tiny_charcoal" and CT.inv[1].count == 24,
+    "crafted by the real Utilitarian recipe: " .. textutils.serialize(CT.inv[1]))
 end
 
 print("scenario: stranded away from its start: 'surveyor survey' refuses, 'surveyor home' brings it back")

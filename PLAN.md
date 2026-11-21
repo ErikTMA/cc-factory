@@ -38,6 +38,24 @@ over rednet. Friends-only server: base-ID pinning, no signing.
   ingot (iron/gold/copper -> minecraft ingots). ATM10 KubeJS keeps these.
 - Observer needs nether quartz: a raw input the base cannot make.
 
+## Fuel facts (jars, 2026-11-21)
+
+- CC 1.120.2 `FurnaceRefuelHandler`: turtle fuel per item = burn ticks * 5 / 100
+  (coal 1600 -> 80). Tiny coal/charcoal burn 200 ticks (neoforge furnace_fuels
+  data map in Utilitarian 0.19.2 and Actually Additions 1.3.26) -> 10 fuel: 8
+  tiny = 1 coal, no gain for turtles. In a furnace 200 ticks = exactly one
+  smelt (blast furnace: two), so tiny fuel removes the burn-off waste there.
+- Utilitarian `tiny_fuel/tiny_coal|tiny_charcoal`: shapeless 1 coal/charcoal ->
+  8 (fixture). AA's recipes depend on its `tinyCoalStuff` config. Almost
+  Unified (`unification/materials.json`) prefers utilitarian for
+  `atm10:tiny_coals` / `atm10:tiny_charcoals`.
+- Fuel on request: `pushItems` targets come from `InventoryMethods.extractHandler`:
+  any peripheral whose `getTarget()` is a block entity with an item capability
+  or a vanilla `Container`. `ComputerPeripheral.getTarget()` returns the
+  computer/turtle block entity, and `TurtleBlockEntity implements
+  BasicContainer`, so a turtle on the wired network (`turtle_N`, `getID()`)
+  takes items pushed from a barrel.
+
 ## Assembly procedure (base stages, assembler crafts)
 
 Supply trapped chest above the assembler; build spot in front of it with the
@@ -155,6 +173,10 @@ Each tested fix was proven by mutation (scenario fails without it).
 - Rednet message size of a full code update (~55 KB in one message).
 - Orientation of a turtle placed by the assembler (code measures it anyway).
 - Base event loop under real tick costs (not simulated).
+- A turtle arriving next to an already-enabled full modem gets shared as
+  `turtle_N` without right-clicking again (fuel on request depends on it).
+- `pushItems` from a remote barrel into a turtle next to the base computer
+  with no modem (assumed NOT to work; fuel on request asks for a modem).
 
 ## M9 notes (2026-11-22)
 

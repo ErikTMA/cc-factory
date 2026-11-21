@@ -37,6 +37,8 @@ local CFG = {
   maxSearch = 20000, -- cells one path search may visit before it gives up
   maxSteps = 4000,
   minFuel = 100,     -- refuel from its inventory below this
+  askMargin = 150,   -- go ask the base for fuel while this much above the need is left
+                     -- (so the trip to a modem is still affordable)
   stateFile = "surveyor.state",
   mapFile = "surveyor.map",
 }
@@ -257,9 +259,10 @@ local homeSpots -- (below)
 
 -- Fuel the rest of the job needs from here: home, plus a round trip from the
 -- start to every home spot still to mark (an upper bound), plus a reserve.
-local function fuelToFinish(dist)
-  local here = dist[key(S.pos.x, S.pos.y, S.pos.z)]
-    or 2 * (math.abs(S.pos.x) + math.abs(S.pos.y) + math.abs(S.pos.z))
+local function fuelToFinish(dist, at)
+  at = at or key(S.pos.x, S.pos.y, S.pos.z)
+  local ax, ay, az = unkey(at)
+  local here = dist[at] or 2 * (math.abs(ax) + math.abs(ay) + math.abs(az))
   local spots = 0
   for _, sp in ipairs(homeSpots()) do
     if not (S.homes or {})[key(sp.x, sp.y, sp.z)] then spots = spots + 2 * (dist[key(sp.x, sp.y, sp.z)] or 0) end
@@ -271,6 +274,48 @@ end
 local function haveFuel(need)
   if fuel() < need then refuel(need + 500) end
   return fuel() >= need
+end
+
+-- a cell next to a full wired modem: from there it can talk to the base, and
+-- (with the modem enabled) the base can push fuel into it
+local function nextToModem(k)
+  local x, y, z = unkey(k)
+  for _, n in ipairs(SIX) do
+    if MAP[key(x + n[1], y + n[2], z + n[3])] == "computercraft:wired_modem_full" then return true end
+  end
+  return false
+end
+
+-- Fuel run: go to the nearest spot next to a modem (if it can still finish
+-- the job from there) and ask the base for fuel. True when it got some; the
+-- caller plans again from where it now is. Gives up for this run after the
+-- base said no once.
+local function fuelRun(need)
+  if S.noFuelFromBase then return false end
+  local moves = pathTo(nextToModem, blocked)
+  if not moves then log("Low on fuel, and I know no modem to ask the base from"); return false end
+  local at = key(S.pos.x, S.pos.y, S.pos.z)
+  for _, how in ipairs(moves) do
+    local d = type(how) == "number" and DIRS[how] or { 0, how == "up" and 1 or -1, 0 }
+    local x, y, z = unkey(at)
+    at = key(x + d[1], y + d[2], z + d[3])
+  end
+  local cost = #moves + fuelToFinish(stepsHome(), at)
+  if fuel() < cost then
+    log(("Low on fuel: the nearest modem is %d steps away, %d fuel with the way back; I have %d"):format(#moves, cost, fuel()))
+    return false
+  end
+  log("Going to a modem to ask the base for fuel...")
+  if not follow(moves) then return false end
+  local got, why = link.requestFuel(need + 1000 - fuel())
+  if not got or got <= 0 then
+    log("No fuel from the base: " .. tostring(why))
+    S.noFuelFromBase = true
+    save()
+    return false
+  end
+  log(("The base gave me %d fuel"):format(got))
+  return true
 end
 
 -- --------------------------------------------------------------- explore --
@@ -376,14 +421,20 @@ local function explore()
     end
     -- there, back the same way, and then everything still to do
     local need = 2 * #moves + fuelToFinish(stepsHome())
-    if not haveFuel(need) then
+    local fuelled = haveFuel(need)
+    if not haveFuel(need + CFG.askMargin) and fuelRun(need + CFG.askMargin) then
+      fuelled = "replan" -- it moved: plan again from here
+    end
+    if not fuelled then
       log(("Fuel %d: only enough to finish from here, so I stop exploring (give me more coal for a bigger survey)")
         :format(fuel()))
       break
     end
-    local before = S.steps or 0
-    walkSeeing(moves)
-    if (S.steps or 0) == before and #moves > 0 and fuel() < 1 then break end
+    if fuelled ~= "replan" then
+      local before = S.steps or 0
+      walkSeeing(moves)
+      if (S.steps or 0) == before and #moves > 0 and fuel() < 1 then break end
+    end
   end
   noteNetwork()
   local chests, left = 0, 0
@@ -437,9 +488,13 @@ local function registerHomes()
     local id = key(sp.x, sp.y, sp.z)
     local reachable = true
     if not S.homes[id] then
-      local dist = stepsHome()
-      local way = pathTo(function(k) return k == id end, blocked)
-      local need = way and (#way + (dist[id] or 0) + CFG.reserve)
+      local function plan()
+        local dist = stepsHome()
+        local w = pathTo(function(k) return k == id end, blocked)
+        return w, w and (#w + (dist[id] or 0) + CFG.reserve)
+      end
+      local way, need = plan()
+      if way and not haveFuel(need) and fuelRun(need) then way, need = plan() end
       if not way then
         log("No known way to the home spot at " .. id .. "; skipped")
         reachable = false
@@ -582,14 +637,6 @@ S.drives = drives
 save()
 
 -- report from a spot next to a modem (it may have none where it started)
-local function nextToModem(k)
-  local x, y, z = unkey(k)
-  for _, n in ipairs(SIX) do
-    local nb = MAP[key(x + n[1], y + n[2], z + n[3])]
-    if nb == "computercraft:wired_modem_full" then return true end
-  end
-  return false
-end
 local reported = false
 local moves = pathTo(nextToModem, blocked)
 if moves and follow(moves) then

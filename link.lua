@@ -204,4 +204,31 @@ function L.talk(state, extra, updates)
   return reply
 end
 
+-- Burn fuel items (oreconf.FUEL) from the inventory up to `target`.
+function L.burnFuel(target)
+  if turtle.getFuelLevel() == "unlimited" then return end
+  for i = 1, 16 do
+    if turtle.getFuelLevel() >= target then break end
+    local d = turtle.getItemDetail(i)
+    if d and C.isFuel(d.name) then
+      turtle.select(i)
+      while turtle.getFuelLevel() < target and turtle.getItemCount(i) > 0 and turtle.refuel(1) do end
+    end
+  end
+  turtle.select(1)
+end
+
+-- Ask the base for `need` fuel. It pushes coal straight into this turtle when
+-- the turtle is on the wired network (a modem touching it, enabled); then it
+-- is burnt. Returns the fuel gained, or nil and why not.
+function L.requestFuel(need)
+  local before = turtle.getFuelLevel()
+  if before == "unlimited" then return 0 end
+  local reply = L.talk("fuel", { wantFuel = need }, false)
+  if not reply then return nil, "no answer from the base (no modem here?)" end
+  if reply.type ~= "fuel" then return nil, reply.reason or "the base has no fuel for me" end
+  L.burnFuel(before + need)
+  return turtle.getFuelLevel() - before
+end
+
 return L

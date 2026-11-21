@@ -26,6 +26,7 @@ P.DEFAULTS = {
   coalReserve = 64,    -- coal the furnaces leave for turtles
   keepLogs = 16,       -- logs kept for planks and sticks
   keepCobble = 16,     -- cobblestone kept for observers
+  tinyStock = 64,      -- TINY FUEL on: keep this much tiny coal/charcoal crafted
 }
 
 local FUELS = { "minecraft:charcoal", "minecraft:coal" }
@@ -73,15 +74,51 @@ local function pickInput(cfg, hammerOn, stock, avail, blast)
   if avail("minecraft:glass") < cfg.glass and avail("minecraft:sand") > 0 then return "minecraft:sand" end
 end
 
+local function isTiny(name)
+  for _, t in ipairs(C.TINY) do if t == name then return true end end
+  return false
+end
+
+-- TINY FUEL: exactly the tiny pieces the items in the furnace need (one per
+-- item; a blast furnace smelts two per piece), nothing burning away after.
+-- Returns false when it can't (no tiny in stock, other fuel in the slot).
+local function tinyFuel(S, f, slots, items, avail, planned)
+  if slots[2] and not isTiny(slots[2].name) then return false end
+  local per = f.blast and 2 or 1
+  local want = math.ceil(items / per) - (slots[2] and slots[2].count or 0)
+  if want <= 0 then return true end
+  local kinds = slots[2] and { slots[2].name } or C.TINY
+  for _, t in ipairs(kinds) do
+    local n = math.min(want, avail(t))
+    if n > 0 then
+      planned[t] = (planned[t] or 0) + S.send(f.name, t, n, nil, 2)
+      return true
+    end
+  end
+  return false
+end
+
 -- One pass over every furnace. Returns how many got new work.
-function P.smelt(S, cfg, hammerOn, stock)
+-- `tinyOn`: fuel with tiny coal/charcoal by the item (the TINY FUEL switch).
+function P.smelt(S, cfg, hammerOn, stock, tinyOn)
   local planned = {}
   local function avail(item) return (stock[item] or 0) - (planned[item] or 0) end
   local work = 0
   for _, f in ipairs(S.furnaces()) do
     local slots = S.slots(f.name)
     if slots[3] then S.storeSlot(f.name, 3) end
-    if not slots[2] or slots[2].count < 4 then
+    local items = slots[1] and slots[1].count or 0
+    if not slots[1] then
+      local item = pickInput(cfg, hammerOn, stock, avail, f.blast)
+      if item then
+        local sent = S.send(f.name, item, math.min(16, avail(item)), nil, 1)
+        planned[item] = (planned[item] or 0) + sent
+        items = sent
+        work = work + 1
+      end
+    end
+    if not (tinyOn and items > 0 and tinyFuel(S, f, slots, items, avail, planned))
+       and (not slots[2] or slots[2].count < 4) and items > 0 then
       for _, fuel in ipairs(FUELS) do
         local reserve = fuel == "minecraft:coal" and cfg.coalReserve or 0
         local n = math.min(8, avail(fuel) - reserve)
@@ -91,15 +128,25 @@ function P.smelt(S, cfg, hammerOn, stock)
         end
       end
     end
-    if not slots[1] then
-      local item = pickInput(cfg, hammerOn, stock, avail, f.blast)
-      if item then
-        planned[item] = (planned[item] or 0) + S.send(f.name, item, math.min(16, avail(item)), nil, 1)
-        work = work + 1
-      end
-    end
   end
   return work
+end
+
+-- TINY FUEL on: what to craft so the furnaces have tiny fuel (charcoal first:
+-- it grows on trees; coal only above the turtles' reserve). Empty when there
+-- is enough, or nothing to make it from.
+function P.wantedTiny(stock, cfg)
+  local have = 0
+  for _, t in ipairs(C.TINY) do have = have + (stock[t] or 0) end
+  local short = (cfg.tinyStock or P.DEFAULTS.tinyStock) - have
+  if short <= 0 then return {} end
+  local sets = math.ceil(short / 8)
+  if (stock["minecraft:charcoal"] or 0) > 0 then
+    return { { "utilitarian:tiny_charcoal", 8 * math.min(sets, stock["minecraft:charcoal"]) } }
+  end
+  local spare = (stock["minecraft:coal"] or 0) - (cfg.coalReserve or P.DEFAULTS.coalReserve)
+  if spare > 0 then return { { "utilitarian:tiny_coal", 8 * math.min(sets, spare) } } end
+  return {}
 end
 
 -- ------------------------------------------------------------- planning --

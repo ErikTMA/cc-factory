@@ -133,6 +133,8 @@ local function drawFactory(UI, out, w, row)
   button(UI, out, w - 15, row, 16, "HAMMER " .. (F.hammer and "ON" or "OFF"), F.hammer,
     function() factory.toggleHammer(F) end)
   row = row + 1
+  button(UI, out, w - 15, row, 16, "TINY FUEL " .. (F.tinyFuel and "ON" or "OFF"), F.tinyFuel,
+    function() factory.toggleTinyFuel(F) end)
   put(out, 1, row, ("furnaces busy %d   crafting %s"):format(F.prod.furnaces or 0,
     F.craft and (F.craft.item:gsub("^%w+:", "") .. " x" .. F.craft.sets) or "-"):sub(1, w), colors.lightGray)
   row = row + 1

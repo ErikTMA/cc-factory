@@ -18,6 +18,7 @@ jars = glob.glob("/data/libraries/net/minecraft/server/*/server-*-extra.jar")
 jars += glob.glob("/data/libraries/net/neoforged/neoforge/*/neoforge-*-universal.jar")
 jars += glob.glob("/data/mods/cc-tweaked-*.jar") + glob.glob("/data/mods/AdvancedPeripherals*.jar")
 jars += glob.glob("/data/mods/alltheores*.jar")
+jars += glob.glob("/data/mods/utilitarian-*.jar")
 Z = [zipfile.ZipFile(j) for j in jars]
 
 
@@ -34,6 +35,7 @@ WANT = {
     "computercraft": ["computer_advanced", "turtle_advanced", "computer_normal", "turtle_normal",
                       "wired_modem", "wired_modem_full_from", "turtle_upgrade", "wireless_modem_normal"],
     "advancedperipherals": ["geo_scanner", "peripheral_casing"],
+    "utilitarian": ["tiny_fuel/tiny_coal", "tiny_fuel/tiny_charcoal"],
     "alltheores": ["copper_ore_hammer", "iron_ore_hammer", "crafting/hammer/iron/dust_from_raw",
                    "crafting/hammer/gold/dust_from_raw", "crafting/hammer/copper/dust_from_raw"],
 }

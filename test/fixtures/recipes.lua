@@ -439,6 +439,28 @@ return {
     ["id"] = "minecraft:stick"
    },
    ["type"] = "minecraft:crafting_shaped"
+  },
+  ["utilitarian:tiny_fuel/tiny_charcoal"] = {
+   ["category"] = "misc",
+   ["ingredients"] = { {
+    ["item"] = "minecraft:charcoal"
+   } },
+   ["result"] = {
+    ["count"] = 8,
+    ["id"] = "utilitarian:tiny_charcoal"
+   },
+   ["type"] = "minecraft:crafting_shapeless"
+  },
+  ["utilitarian:tiny_fuel/tiny_coal"] = {
+   ["category"] = "misc",
+   ["ingredients"] = { {
+    ["item"] = "minecraft:coal"
+   } },
+   ["result"] = {
+    ["count"] = 8,
+    ["id"] = "utilitarian:tiny_coal"
+   },
+   ["type"] = "minecraft:crafting_shapeless"
   }
  },
  ["smelting"] = {
@@ -557,7 +579,7 @@ return {
    ["type"] = "minecraft:smelting"
   }
  },
- ["sources"] = { "AdvancedPeripherals-1.21.1-0.8.2a.jar", "alltheores-3.2.0_neoforge_1.21.1.jar", "cc-tweaked-1.21.1-forge-1.113.1.jar", "cc-tweaked-1.21.1-forge-1.120.2.jar", "neoforge-21.1.215-universal.jar", "neoforge-21.1.219-universal.jar", "neoforge-21.1.221-universal.jar", "neoforge-21.1.224-universal.jar", "neoforge-21.1.228-universal.jar", "neoforge-21.1.234-universal.jar", "neoforge-21.1.266-universal.jar", "server-1.21.1-20240808.144430-extra.jar" },
+ ["sources"] = { "AdvancedPeripherals-1.21.1-0.8.2a.jar", "alltheores-3.2.0_neoforge_1.21.1.jar", "cc-tweaked-1.21.1-forge-1.113.1.jar", "cc-tweaked-1.21.1-forge-1.120.2.jar", "neoforge-21.1.215-universal.jar", "neoforge-21.1.219-universal.jar", "neoforge-21.1.221-universal.jar", "neoforge-21.1.224-universal.jar", "neoforge-21.1.228-universal.jar", "neoforge-21.1.234-universal.jar", "neoforge-21.1.266-universal.jar", "server-1.21.1-20240808.144430-extra.jar", "utilitarian-1.21.1-0.19.2.jar" },
  ["tags"] = {
   ["alltheores:ore_hammers"] = { "alltheores:bronze_ore_hammer", "alltheores:copper_ore_hammer", "alltheores:invar_ore_hammer", "alltheores:iron_ore_hammer", "alltheores:platinum_ore_hammer" },
   ["c:chests/wooden"] = { "minecraft:chest", "minecraft:trapped_chest" },

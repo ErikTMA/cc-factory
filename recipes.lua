@@ -73,6 +73,9 @@ R.CRAFT = {
   ["minecraft:glass_pane"] = { count = 16, grid = {
     [1] = "minecraft:glass", [2] = "minecraft:glass", [3] = "minecraft:glass",
     [5] = "minecraft:glass", [6] = "minecraft:glass", [7] = "minecraft:glass" } },
+  -- Utilitarian (Almost Unified's choice in ATM10): 1 -> 8, each smelts one item
+  ["utilitarian:tiny_charcoal"] = { count = 8, grid = { [1] = "minecraft:charcoal" } },
+  ["utilitarian:tiny_coal"] = { count = 8, grid = { [1] = "minecraft:coal" } },
   ["alltheores:copper_ore_hammer"] = { count = 1, single = true, grid = {
     [2] = "minecraft:copper_block", [3] = "minecraft:stick", [6] = "minecraft:stick",
     [7] = "minecraft:copper_block", [9] = "minecraft:stick" } },
