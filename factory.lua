@@ -344,21 +344,48 @@ end
 -- Turtle upgrades must be undamaged and unenchanted, or crafting them on fails.
 local function usableTool(d) return (d.damage or 0) == 0 and not (d.enchantments and next(d.enchantments)) end
 
--- Storage contents, counting only usable tools.
+-- A computer or turtle item with no extra data (no `nbt`): fresh from the
+-- crafting grid. An upgraded turtle or a used computer (its ID) has some.
+local function isComputerItem(item) return item:find("^computercraft:computer_") or item:find("^computercraft:turtle_") end
+local function fresh(d) return d.nbt == nil end
+
+-- How the base picks stacks it hands over: usable tools, fresh computers.
+local function acceptFor(item)
+  if item:find("pickaxe") then return usableTool end
+  if isComputerItem(item) then return fresh end
+end
+
+-- Storage contents, counting only usable tools and fresh computers/turtles
+-- (a bridge can't show item details: none of those count there).
 local function usableStock(F)
   local S = F.deps.storage
   local stock = S.list()
   for item in pairs(stock) do
-    if item:find("pickaxe") and S.countWhere then stock[item] = S.countWhere(item, usableTool) end
+    local accept = acceptFor(item)
+    if accept then
+      stock[item] = (S.kind == "barrels" and S.countWhere) and S.countWhere(item, accept) or 0
+    end
   end
   return stock
 end
+
+-- AE2-style: the build step to start at for `role`, by what is in storage: a
+-- fresh plain turtle of its tier skips to the upgrades (3), a fresh computer
+-- to the body (2), else from the start (1).
+local function startFor(F, role, stock)
+  stock = stock or usableStock(F)
+  local all = C.allBuildSteps(role)
+  if (stock[all[2].result] or 0) >= 1 then return 3 end
+  if (stock[all[1].result] or 0) >= 1 then return 2 end
+  return 1
+end
+M.startFor = startFor
 
 -- Items missing from storage for one turtle of `role` ({} when complete).
 function M.missingParts(F, role)
   local missing = {}
   local stock = usableStock(F)
-  for item, n in pairs(C.parts(role, buildSapling(F))) do
+  for item, n in pairs(C.parts(role, buildSapling(F), startFor(F, role, stock))) do
     if (stock[item] or 0) < n then missing[item] = n - (stock[item] or 0) end
   end
   return missing
@@ -430,8 +457,7 @@ local function stage(F, from, items, keep)
   table.sort(names)
   for _, item in ipairs(names) do
     local n = items[item]
-    local accept = item:find("pickaxe") and usableTool or nil
-    local moved = S.send(name, item, n, accept)
+    local moved = S.send(name, item, n, acceptFor(item))
     if moved < n then return false, ("only %d of %d %s in storage"):format(moved, n, item) end
   end
   return true
@@ -573,7 +599,8 @@ local function startCraft(F, from)
   local cfgp = F.cfg.production or {}
   if cfgp.enabled == false or now(F) < (F.craftPauseUntil or 0) then return nil end
   local stock = usableStock(F)
-  local wanted = production.wantedForFleet(shortRoles(F), buildSapling(F))
+  local wanted = production.wantedForFleet(shortRoles(F), buildSapling(F),
+    function(role) return startFor(F, role, stock) end)
   if F.tinyFuel then -- after the turtle parts: they matter more
     for _, w in ipairs(production.wantedTiny(stock, cfgp)) do wanted[#wanted + 1] = w end
   end
@@ -677,14 +704,16 @@ handleAssemblerStep = function(F, from, msg, o)
                   wait = F.cfg.forester.wait, slot = slotFor(F, home), homeY = F.cfg.build.y,
                   host = o.role == "gps" and { x = home.x, y = home.y, z = home.z } or nil }
     F.deps.writeInstall(copy(o.install))
-    local steps = C.buildSteps(o.role)
+    o.from = startFor(F, o.role) -- AE2-style: skip what storage already has
+    local steps = C.buildSteps(o.role, o.from)
     local ok, why = stage(F, from, stepItems(steps[1]))
     if not ok then failOrder(F, o, why); return { type = "ok" } end
-    F.note = ("Building a %s turtle (#%d)"):format(o.role, o.id)
+    F.note = ("Building a %s turtle (#%d)%s"):format(o.role, o.id,
+      o.from == 3 and ": a plain turtle from storage" or o.from == 2 and ": a computer from storage" or "")
     return stepReply(o, steps[1], 1)
   end
   if not o or o.state ~= "building" or msg.order ~= o.id then return { type = "ok" } end
-  local steps = C.buildSteps(o.role)
+  local steps = C.buildSteps(o.role, o.from)
   if msg.state == "crafted" and msg.step == o.step then
     if o.step < #steps then
       o.step = o.step + 1

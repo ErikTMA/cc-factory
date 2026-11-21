@@ -199,6 +199,9 @@ Each tested fix was proven by mutation (scenario fails without it).
 - Rednet message size of a full code update (~55 KB in one message).
 - Orientation of a turtle placed by the assembler (code measures it anyway).
 - Base event loop under real tick costs (not simulated).
+- A freshly crafted plain turtle/computer item has no `nbt` in getItemDetail
+  (the AE2-style shortcut only uses items without it; if fresh items do carry
+  some, the shortcut just never fires).
 - `pushItems` from a remote barrel into a turtle next to the base computer
   with no modem (assumed NOT to work; fuel on request asks for a modem).
 

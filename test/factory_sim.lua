@@ -224,7 +224,8 @@ local function baseNetwork()
       return out
     elseif method == "getItemDetail" then
       local st = I.slots[a[1]]
-      return st and { name = st.name, count = st.count, damage = st.damage or 0, enchantments = st.enchantments } or nil
+      return st and { name = st.name, count = st.count, damage = st.damage or 0, enchantments = st.enchantments,
+                      nbt = st.nbt } or nil
     elseif method == "pushItems" then
       local to, slot, limit, toSlot = W.inv[a[1]], a[2], a[3], a[4]
       local s = I.slots[slot]
@@ -1025,6 +1026,44 @@ do
   end
 end
 
+
+print("scenario: AE2-style: a plain turtle in storage is used, the build only fits the upgrades;")
+print("          an upgraded turtle in storage is left alone")
+do
+  config.fleet.miner = config.fleet.miner + 1
+  factory.addHome(F, { x = 10, y = 0, z = 0, facing = "north", role = "miner", source = "cfg" })
+  newInv("minecraft:chest_60", 10, 0, 0)
+  W.set(10, 0, -2, "computercraft:wired_modem_full")
+  local B = W.inv["minecraft:barrel_1"]
+  local function freeSlot() for i = 1, B.size do if not B.slots[i] then return i end end end
+  -- the upgraded one first: a careless pick would take it
+  B.slots[freeSlot()] = { name = "computercraft:turtle_advanced", count = 1, nbt = "UPGRADED" } -- someone's mining turtle
+  B.slots[freeSlot()] = { name = "computercraft:turtle_advanced", count = 1 }                   -- plain, fresh
+  B.insert("minecraft:diamond_pickaxe", 1); B.insert("advancedperipherals:geo_scanner", 1); B.insert("minecraft:coal", 32)
+  B.insert("minecraft:gold_ingot", 20); B.insert("minecraft:redstone", 2); B.insert("minecraft:glass_pane", 2)
+  B.insert("minecraft:chest", 2) -- (enough to build from scratch too)
+  local computersBefore = F.crafted["computercraft:computer_advanced"] or 0
+  local goldBefore = stock()["minecraft:gold_ingot"] or 0
+  check(factory.startFor(F, "miner") == 3, "the base starts at step 3 (upgrades)")
+  local ok = runUntil(function()
+    for _, T in pairs(W.turtles) do if T.x == 10 and T.z == -1 and F.turtles[T.id] then return true end end
+  end, 200000)
+  check(ok, "a miner was built and flew to its new home")
+  check(goldBefore >= 20 and (stock()["minecraft:gold_ingot"] or 0) == goldBefore,
+    ("no gold used: %d before, %d after"):format(goldBefore, stock()["minecraft:gold_ingot"] or 0))
+  check((F.crafted["computercraft:computer_advanced"] or 0) == computersBefore, "no computer crafted")
+  local upgradedLeft = false
+  for _, I in pairs(W.inv) do for _, st in pairs(I.slots) do if st.nbt == "UPGRADED" then upgradedLeft = true end end end
+  check(upgradedLeft, "the upgraded turtle is still in storage")
+  -- a fresh computer in storage (and no plain turtle): start at the body step,
+  -- with the computer delivered into its cell like the other parts
+  local B2 = W.inv["minecraft:barrel_0"]
+  B2.insert("computercraft:computer_advanced", 1)
+  local Cf = baseEnv.require("oreconf")
+  local first = Cf.buildSteps("miner", factory.startFor(F, "miner"))[1]
+  check(factory.startFor(F, "miner") == 2 and first.grid[6] == "computercraft:computer_advanced" and not first.keep,
+    "a computer in storage: starts at step 2, the computer goes into cell 6")
+end
 
 print("scenario: a plain turtle next to the base computer climbs the wall the cable goes through,")
 print("          maps the network, finds the build spot and registers homes")

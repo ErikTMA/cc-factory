@@ -247,11 +247,12 @@ function P.plan(stock, hammerOn, wanted)
 end
 
 -- Items (and counts) needed for one more turtle of each role short of its
--- fleet target, in a stable order.
-function P.wantedForFleet(short, sapling)
+-- fleet target, in a stable order. `startOf(role)`: the build step it starts
+-- at (an intermediate product already in storage), default 1.
+function P.wantedForFleet(short, sapling, startOf)
   local wanted = {}
   for _, role in ipairs(sortedKeys(short)) do
-    local parts = C.parts(role, sapling)
+    local parts = C.parts(role, sapling, startOf and startOf(role))
     for _, item in ipairs(sortedKeys(parts)) do wanted[#wanted + 1] = { item, parts[item] } end
   end
   return wanted

@@ -111,8 +111,27 @@ C.GPS_POINTS = {
 
 -- The assembler's crafting steps for a role. Each step: `grid` = items the base
 -- delivers, by cell; `keep` = the previous result already in its cell;
--- `select` = the cell the result lands in.
-function C.buildSteps(role)
+-- `select` = the cell the result lands in. `from` (AE2-style): start at that
+-- step because its input is already in storage (a computer: 2, a plain
+-- turtle: 3); that first step's `keep` item is then delivered like the rest.
+function C.buildSteps(role, from)
+  local all = C.allBuildSteps(role)
+  from = from or 1
+  local out = {}
+  for i = from, #all do
+    local s = all[i]
+    if i == from and s.keep then
+      local grid = {}
+      for c, it in pairs(s.grid) do grid[c] = it end
+      for c, it in pairs(s.keep) do grid[c] = it end
+      s = { grid = grid, select = s.select, result = s.result }
+    end
+    out[#out + 1] = s
+  end
+  return out
+end
+
+function C.allBuildSteps(role)
   local up = C.ROLES[role].upgrades
   local t = TIERS[C.ROLES[role].tier or "advanced"]
   local cb, b = t.computerBody, t.body
@@ -127,10 +146,11 @@ function C.buildSteps(role)
   }
 end
 
--- Every item (and count) the base needs in storage to build one turtle.
-function C.parts(role, sapling)
+-- Every item (and count) the base needs in storage to build one turtle
+-- (starting at step `from`, see buildSteps).
+function C.parts(role, sapling, from)
   local need = {}
-  for _, step in ipairs(C.buildSteps(role)) do
+  for _, step in ipairs(C.buildSteps(role, from)) do
     for _, item in pairs(step.grid) do need[item] = (need[item] or 0) + 1 end
   end
   for _, l in ipairs(C.ROLES[role].loadout) do

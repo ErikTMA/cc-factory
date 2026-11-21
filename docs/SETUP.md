@@ -175,6 +175,11 @@ Use the chat fallback for those (step 8).
   each new turtle a home (step 5, or `homes` in `factory.cfg`).
 - The base then crafts every part from storage, the assembler builds the
   turtle, and it installs itself from the disk, flies home and starts working.
+  Like AE2, it uses what is already made: a fresh **plain advanced turtle**
+  in storage only gets its upgrades fitted, a fresh **advanced computer**
+  skips the computer step. (Only fresh ones: an upgraded turtle or a computer
+  that was in use carries data and is left alone. Needs barrel storage; a
+  storage bridge can't show that.)
   Raw inputs it needs: raw ores, diamonds, redstone, coal, cobblestone, sand,
   logs, and **nether quartz** (for the Geo Scanner's observer: bring that
   yourself).
