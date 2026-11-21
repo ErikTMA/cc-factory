@@ -145,6 +145,9 @@ local function drawFactory(UI, out, w, row)
   end
   row = row + 1
   put(out, 1, row, "HOMES (tap to change role)", colors.yellow)
+  if not F.gpsWanted then
+    button(UI, out, w - 11, row, 12, "BUILD GPS", false, function() factory.wantGps(F) end)
+  end
   row = row + 1
   if #F.homes == 0 then
     put(out, 1, row, "none: `survey <facing>` / `home <role>` / $home", colors.lightGray); row = row + 1
@@ -327,6 +330,45 @@ local function ticker()
   end
 end
 
+-- Chat fallback for homes: a Chat Box and a Player Detector next to the base
+-- (Advanced Peripherals). "$help" in chat lists the commands.
+local chatBox = peripheral.find("chat_box") or peripheral.find("chatBox")
+local detector = peripheral.find("player_detector") or peripheral.find("playerDetector")
+
+-- verify-live: which method/fields the Player Detector has in this AP version
+local function playerPos(user)
+  if not detector then return nil end
+  for _, method in ipairs({ "getPlayerPos", "getPlayer", "getPlayerInfo" }) do
+    if detector[method] then
+      local ok, p = pcall(detector[method], user)
+      if ok and type(p) == "table" then
+        local pos = p.position or p.pos or p
+        local x, y, z = pos.x or p.x, pos.y or p.y, pos.z or p.z
+        if x and y and z then return { x = x, y = y, z = z, yaw = p.yaw or pos.yaw or 0 } end
+      end
+    end
+  end
+end
+
+local function say(user, text)
+  if not chatBox or not text then return end
+  local ok = chatBox.sendMessageToPlayer and pcall(chatBox.sendMessageToPlayer, text, user, "cc-factory")
+  if not ok then pcall(chatBox.sendMessage, text, "cc-factory") end
+end
+
+local function chatter()
+  if not chatBox then return sleep(math.huge) end
+  while true do
+    local _, user, message = os.pullEvent("chat")
+    if type(message) == "string" and message:sub(1, 1) == "$" then
+      local pos = (message:match("^%$build") or message:match("^%$home")) and playerPos(user) or nil
+      say(user, factory.chatCommand(F, user, message, pos))
+      persist()
+      os.queueEvent("factory_redraw")
+    end
+  end
+end
+
 local function screen()
   M.draw(UI, out)
   local timer = os.startTimer(1)
@@ -343,4 +385,4 @@ local function screen()
   end
 end
 
-parallel.waitForAny(receiver, worker, ticker, screen)
+parallel.waitForAny(receiver, worker, ticker, screen, chatter)

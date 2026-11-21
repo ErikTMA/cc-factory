@@ -280,9 +280,11 @@ local function craft(T, limit)
   end
   if #names == 0 then return false end
   local result, count, meta
-  -- CC's own turtle upgrade recipe: [upgrade, turtle, upgrade] in a row
-  if g[1] == TURTLE_ITEM and g[0] and g[2] and PTYPE[g[2]] and g[0]:find("pickaxe") and #names == 3 then
-    result, count, meta = TURTLE_ITEM, 1, { right = g[0], left = g[2] }
+  -- CC's own turtle upgrade recipe: an upgrade left and/or right of a turtle in a row
+  local function isUpgrade(n) return n and (PTYPE[n] or n:find("pickaxe")) end
+  if g[1] and g[1]:find("^computercraft:turtle_") and (isUpgrade(g[0]) or isUpgrade(g[2]))
+     and (not g[0] or isUpgrade(g[0])) and (not g[2] or isUpgrade(g[2])) and #names == (g[0] and 1 or 0) + (g[2] and 1 or 0) + 1 then
+    result, count, meta = g[1], 1, { right = g[0], left = g[2] }
   else
     for _, r in pairs(FIX.crafting) do
       local shaped = r.type == "minecraft:crafting_shaped" or r.type == "computercraft:transform_shaped"
@@ -456,7 +458,7 @@ local function turtleApi(T)
   end
   function api.place()
     local s = T.inv[T.sel]
-    if not s or s.name ~= TURTLE_ITEM then return false end
+    if not s or not s.name:find("^computercraft:turtle_") then return false end
     local x, y, z = front()
     if W.get(x, y, z) then return false end
     local id = scheduler.nextId; scheduler.nextId = id + 1
@@ -564,6 +566,22 @@ local function turtleEnv(T)
       return nil
     end,
   }
+  -- GPS: answers once four hosts agree on one frame and are in range
+  env.gps = { locate = function()
+    assert(T.rednet, "gps.locate needs an open modem")
+    local hosts, off = {}, nil
+    for _, H in pairs(W.turtles) do
+      if H.gpsHost then
+        local o = { H.gpsHost.x - H.x, H.gpsHost.y - H.y, H.gpsHost.z - H.z }
+        if off and (o[1] ~= off[1] or o[2] ~= off[2] or o[3] ~= off[3]) then return nil end
+        off = o
+        local d = math.sqrt((H.x - T.x)^2 + (H.y - T.y)^2 + (H.z - T.z)^2)
+        if d <= 64 then hosts[#hosts + 1] = H end
+      end
+    end
+    if #hosts < 4 then return nil end
+    return T.x + off[1], T.y + off[2], T.z + off[3]
+  end }
   env.require = function(name)
     local src = T.files[name .. ".lua"]
     assert(src, "require " .. name .. ": not installed on turtle " .. T.id)
@@ -573,6 +591,12 @@ local function turtleEnv(T)
   local running = {}
   function env.shell.getRunningProgram() return running[#running] end
   function env.shell.run(path, ...)
+    if path == "gps" then -- CC's rom program: `gps host x y z` serves forever
+      local a = { ... }
+      assert(a[1] == "host" and T.rednet, "gps host needs an open modem")
+      T.gpsHost = { x = tonumber(a[2]), y = tonumber(a[3]), z = tonumber(a[4]) }
+      while true do yield() end
+    end
     local p = path:gsub("^/", "")
     if not p:find("%.lua$") and not env.fs.exists(p) then p = p .. ".lua" end
     local fh = env.fs.open(p, "r")
@@ -971,6 +995,81 @@ do
     "a new miner is sent to it from the build spot: " .. textutils.serialize(r and r.home))
   runUntil(function() return false end, 400)
   check(W.inv["minecraft:chest_3"].count("minecraft:cobblestone") == 0, "the marker got drained into storage afterwards")
+end
+
+
+print("scenario: BUILD GPS: the factory builds four GPS host turtles above the base")
+do
+  for _, r in ipairs({ { "minecraft:iron_ingot", 64 }, { "minecraft:stone", 64 }, { "minecraft:redstone", 16 },
+                       { "minecraft:glass_pane", 8 }, { "minecraft:chest", 6 }, { "minecraft:ender_pearl", 4 },
+                       { "minecraft:coal", 64 } }) do
+    W.inv["minecraft:barrel_1"].insert(r[1], r[2])
+  end
+  F.failStreak, F.lastFail = 0, nil
+  factory.wantGps(F)
+  local function hosts()
+    local list = {}
+    for _, T in pairs(W.turtles) do if T.gpsHost then list[#list + 1] = T end end
+    return list
+  end
+  local ok = runUntil(function() return #hosts() == 4 end, 600000)
+  check(ok, "four GPS hosts are running: " .. #hosts())
+  local hs = hosts()
+  if #hs == 4 then
+    -- they agree on one frame: the home frame (survey start = world (-2,0,-2))
+    local agree = true
+    for _, H in ipairs(hs) do
+      if H.gpsHost.x ~= H.x + 2 or H.gpsHost.y ~= H.y or H.gpsHost.z ~= H.z + 2 then agree = false end
+    end
+    check(agree, "every host announces its real position in the home frame")
+    -- not all in one plane (else GPS can't tell above from below)
+    local a, b, c, d = hs[1], hs[2], hs[3], hs[4]
+    local function v(p, q) return { q.x - p.x, q.y - p.y, q.z - p.z } end
+    local u, w, x = v(a, b), v(a, c), v(a, d)
+    local det = u[1] * (w[2] * x[3] - w[3] * x[2]) - u[2] * (w[1] * x[3] - w[3] * x[1]) + u[3] * (w[1] * x[2] - w[2] * x[1])
+    check(det ~= 0, "the four hosts are not in one plane")
+    local high = true
+    for _, H in ipairs(hs) do if H.y < 20 then high = false end end
+    check(high, "they fly up high above the base")
+  end
+end
+
+print("scenario: with GPS, a turtle placed by hand runs `home miner` and lives there")
+do
+  local HT = newTurtleEntity(60, 12, 0, 6, 1) -- somewhere east of the base, facing east
+  HT.left, HT.right = "minecraft:compass", "computercraft:wireless_modem_normal"
+  HT.fuel = 100
+  for _, name in ipairs(manifest.turtle) do HT.files[name] = repoFile(name) end
+  HT.files["agent.cfg"] = ser({ base = 0 })
+  local env = turtleEnv(HT)
+  local ok, err = pcall(env.shell.run, "home", "miner")
+  check(not ok and tostring(err):find("REBOOT"), "registered and rebooted into its role (" .. tostring(err) .. ")")
+  local reg
+  for _, h in ipairs(F.homes) do if h.source == "gps" then reg = h end end
+  check(reg and reg.x == 14 and reg.y == 0 and reg.z == 8 and reg.facing == "east" and reg.role == "miner" and reg.owner == 60,
+    "home at its spot in the home frame, facing east, owned by it: " .. textutils.serialize(reg))
+  local cfg = textutils.unserialize(HT.files["agent.cfg"])
+  check(cfg.role == "miner" and cfg.home and cfg.home.y == F.cfg.build.y and cfg.home.heading == 1,
+    "agent.cfg: role miner, home Y and heading: " .. HT.files["agent.cfg"])
+end
+
+print("scenario: chat fallback: $build on the build spot, then $home on a home spot")
+do
+  local F2 = factory.new({ build = { y = 64 }, homes = {}, fleet = {}, rules = {}, job = { lanes = 1, length = 16 },
+                          forester = { sapling = "minecraft:oak_sapling", trees = 3, wait = 10 } },
+                        { storage = F.deps.storage, now = function() return W.clock end })
+  check(factory.chatCommand(F2, "alex", "$home miner", { x = 104.5, y = 70.0, z = 201.3, yaw = 180 }):find("build"),
+    "$home before $build asks for $build")
+  local r1 = factory.chatCommand(F2, "alex", "$build", { x = 100.7, y = 70.0, z = 200.2, yaw = 0 })
+  check(r1:find("build spot set at 100 70 200"), "$build: " .. r1)
+  local r2 = factory.chatCommand(F2, "alex", "$home miner", { x = 104.5, y = 71.0, z = 197.9, yaw = 180 })
+  local h = F2.homes[1]
+  check(h and h.x == 4 and h.y == 1 and h.z == -3 and h.facing == "north" and h.role == "miner" and h.source == "chat",
+    "home from the player's block and look direction: " .. r2)
+  check(factory.chatCommand(F2, "alex", "$home miner", nil):find("can't see"), "no detector: says so")
+  check(factory.chatCommand(F2, "alex", "$homes"):find("#1 miner 4,1,%-3"), "$homes lists it")
+  check(F2.cfg.build.y == 70, "the build spot's Y comes from $build")
+  check(factory.chatCommand(F2, "alex", "hello") == nil, "ordinary chat is ignored")
 end
 
 print("scenario: the installer leaves turtles that aren't on the build spot alone")

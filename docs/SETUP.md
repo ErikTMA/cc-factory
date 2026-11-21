@@ -103,7 +103,7 @@ Instead of typing coordinates, let a turtle find the homes:
   forester or off.
 
 Cables buried inside walls, with no open air next to them, are not found.
-Use the chat fallback for those (coming soon).
+Use the chat fallback for those (step 8).
 
 ## 6. The assembler: the base builds turtles
 
@@ -122,12 +122,28 @@ Use the chat fallback for those (coming soon).
   logs, and **nether quartz** (for the Geo Scanner's observer: bring that
   yourself).
 
-## 7. GPS (coming soon)
+## 7. GPS
 
-Four GPS turtles the factory builds itself (an iron turtle plus a wireless
-modem each), flying to fixed points high above the base. Not all at the same
-height: a flat square can't tell above from below. With GPS, any turtle knows
-its position, and `home miner` on a turtle registers its spot.
+![GPS hosts above the base](img/gps-side.svg)
+
+- Press **BUILD GPS** on the FACTORY tab (needs the assembler). The factory
+  builds four GPS turtles (iron turtle + compass + wireless modem each, so 4
+  ender pearls) and they fly to their points high above the build spot.
+- With GPS, any turtle with a wireless modem knows where it is. To give a
+  turtle a home, stand it on the spot facing the right way (chest behind it)
+  and run `home miner` (or `home forester`): it registers the spot and starts
+  working there.
+
+## 8. Chat fallback (for big existing bases)
+
+If the surveyor can't reach your cables and you have no GPS yet: put a **Chat
+Box** and a **Player Detector** (Advanced Peripherals) next to the base.
+
+- Stand **on the build spot** and type `$build` in chat.
+- Stand **on a home spot**, look the way the turtle should face, and type
+  `$home miner` (or `$home forester`, or just `$home` and pick the role on the
+  monitor).
+- `$homes` lists the homes, `$removehome <id>` removes one, `$help` shows all.
 
 ## When something doesn't work
 

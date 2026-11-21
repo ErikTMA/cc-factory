@@ -250,6 +250,29 @@ def surveyor_top():
     s.render("surveyor-top.svg")
 
 
+def gps_side():
+    s = Svg(12, 9, "GPS: four host turtles above the base (side view)", legend=[
+        (COL["turtle"], "GPS host turtle"), (COL["accent"], "height above the build spot"),
+    ], note=[
+        "Press BUILD GPS on the FACTORY tab: the factory builds 4 iron turtles with a compass and a",
+        "wireless modem (4 ender pearls) and they fly to (-4,20,-4) (4,20,-4) (-4,20,4) (4,26,4)",
+        "from the build spot. One is higher on purpose: four points in one flat plane can't tell",
+        "above from below. Keep the sky above the base open so they can fly up.",
+    ])
+    s.ground(8, 0, 12)
+    s.block(6, 7, COL["air"], "build\nspot", stroke=COL["accent"], dashed=True, text=COL["accent"])
+    s.turtle(2, 2, "right", "GPS")
+    s.turtle(10, 2, "right", "GPS")
+    s.turtle(4, 3, "right", "GPS")
+    s.turtle(9, 0, "right", "GPS")
+    s.label(2.5, 1.8, "y 20", COL["accent"], 12, "middle", bold=True)
+    s.label(10.5, 1.8, "y 20", COL["accent"], 12, "middle", bold=True)
+    s.label(4.5, 2.8, "y 20 (behind)", COL["accent"], 12, "middle", bold=True)
+    s.label(8.4, 0.5, "y 26", COL["accent"], 12, "end", bold=True)
+    s.arrow([(6, 7), (6, 4.2)])
+    s.render("gps-side.svg")
+
+
 if __name__ == "__main__":
-    base_top(); assembler_side(); miner_home(); forester_pen(); surveyor_top()
+    base_top(); assembler_side(); miner_home(); forester_pen(); surveyor_top(); gps_side()
     print("wrote", sorted(os.listdir(OUT)))

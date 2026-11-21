@@ -27,7 +27,14 @@ local C = {
 C.GRID_CELLS = { 1, 2, 3, 5, 6, 7, 9, 10, 11 }
 
 local GOLD, REDSTONE, PANE = "minecraft:gold_ingot", "minecraft:redstone", "minecraft:glass_pane"
-local COMPUTER, TURTLE = "computercraft:computer_advanced", "computercraft:turtle_advanced"
+local IRON, STONE = "minecraft:iron_ingot", "minecraft:stone"
+-- advanced turtles (gold) for working turtles, normal ones (iron) for GPS hosts
+local TIERS = {
+  advanced = { body = GOLD, computerBody = GOLD,
+               computer = "computercraft:computer_advanced", turtle = "computercraft:turtle_advanced" },
+  normal = { body = IRON, computerBody = STONE,
+             computer = "computercraft:computer_normal", turtle = "computercraft:turtle_normal" },
+}
 
 -- What each kind of turtle is made of. "@sapling" is replaced by the base's
 -- configured sapling. Loadout is handed to the new turtle in this order, so a
@@ -44,6 +51,19 @@ C.ROLES = {
     upgrades = { "minecraft:diamond_pickaxe", "minecraft:compass" },
     loadout = { { "@sapling", 16 }, WIRELESS, { "minecraft:coal", 16 } },
   },
+  -- GPS host: flies to a point high above the base and runs `gps host`. The
+  -- compass tells it its heading on the way (there is no GPS yet).
+  gps = {
+    tier = "normal",
+    upgrades = { "minecraft:compass", "computercraft:wireless_modem_normal" },
+    loadout = { { "minecraft:coal", 8 } },
+  },
+}
+
+-- GPS host points, from the build spot. Not all at one height: four points in
+-- one plane can't tell above it from below it.
+C.GPS_POINTS = {
+  { x = -4, y = 20, z = -4 }, { x = 4, y = 20, z = -4 }, { x = -4, y = 20, z = 4 }, { x = 4, y = 26, z = 4 },
 }
 
 -- The assembler's crafting steps for a role. Each step: `grid` = items the base
@@ -51,14 +71,16 @@ C.ROLES = {
 -- `select` = the cell the result lands in.
 function C.buildSteps(role)
   local up = C.ROLES[role].upgrades
+  local t = TIERS[C.ROLES[role].tier or "advanced"]
+  local cb, b = t.computerBody, t.body
   return {
-    { grid = { [1] = GOLD, [2] = GOLD, [3] = GOLD, [5] = GOLD, [6] = REDSTONE, [7] = GOLD,
-               [9] = GOLD, [10] = PANE, [11] = GOLD },
-      select = 6, result = COMPUTER },
-    { grid = { [1] = GOLD, [2] = GOLD, [3] = GOLD, [5] = GOLD, [7] = GOLD,
-               [9] = GOLD, [10] = "minecraft:chest", [11] = GOLD },
-      keep = { [6] = COMPUTER }, select = 2, result = TURTLE },
-    { grid = { [1] = up[1], [3] = up[2] }, keep = { [2] = TURTLE }, select = 2, result = TURTLE },
+    { grid = { [1] = cb, [2] = cb, [3] = cb, [5] = cb, [6] = REDSTONE, [7] = cb,
+               [9] = cb, [10] = PANE, [11] = cb },
+      select = 6, result = t.computer },
+    { grid = { [1] = b, [2] = b, [3] = b, [5] = b, [7] = b,
+               [9] = b, [10] = "minecraft:chest", [11] = b },
+      keep = { [6] = t.computer }, select = 2, result = t.turtle },
+    { grid = { [1] = up[1], [3] = up[2] }, keep = { [2] = t.turtle }, select = 2, result = t.turtle },
   }
 end
 

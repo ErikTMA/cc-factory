@@ -21,7 +21,7 @@ local M = {}
 M.QTY = { 8, 16, 32, 64, 128, 256, 0 } -- job sizes on the monitor; 0 = no limit
 
 local PERSIST = { "turtles", "queue", "nextJobId", "nextSector", "totals", "counted",
-                  "orders", "nextOrderId", "homes", "nextHomeId", "buildSpot", "ruleJobs", "lastFail", "failStreak",
+                  "orders", "nextOrderId", "homes", "nextHomeId", "buildSpot", "gpsWanted", "anchor", "ruleJobs", "lastFail", "failStreak",
                   "hammer", "craft", "nextCraftId", "crafted" }
 
 local CRAFT_PAUSE = 60      -- seconds without craft jobs after one failed
@@ -105,6 +105,11 @@ function M.restore(F, t)
     for _, k in ipairs(PERSIST) do if t[k] ~= nil then F[k] = t[k] end end
   end
   homes.import(F, F.cfg.homes, F.buildSpot) -- (no duplicates: same position = same home)
+  if F.gpsWanted then F.cfg.fleet.gps = #C.GPS_POINTS end
+  if F.anchor then -- $build in chat set the build spot's world Y
+    local b = F.buildSpot or { x = 0, y = 0, z = 0 }
+    F.cfg.build.y = F.anchor.wy + b.y
+  end
 end
 
 -- Homes are stored relative to the survey's start (next to the base
@@ -125,6 +130,84 @@ local function slotFor(F, h)
   local s = homes.slot(h)
   s.x, s.y, s.z = s.x - b.x, s.y - b.y, s.z - b.z
   return s
+end
+
+-- -------------------------------------------------------------------- GPS --
+-- Four GPS host turtles at C.GPS_POINTS above the build spot, hosting in the
+-- home frame. Asked for once (monitor), then kept like any fleet target.
+function M.wantGps(F)
+  F.gpsWanted = true
+  local b = F.buildSpot or { x = 0, y = 0, z = 0 }
+  for _, p in ipairs(C.GPS_POINTS) do
+    homes.add(F, { x = b.x + p.x, y = b.y + p.y, z = b.z + p.z, facing = "north", role = "gps", source = "gps-point" })
+  end
+  F.cfg.fleet.gps = #C.GPS_POINTS
+  F.note = "GPS: 4 host turtles ordered (iron turtle + compass + wireless modem each)"
+end
+
+-- Absolute Y of a home-frame y (factory.cfg build.y is the build spot's Y).
+local function absY(F, y)
+  local b = F.buildSpot or { x = 0, y = 0, z = 0 }
+  return F.cfg.build.y + (y - b.y)
+end
+
+-- A turtle that knows its position (GPS) registers the spot it stands on as
+-- a home for `role` and moves in.
+local function registerHome(F, from, msg)
+  local p = msg.home
+  if type(p) ~= "table" or not p.x then return { type = "nohome" } end
+  local h = homes.add(F, { x = p.x, y = p.y, z = p.z, facing = p.facing, source = "gps" })
+  if h.owner and h.owner ~= from then
+    return { type = "nohome", reason = "home lived in by " .. tostring(h.owner) }
+  end
+  homes.release(F, from)
+  h.role, h.owner = msg.homeRole or h.role, from
+  local who = F.turtles[from] and F.turtles[from].label or ("#" .. from)
+  F.note = ("%s registered home %d (%s) at %d,%d,%d"):format(who, h.id, h.role, h.x, h.y, h.z)
+  return { type = "registered", home = h.id, y = absY(F, h.y) }
+end
+
+-- ------------------------------------------------------------------ chat --
+-- `$build` on the build spot ties the world to the home frame; `$home [role]`
+-- registers the block the player stands on, facing the way they look.
+-- `pos` = { x, y, z, yaw } of the player in world coordinates (or nil).
+local function facingOf(yaw)
+  -- Minecraft yaw: 0 = south, 90 = west, 180 = north, 270 = east
+  local i = math.floor(((yaw % 360) + 45) / 90) % 4
+  return ({ [0] = "south", "west", "north", "east" })[i]
+end
+
+function M.chatCommand(F, user, text, pos)
+  local cmd, arg = tostring(text):match("^%$(%a+)%s*(%S*)")
+  if not cmd then return nil end
+  cmd = cmd:lower()
+  if cmd == "help" then
+    return "$build (stand on the build spot), $home [miner|forester] (stand on a home spot, look the way the turtle should face), $homes, $removehome <id>"
+  elseif cmd == "homes" then
+    local parts = {}
+    for _, h in ipairs(F.homes) do parts[#parts + 1] = ("#%d %s %d,%d,%d"):format(h.id, h.role, h.x, h.y, h.z) end
+    return #parts > 0 and table.concat(parts, "; ") or "no homes yet"
+  elseif cmd == "removehome" then
+    local ok, why = homes.remove(F, tonumber(arg) or -1)
+    return ok and ("home " .. arg .. " removed") or ("can't: " .. tostring(why))
+  end
+  if not pos then return "I can't see where you are (Player Detector missing or out of range)" end
+  local wx, wy, wz = math.floor(pos.x), math.floor(pos.y), math.floor(pos.z)
+  if cmd == "build" then
+    local b = F.buildSpot or { x = 0, y = 0, z = 0 }
+    F.anchor = { wx = wx - b.x, wy = wy - b.y, wz = wz - b.z } -- world position of home-frame (0,0,0)
+    F.cfg.build.y = wy
+    return ("build spot set at %d %d %d"):format(wx, wy, wz)
+  elseif cmd == "home" then
+    if not F.anchor then return "stand on the build spot and type $build first" end
+    local role = arg ~= "" and arg or nil
+    if role and role ~= "miner" and role ~= "forester" and role ~= "off" then return "role must be miner, forester or off" end
+    local h = homes.add(F, { x = wx - F.anchor.wx, y = wy - F.anchor.wy, z = wz - F.anchor.wz,
+                             facing = facingOf(pos.yaw or 0), role = role, source = "chat" })
+    F.note = ("%s added home %d via chat"):format(user, h.id)
+    return ("home %d at %d %d %d facing %s: %s"):format(h.id, wx, wy, wz, h.facing, h.role)
+  end
+  return "unknown command; $help"
 end
 
 -- Home list actions for the monitor.
@@ -429,7 +512,8 @@ handleAssemblerStep = function(F, from, msg, o)
     end
     o.state, o.assembler, o.step, o.home, o.lastSeen = "building", from, 1, home.id, now(F)
     o.install = { role = o.role, order = o.id, trees = F.cfg.forester.trees,
-                  wait = F.cfg.forester.wait, slot = slotFor(F, home), homeY = F.cfg.build.y }
+                  wait = F.cfg.forester.wait, slot = slotFor(F, home), homeY = F.cfg.build.y,
+                  host = o.role == "gps" and { x = home.x, y = home.y, z = home.z } or nil }
     F.deps.writeInstall(copy(o.install))
     local steps = C.buildSteps(o.role)
     local ok, why = stage(F, stepItems(steps[1]))
@@ -561,6 +645,8 @@ function M.handle(F, from, msg)
 
   if msg.state == "new" then
     reply = assignHome(F, from, msg)
+  elseif msg.state == "registerHome" then
+    reply = registerHome(F, from, msg)
   elseif t.role == "assembler" then
     reply = handleAssembler(F, from, msg)
   elseif t.role == "surveyor" then

@@ -140,6 +140,26 @@ return {
    },
    ["type"] = "minecraft:crafting_shaped"
   },
+  ["computercraft:computer_normal"] = {
+   ["category"] = "redstone",
+   ["key"] = {
+    ["#"] = {
+     ["item"] = "minecraft:stone"
+    },
+    ["G"] = {
+     ["tag"] = "c:glass_panes"
+    },
+    ["R"] = {
+     ["tag"] = "c:dusts/redstone"
+    }
+   },
+   ["pattern"] = { "###", "#R#", "#G#" },
+   ["result"] = {
+    ["count"] = 1,
+    ["id"] = "computercraft:computer_normal"
+   },
+   ["type"] = "minecraft:crafting_shaped"
+  },
   ["computercraft:turtle_advanced"] = {
    ["category"] = "redstone",
    ["function"] = { {
@@ -163,6 +183,32 @@ return {
    ["result"] = {
     ["count"] = 1,
     ["id"] = "computercraft:turtle_advanced"
+   },
+   ["type"] = "computercraft:transform_shaped"
+  },
+  ["computercraft:turtle_normal"] = {
+   ["category"] = "redstone",
+   ["function"] = { {
+    ["from"] = {
+     ["item"] = "computercraft:computer_normal"
+    },
+    ["type"] = "computercraft:copy_components"
+   } },
+   ["key"] = {
+    ["#"] = {
+     ["tag"] = "c:ingots/iron"
+    },
+    ["C"] = {
+     ["item"] = "computercraft:computer_normal"
+    },
+    ["I"] = {
+     ["tag"] = "c:chests/wooden"
+    }
+   },
+   ["pattern"] = { "###", "#C#", "#I#" },
+   ["result"] = {
+    ["count"] = 1,
+    ["id"] = "computercraft:turtle_normal"
    },
    ["type"] = "computercraft:transform_shaped"
   },
@@ -197,6 +243,23 @@ return {
     ["id"] = "computercraft:wired_modem_full"
    },
    ["type"] = "minecraft:crafting_shapeless"
+  },
+  ["computercraft:wireless_modem_normal"] = {
+   ["category"] = "redstone",
+   ["key"] = {
+    ["#"] = {
+     ["item"] = "minecraft:stone"
+    },
+    ["E"] = {
+     ["tag"] = "c:ender_pearls"
+    }
+   },
+   ["pattern"] = { "###", "#E#", "###" },
+   ["result"] = {
+    ["count"] = 1,
+    ["id"] = "computercraft:wireless_modem_normal"
+   },
+   ["type"] = "minecraft:crafting_shaped"
   },
   ["minecraft:chest"] = {
    ["category"] = "misc",
@@ -494,7 +557,7 @@ return {
    ["type"] = "minecraft:smelting"
   }
  },
- ["sources"] = { "server-1.21.1-20240808.144430-extra.jar", "neoforge-21.1.266-universal.jar", "neoforge-21.1.234-universal.jar", "neoforge-21.1.221-universal.jar", "neoforge-21.1.215-universal.jar", "neoforge-21.1.224-universal.jar", "neoforge-21.1.219-universal.jar", "neoforge-21.1.228-universal.jar", "cc-tweaked-1.21.1-forge-1.120.2.jar", "AdvancedPeripherals-1.21.1-0.8.2a.jar", "alltheores-3.2.0_neoforge_1.21.1.jar" },
+ ["sources"] = { "AdvancedPeripherals-1.21.1-0.8.2a.jar", "alltheores-3.2.0_neoforge_1.21.1.jar", "cc-tweaked-1.21.1-forge-1.113.1.jar", "cc-tweaked-1.21.1-forge-1.120.2.jar", "neoforge-21.1.215-universal.jar", "neoforge-21.1.219-universal.jar", "neoforge-21.1.221-universal.jar", "neoforge-21.1.224-universal.jar", "neoforge-21.1.228-universal.jar", "neoforge-21.1.234-universal.jar", "neoforge-21.1.266-universal.jar", "server-1.21.1-20240808.144430-extra.jar" },
  ["tags"] = {
   ["alltheores:ore_hammers"] = { "alltheores:bronze_ore_hammer", "alltheores:copper_ore_hammer", "alltheores:invar_ore_hammer", "alltheores:iron_ore_hammer", "alltheores:platinum_ore_hammer" },
   ["c:chests/wooden"] = { "minecraft:chest", "minecraft:trapped_chest" },
@@ -502,6 +565,7 @@ return {
   ["c:dusts/gold"] = { "alltheores:gold_dust" },
   ["c:dusts/iron"] = { "alltheores:iron_dust" },
   ["c:dusts/redstone"] = { "minecraft:redstone" },
+  ["c:ender_pearls"] = { "minecraft:ender_pearl" },
   ["c:gems/diamond"] = { "minecraft:diamond" },
   ["c:glass_panes"] = { "minecraft:black_stained_glass_pane", "minecraft:blue_stained_glass_pane", "minecraft:brown_stained_glass_pane", "minecraft:cyan_stained_glass_pane", "minecraft:glass_pane", "minecraft:gray_stained_glass_pane", "minecraft:green_stained_glass_pane", "minecraft:light_blue_stained_glass_pane", "minecraft:light_gray_stained_glass_pane", "minecraft:lime_stained_glass_pane", "minecraft:magenta_stained_glass_pane", "minecraft:orange_stained_glass_pane", "minecraft:pink_stained_glass_pane", "minecraft:purple_stained_glass_pane", "minecraft:red_stained_glass_pane", "minecraft:white_stained_glass_pane", "minecraft:yellow_stained_glass_pane" },
   ["c:ingots/gold"] = { "minecraft:gold_ingot" },

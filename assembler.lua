@@ -148,7 +148,7 @@ local function placeTurtle()
   local slot
   for i = 1, 16 do
     local d = turtle.getItemDetail(i)
-    if d and d.name == "computercraft:turtle_advanced" then slot = i end
+    if d and d.name:find("^computercraft:turtle_") then slot = i end
   end
   if not slot then return false, "no finished turtle to place" end
   turtle.select(slot)
