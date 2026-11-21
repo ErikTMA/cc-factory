@@ -74,10 +74,13 @@ local function refuel()
 end
 
 local function goTo(t)
-  while st.pos.y < CLEARANCE and (st.pos.x ~= t.x or st.pos.z ~= t.z) do step("up") end
+  -- fly CLEARANCE above the build spot (and above the target) on the way
+  local cruise = math.max(CLEARANCE, t.y + 1)
+  while st.pos.y < cruise and (st.pos.x ~= t.x or st.pos.z ~= t.z) do step("up") end
   while st.pos.x ~= t.x do turnTo(st.pos.x < t.x and 1 or 3); step("fwd") end
   while st.pos.z ~= t.z do turnTo(st.pos.z < t.z and 2 or 0); step("fwd") end
   while st.pos.y > t.y do step("down") end
+  while st.pos.y < t.y do step("up") end
 end
 
 -- Ask for a home slot, walk there, record it in agent.cfg.
@@ -101,11 +104,13 @@ function T.toHomeSlot()
   st.heading = nav.heading(nil) -- nil: never dig inside the base
   save()
 
+  -- slot: { x, y, z } from the build spot (older bases sent { east, north })
   local slot = cfg.slot
-  goTo({ x = slot.east or 0, y = 0, z = -(slot.north or 0) })
+  local target = { x = slot.x or slot.east or 0, y = slot.y or 0, z = slot.z or -(slot.north or 0) }
+  goTo(target)
   turnTo(nav.index(slot.facing or "north"))
 
-  cfg.home = { y = cfg.homeY, heading = st.heading }
+  cfg.home = { y = (cfg.homeY or 0) + target.y, heading = st.heading }
   cfg.needsHome = nil
   link.saveConfig(cfg)
   fs.delete(STATE)

@@ -733,7 +733,7 @@ if M then
   local wireless = false
   for i = 1, 16 do if M.inv[i] and M.inv[i].name:find("wireless") then wireless = true end end
   check(not wireless and M.left ~= "computercraft:wireless_modem_normal", "it has no wireless modem: talks over the wired one at home")
-  check(F.orders[1].arrived and F.homesTaken.miner[1] == 2, "its reserved home slot now belongs to it")
+  check(F.orders[1].arrived and F.homes[1].owner == 2, "its reserved home now belongs to it")
 end
 check((stock()["minecraft:raw_iron"] or 0) >= 6, "raw iron drained into storage: " .. tostring(stock()["minecraft:raw_iron"]))
 check(W.inv["minecraft:chest_0"].count("minecraft:raw_iron") == 0, "home chest emptied by the base")
@@ -796,7 +796,7 @@ end
 print("scenario: a lost reply to the assembler does not stall the next build")
 do
   config.fleet.miner = 2
-  table.insert(config.homes.miner, { east = 6, north = 0, facing = "north" })
+  factory.addHome(F, { x = 6, y = 0, z = 0, facing = "north", role = "miner", source = "cfg" })
   newInv("minecraft:chest_1", 6, 0, 0)
   W.set(6, 0, -2, "computercraft:wired_modem_full")
   for _, p in ipairs(stockParts) do W.inv["minecraft:barrel_1"].insert(p[1], p[2]) end
@@ -844,7 +844,7 @@ end
 print("scenario: a damaged pickaxe in storage is not used; the base asks for diamonds instead")
 do
   config.fleet.miner = 3
-  table.insert(config.homes.miner, { east = 8, north = 0, facing = "north" })
+  factory.addHome(F, { x = 8, y = 0, z = 0, facing = "north", role = "miner", source = "cfg" })
   -- only a damaged pickaxe left in storage
   for _, I in pairs(W.inv) do
     for i, sl in pairs(I.slots) do if sl.name == "minecraft:diamond_pickaxe" then I.slots[i] = nil end end

@@ -144,6 +144,20 @@ local function drawFactory(UI, out, w, row)
     row = row + 1
   end
   row = row + 1
+  put(out, 1, row, "HOMES (tap to change role)", colors.yellow)
+  row = row + 1
+  if #F.homes == 0 then
+    put(out, 1, row, "none: `survey <facing>` / `home <role>` / $home", colors.lightGray); row = row + 1
+  end
+  for _, h in ipairs(F.homes) do
+    local text = ("#%-2d %4d,%3d,%4d %-5s %-8s %-6s %s"):format(h.id, h.x, h.y, h.z, h.facing:sub(1, 5),
+      h.role, h.source, h.owner and ("-> " .. tostring(h.owner)) or "")
+    put(out, 1, row, (text .. string.rep(" ", w)):sub(1, w), h.role == "off" and colors.gray or colors.white)
+    UI.buttons[#UI.buttons + 1] = { x1 = 1, x2 = w, y = row, label = "home " .. h.id,
+                                    action = function() factory.cycleHome(F, h.id) end }
+    row = row + 1
+  end
+  row = row + 1
   put(out, 1, row, "BUILDS", colors.yellow)
   row = row + 1
   for i = math.max(1, #F.orders - 3), #F.orders do

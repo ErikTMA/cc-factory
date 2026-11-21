@@ -87,6 +87,26 @@ rednet. Turtles never need http.
 - [x] M6 base UI tabs: Turtles / Stock / Jobs; harness coverage for all of it
 - [x] M7 independent review pass (critic + security), fixes
 - [ ] M8 deploy to the server and first live run (verify-live items below)
+- [ ] M10 homes without typing coordinates. One frame: the build spot is
+      (0,0,0), world axes (x east, y up, z south).
+  - [x] M10a base-managed home list (F.homes: pos, facing, role, source);
+        FACTORY tab cycles each home's role miner/forester/off; factory.cfg
+        homes imported; travel to homes at any height
+  - [ ] M10b GPS: "gps" role = iron turtle + wireless modem, built by the
+        factory, flies to a host point above the base and runs `gps host` in
+        the build-spot frame; turtles use gps.locate when in range; `home
+        <role>` on a turtle registers its spot
+  - [ ] M10c no GPS: surveyor = a plain advanced turtle (no upgrades; early
+        game). Sees only front/up/down via inspect (turning for sides), so it
+        follows cables/modems it can reach from open air; cables fully inside
+        walls are missed (chat fallback). Heading from a compass if equipped,
+        else `survey <facing>` (F3). Talks through a modem block on any of its
+        6 sides (home spots have one). Drops a
+        marker into each chest to learn its network name, proposes home slots
+        (free cell next to a home chest with a modem in front or below)
+  - [ ] M10d chat fallback: Chat Box + Player Detector at the base; `$build`
+        on the build spot, `$home [role]` on a home spot (player position and
+        facing); verify-live: Player Detector's return fields
 - [x] M9 production: furnaces on the wired network run by the base (raw ore/dust
       -> ingots, logs -> charcoal, cobble -> stone, sand -> glass); a recipe
       planner crafts every part of a turtle through the assembler (craft jobs,

@@ -14,13 +14,14 @@
 local C = require("oreconf")
 local production = require("production")
 local recipes = require("recipes")
+local homes = require("homes")
 
 local M = {}
 
 M.QTY = { 8, 16, 32, 64, 128, 256, 0 } -- job sizes on the monitor; 0 = no limit
 
 local PERSIST = { "turtles", "queue", "nextJobId", "nextSector", "totals", "counted",
-                  "orders", "nextOrderId", "homesTaken", "ruleJobs", "lastFail", "failStreak",
+                  "orders", "nextOrderId", "homes", "nextHomeId", "ruleJobs", "lastFail", "failStreak",
                   "hammer", "craft", "nextCraftId", "crafted" }
 
 local CRAFT_PAUSE = 60      -- seconds without craft jobs after one failed
@@ -33,9 +34,11 @@ local MAX_FAILS = 3         -- failed builds in a row before automatic ordering 
 M.DEFAULT_CONFIG = {
   -- Y of the assembler's build spot; new turtles' home slots are at this level
   build = { y = 64 },
-  -- home slots for new turtles, offsets in blocks from the build spot (east /
-  -- north, negative = west / south) and the way the turtle faces at home (its
-  -- chest is behind it). Build the slots (chest + room in front) yourself.
+  -- optional home slots, offsets from the build spot (east / north / up,
+  -- negative = west / south / down) and the way the turtle faces at home (its
+  -- chest is behind it). Usually not needed: homes come from `home <role>` on
+  -- a turtle (GPS), the surveyor or `$home` in chat, and the monitor sets
+  -- their role.
   homes = {
     miner = {},
     forester = {},
@@ -82,11 +85,12 @@ function M.new(config, deps)
     cfg = config, deps = deps,
     sel = { ore = first.name, y = first.y, onlyThis = true, qty = 3 },
     turtles = {}, queue = {}, stopFor = {}, nextJobId = 1, nextSector = {},
-    totals = {}, counted = {}, orders = {}, nextOrderId = 1, homesTaken = {},
+    totals = {}, counted = {}, orders = {}, nextOrderId = 1, homes = {}, nextHomeId = 1,
     ruleJobs = {}, selected = nil, note = "Ready",
     hammer = config.production and config.production.hammer or false,
     craft = nil, nextCraftId = 1, crafted = {}, prod = { furnaces = 0, missing = {} },
   }
+  homes.import(F, F.cfg.homes)
   return F
 end
 
@@ -97,8 +101,27 @@ function M.snapshot(F)
 end
 
 function M.restore(F, t)
-  if type(t) ~= "table" then return end
-  for _, k in ipairs(PERSIST) do if t[k] ~= nil then F[k] = t[k] end end
+  if type(t) == "table" then
+    for _, k in ipairs(PERSIST) do if t[k] ~= nil then F[k] = t[k] end end
+  end
+  homes.import(F, F.cfg.homes) -- (no duplicates: same position = same home)
+end
+
+-- Home list actions for the monitor.
+function M.cycleHome(F, id)
+  local h, why = homes.cycle(F, id)
+  F.note = h and ("Home %d: %s"):format(id, h.role) or why
+end
+
+function M.addHome(F, home)
+  local h = homes.add(F, home)
+  F.note = ("Home %d at %d,%d,%d facing %s: %s"):format(h.id, h.x, h.y, h.z, h.facing, h.role)
+  return h
+end
+
+function M.removeHome(F, id)
+  local ok, why = homes.remove(F, id)
+  F.note = ok and ("Home %d removed"):format(id) or why
 end
 
 local function now(F) return F.deps.now() end
@@ -272,26 +295,10 @@ local RETRY_AFTER = 300 -- seconds before ordering again after a failed build
 local function failOrder(F, o, why)
   o.state, o.reason, F.lastFail = "failed", why, now(F)
   F.failStreak = (F.failStreak or 0) + 1
-  local taken = F.homesTaken[o.role] or {}
-  for i, owner in pairs(taken) do
-    if owner == "order:" .. o.id then taken[i] = nil end -- free its home slot
-  end
+  homes.release(F, "order:" .. o.id) -- free its home slot
   local supply = F.deps.storage.supply()
   if supply then F.deps.storage.store(supply) end
   F.note = ("Build #%d failed: %s"):format(o.id, why)
-end
-
--- First free home slot for `role`, claimed for `owner` (a turtle id, or
--- "order:<n>" while the turtle is still being built). nil if none is free.
-local function claimHome(F, role, owner)
-  F.homesTaken[role] = F.homesTaken[role] or {}
-  local taken = F.homesTaken[role]
-  for i, slot in ipairs(F.cfg.homes[role] or {}) do
-    if taken[i] == nil or taken[i] == owner then
-      taken[i] = owner
-      return i, slot
-    end
-  end
 end
 
 -- The assembler's side of a build: it reports, we stage and say what's next.
@@ -395,14 +402,14 @@ handleAssemblerStep = function(F, from, msg, o)
     end
     -- the new turtle gets its home slot with its install data: it can fly there
     -- without talking first (there may be no modem at the build spot)
-    local index, slot = claimHome(F, o.role, "order:" .. o.id)
-    if not index then
-      F.note = ("No free %s home slot: add one to factory.cfg"):format(o.role)
+    local home = homes.claim(F, o.role, "order:" .. o.id)
+    if not home then
+      F.note = ("No free %s home: add one (monitor HOMES, `home %s` or $home)"):format(o.role, o.role)
       return { type = "ok" }
     end
-    o.state, o.assembler, o.step, o.home, o.lastSeen = "building", from, 1, index, now(F)
+    o.state, o.assembler, o.step, o.home, o.lastSeen = "building", from, 1, home.id, now(F)
     o.install = { role = o.role, order = o.id, trees = F.cfg.forester.trees,
-                  wait = F.cfg.forester.wait, slot = copy(slot), homeY = F.cfg.build.y }
+                  wait = F.cfg.forester.wait, slot = homes.slot(home), homeY = F.cfg.build.y }
     F.deps.writeInstall(copy(o.install))
     local steps = C.buildSteps(o.role)
     local ok, why = stage(F, stepItems(steps[1]))
@@ -446,12 +453,12 @@ end
 -- A new turtle asks where it lives: the first free home slot for its role.
 local function assignHome(F, from, msg)
   local role = msg.role
-  local i, slot = claimHome(F, role, from)
-  if i then
-    F.note = ("%s goes to %s home %d"):format(label(F, from), role, i)
-    return { type = "home", home = copy(slot), y = F.cfg.build.y, index = i }
+  local h = homes.claim(F, role, from)
+  if h then
+    F.note = ("%s goes to %s home %d"):format(label(F, from), role, h.id)
+    return { type = "home", home = homes.slot(h), y = F.cfg.build.y, index = h.id }
   end
-  F.note = ("No free %s home slot for %s: add one to factory.cfg"):format(role, label(F, from))
+  F.note = ("No free %s home for %s: add one"):format(role, label(F, from))
   return { type = "wait" }
 end
 
@@ -474,8 +481,7 @@ function M.handle(F, from, msg)
     for _, o in ipairs(F.orders) do
       if o.id == msg.buildOrder and not o.arrived then
         o.arrived = true
-        local taken = F.homesTaken[o.role] or {}
-        if o.home and taken[o.home] == "order:" .. o.id then taken[o.home] = from end
+        homes.handOver(F, "order:" .. o.id, from)
       end
     end
   end
