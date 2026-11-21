@@ -32,8 +32,9 @@ C.FUEL = {
   ["utilitarian:tiny_coal"] = 10, ["utilitarian:tiny_charcoal"] = 10,
   ["actuallyadditions:tiny_coal"] = 10, ["actuallyadditions:tiny_charcoal"] = 10,
 }
--- What the base hands a turtle, best first: dense fuel, the tiny kinds last.
-C.FUEL_ORDER = { "minecraft:coal", "minecraft:charcoal", "minecraft:coal_block",
+-- What the base hands a turtle, first to last: charcoal (it grows back), then
+-- coal, a coal block, the tiny kinds last (same fuel, 8x the slots).
+C.FUEL_ORDER = { "minecraft:charcoal", "minecraft:coal", "minecraft:coal_block",
   "utilitarian:tiny_charcoal", "utilitarian:tiny_coal",
   "actuallyadditions:tiny_charcoal", "actuallyadditions:tiny_coal" }
 C.TINY = { "utilitarian:tiny_charcoal", "utilitarian:tiny_coal",

@@ -78,7 +78,7 @@ then says the block is connected. A modem that isn't lit does nothing.
   whole coal first. Tiny coal from Utilitarian and Actually Additions both
   count as fuel everywhere.
 - **Fuel on request:** a turtle low on fuel asks the base, and the base pushes
-  coal (charcoal, then tiny) from storage straight into it. That only works
+  charcoal (then coal, then tiny) from storage straight into it. That only works
   while the turtle touches a **wired modem that is enabled** (right-click it
   while the turtle is there: the chat says the turtle is connected). Miners
   ask at home, foresters after a round, the surveyor makes a trip to the

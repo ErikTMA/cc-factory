@@ -1323,8 +1323,13 @@ print("scenario: fuel on request: a turtle next to a modem gets coal pushed in; 
 do
   local barrel = W.inv["minecraft:barrel_0"]
   barrel.insert("minecraft:coal", 64)
-  local coalBefore = 0
-  for _, I in pairs(W.inv) do if I.name:find("barrel") then coalBefore = coalBefore + I.count("minecraft:coal") end end
+  barrel.insert("minecraft:charcoal", 5)
+  local function stored(item)
+    local n = 0
+    for _, I in pairs(W.inv) do if I.name:find("barrel") then n = n + I.count(item) end end
+    return n
+  end
+  local coalBefore, charBefore = stored("minecraft:coal"), stored("minecraft:charcoal")
   local ask = 'local link = require("link"); local got, why = link.requestFuel(500); ' ..
               'local f = fs.open("ask.out", "w"); f.write(tostring(got) .. "|" .. tostring(why)); f.close()'
   local function asker(id, x, z, extra)
@@ -1342,10 +1347,10 @@ do
   end
   W.set(300, 0, 299, "computercraft:wired_modem_full")
   local T = asker(70, 300, 300)
-  local coalAfter = 0
-  for _, I in pairs(W.inv) do if I.name:find("barrel") then coalAfter = coalAfter + I.count("minecraft:coal") end end
+  local usedChar, usedCoal = charBefore - stored("minecraft:charcoal"), coalBefore - stored("minecraft:coal")
   check(T.fuel >= 505, "on the network: fuel 5 -> " .. T.fuel .. " (" .. tostring(T.files["ask.out"]) .. ")")
-  check(coalBefore - coalAfter == 7, "7 coal (560 fuel) left storage for 500 asked: " .. (coalBefore - coalAfter))
+  check(usedChar == math.min(charBefore, 7) and usedChar + usedCoal == 7,
+    ("charcoal first, then coal: %d charcoal + %d coal for 500 asked"):format(usedChar, usedCoal))
   local T2 = asker(71, 310, 300, function(t) t.left = "computercraft:wireless_modem_normal" end)
   check(T2.fuel == 5 and (T2.files["ask.out"] or ""):find("network"), "off the network: no fuel, and why: " .. tostring(T2.files["ask.out"]))
 end

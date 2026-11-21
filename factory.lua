@@ -722,7 +722,7 @@ function M.handle(F, from, msg)
   return reply
 end
 
--- Fuel on request: push `need` fuel worth of coal (best kinds first, see
+-- Fuel on request: push `need` fuel worth of charcoal, then coal (see
 -- oreconf.FUEL_ORDER) from storage straight into the turtle, if it is on the
 -- wired network. Coal below the furnaces' reserve is the turtles' anyway.
 -- Returns the reply for the turtle.
