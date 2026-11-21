@@ -320,7 +320,11 @@ local function serviceTrip(reason)
     return
   end
   if turtle.getFuelLevel() ~= "unlimited" and turtle.getFuelLevel() < 2 * dist(back, HOME) + CFG.fuelMargin then
-    error("Out of fuel. Put fuel in it and restart (startup resumes).", 0)
+    -- not enough to go back out and return: end the job here at home
+    log("Low on fuel: ending the job at home")
+    S.stop, S.stopReason = true, "fuel"
+    save()
+    return
   end
   if not goTo(back) then log("Could not return to " .. key(back.x, back.y, back.z)) end
 end
@@ -376,7 +380,22 @@ local function run()
       local why = needHome()
       if why then serviceTrip(why) end
       if finished() then break end
-      if not goTo(laneTarget(S.lane, S.progress)) then
+      -- enough fuel to get there AND back home? (lanes can be far out)
+      local target = laneTarget(S.lane, S.progress)
+      local trip = dist(S.pos, target) + dist(target, HOME) + CFG.fuelMargin
+      if turtle.getFuelLevel() ~= "unlimited" and turtle.getFuelLevel() < trip then
+        refuel()
+        if turtle.getFuelLevel() < trip then
+          if S.pos.x ~= 0 or S.pos.y ~= 0 or S.pos.z ~= 0 then serviceTrip("fuel") end
+          if turtle.getFuelLevel() < trip then
+            log("Not enough fuel for the next lane: ending the job early")
+            S.stop, S.stopReason = true, "fuel"
+            save()
+            break
+          end
+        end
+      end
+      if not goTo(target) then
         log("Lane blocked; skipping ahead")
       end
       local n = mineVisible()
@@ -479,11 +498,22 @@ elseif args[1] == "serve" then
   end
   log("Waiting for jobs from the base...")
   while true do
+    refuel() -- burn any fuel someone put in
     local reply = talk("idle")
     if type(reply) == "table" and reply.type == "job" then
-      newJob(reply.job, home)
-      run()
-      reportDone()
+      local j = reply.job
+      -- rough fuel for the job: shaft both ways plus the furthest lane and back
+      local reach = ((j.sector or 0) + (j.lanes or CFG.lanes)) * CFG.spacing + (j.length or CFG.length)
+      local needFuel = 2 * (math.abs((j.y or home.y) - home.y) + reach) + CFG.fuelMargin
+      if turtle.getFuelLevel() ~= "unlimited" and turtle.getFuelLevel() < needFuel then
+        log(("Need about %d fuel for that job, have %d: handing it back"):format(needFuel, turtle.getFuelLevel()))
+        link.talk("no fuel", { job = j, need = needFuel }, false)
+        sleep(30)
+      else
+        newJob(j, home)
+        run()
+        reportDone()
+      end
     else
       sleep(3)
     end

@@ -110,6 +110,17 @@ local function drawFactory(UI, out, w, row)
   row = row + 1
   button(UI, out, w - 9, row - 1, 10, "UPDATE", false, function() UI.wantUpdate = true end)
   row = row + 1
+  put(out, 1, row, "PRODUCTION", colors.yellow)
+  button(UI, out, w - 15, row, 16, "HAMMER " .. (F.hammer and "ON" or "OFF"), F.hammer,
+    function() factory.toggleHammer(F) end)
+  row = row + 1
+  put(out, 1, row, ("furnaces busy %d   crafting %s"):format(F.prod.furnaces or 0,
+    F.craft and (F.craft.item:gsub("^%w+:", "") .. " x" .. F.craft.sets) or "-"):sub(1, w), colors.lightGray)
+  row = row + 1
+  local need = ""
+  for item, n in pairs(F.prod.missing or {}) do need = need .. (" %dx%s"):format(n, item:gsub("^%w+:", "")) end
+  if need ~= "" then put(out, 1, row, ("raw needed:" .. need):sub(1, w), colors.orange); row = row + 1 end
+  row = row + 1
   put(out, 1, row, "STOCK RULES", colors.yellow)
   row = row + 1
   if #F.cfg.rules == 0 then put(out, 1, row, "none (factory.cfg: rules)", colors.lightGray); row = row + 1 end
@@ -206,7 +217,7 @@ if not config then
   writeTable("/factory.cfg", config)
   print("Wrote /factory.cfg with defaults; edit it to set homes, fleet and rules.")
 end
-for k, v in pairs(factory.DEFAULT_CONFIG) do if config[k] == nil then config[k] = v end end
+factory.withDefaults(config)
 
 local manifest = fs.exists("/manifest.lua") and dofile("/manifest.lua")
 local release = manifest and dist.load(manifest, "/dist")

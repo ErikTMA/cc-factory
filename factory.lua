@@ -12,13 +12,18 @@
 --   factory.tick(F)            -- drain inputs, apply stock rules and fleet targets
 
 local C = require("oreconf")
+local production = require("production")
+local recipes = require("recipes")
 
 local M = {}
 
 M.QTY = { 8, 16, 32, 64, 128, 256, 0 } -- job sizes on the monitor; 0 = no limit
 
 local PERSIST = { "turtles", "queue", "nextJobId", "nextSector", "totals", "counted",
-                  "orders", "nextOrderId", "homesTaken", "ruleJobs", "lastFail", "failStreak" }
+                  "orders", "nextOrderId", "homesTaken", "ruleJobs", "lastFail", "failStreak",
+                  "hammer", "craft", "nextCraftId", "crafted" }
+
+local CRAFT_PAUSE = 60      -- seconds without craft jobs after one failed
 
 local BUILD_TIMEOUT = 600   -- seconds of assembler silence before a build is given up
 local TURTLE_GONE = 7200    -- seconds unseen before a turtle stops counting for the fleet
@@ -43,6 +48,8 @@ M.DEFAULT_CONFIG = {
     -- { item = "minecraft:raw_iron", min = 256, job = { only = "iron", y = 16, quantity = 64 } },
   },
   forester = { sapling = "minecraft:oak_sapling", trees = 6, wait = 300 },
+  -- furnaces, crafting turtle parts, ore doubling (see production.lua)
+  production = production.DEFAULTS,
   -- lanes per job; sectors reuse lanes from 0 after maxLanes (bounds how far
   -- out miners go: maxLanes x 16 blocks to the right of their home)
   job = { lanes = 3, length = 64, maxLanes = 24 },
@@ -55,7 +62,21 @@ local function copy(t)
   return c
 end
 
+-- Fill in settings missing from factory.cfg (older files, or sections with
+-- only some keys) from the defaults, one level deep.
+function M.withDefaults(config)
+  for k, v in pairs(M.DEFAULT_CONFIG) do
+    if config[k] == nil then
+      config[k] = copy(v)
+    elseif type(v) == "table" and type(config[k]) == "table" and #v == 0 then
+      for k2, v2 in pairs(v) do if config[k][k2] == nil then config[k][k2] = copy(v2) end end
+    end
+  end
+  return config
+end
+
 function M.new(config, deps)
+  config = M.withDefaults(config)
   local first = C.PRESETS[1]
   local F = {
     cfg = config, deps = deps,
@@ -63,6 +84,8 @@ function M.new(config, deps)
     turtles = {}, queue = {}, stopFor = {}, nextJobId = 1, nextSector = {},
     totals = {}, counted = {}, orders = {}, nextOrderId = 1, homesTaken = {},
     ruleJobs = {}, selected = nil, note = "Ready",
+    hammer = config.production and config.production.hammer or false,
+    craft = nil, nextCraftId = 1, crafted = {}, prod = { furnaces = 0, missing = {} },
   }
   return F
 end
@@ -158,16 +181,44 @@ function M.summary(F)
 end
 
 -- -------------------------------------------------------------- building --
+-- The order being built (at most one), if any.
+local function buildingOrder(F)
+  for _, o in ipairs(F.orders) do if o.state == "building" then return o end end
+end
+
+-- The order the assembler should work on: the one being built, else the first
+-- queued order whose parts are all in storage, else the first queued one. An
+-- order still waiting for parts never blocks one that is ready.
 local function activeOrder(F)
+  local b = buildingOrder(F)
+  if b then return b end
+  local first
   for _, o in ipairs(F.orders) do
-    if o.state == "queued" or o.state == "building" then return o end
+    if o.state == "queued" then
+      if not next(M.missingParts(F, o.role)) then return o end
+      first = first or o
+    end
   end
+  return first
+end
+
+-- Turtle upgrades must be undamaged and unenchanted, or crafting them on fails.
+local function usableTool(d) return (d.damage or 0) == 0 and not (d.enchantments and next(d.enchantments)) end
+
+-- Storage contents, counting only usable tools.
+local function usableStock(F)
+  local S = F.deps.storage
+  local stock = S.list()
+  for item in pairs(stock) do
+    if item:find("pickaxe") and S.countWhere then stock[item] = S.countWhere(item, usableTool) end
+  end
+  return stock
 end
 
 -- Items missing from storage for one turtle of `role` ({} when complete).
 function M.missingParts(F, role)
   local missing = {}
-  local stock = F.deps.storage.list()
+  local stock = usableStock(F)
   for item, n in pairs(C.parts(role, F.cfg.forester.sapling)) do
     if (stock[item] or 0) < n then missing[item] = n - (stock[item] or 0) end
   end
@@ -177,8 +228,8 @@ end
 -- The install data a new turtle should get: the active build's, or a plain
 -- miner's (for a turtle someone places on the build spot by hand).
 function M.installData(F)
-  local o = activeOrder(F)
-  if o and o.state == "building" and o.install then return copy(o.install) end
+  local o = buildingOrder(F)
+  if o and o.install then return copy(o.install) end
   return { role = "miner" }
 end
 
@@ -198,10 +249,7 @@ local function stage(F, items)
   if not supply then return false, "no supply chest (trapped chest) on the network" end
   S.store(supply)
   for item, n in pairs(items) do
-    -- turtle upgrades must be undamaged and unenchanted, or the craft fails
-    local accept = item:find("pickaxe") and function(d)
-      return (d.damage or 0) == 0 and not (d.enchantments and next(d.enchantments))
-    end or nil
+    local accept = item:find("pickaxe") and usableTool or nil
     local moved = S.send(supply, item, n, accept)
     if moved < n then return false, ("only %d of %d %s in storage"):format(moved, n, item) end
   end
@@ -247,11 +295,84 @@ local function claimHome(F, role, owner)
 end
 
 -- The assembler's side of a build: it reports, we stage and say what's next.
+-- ------------------------------------------------------------- crafting --
+function M.toggleHammer(F)
+  F.hammer = not F.hammer
+  F.note = "Ore doubling with hammers: " .. (F.hammer and "ON" or "OFF")
+end
+
+-- Turtles short of each role's fleet target (and the queued order's role).
+local function shortRoles(F)
+  local short = {}
+  for role, want in pairs(F.cfg.fleet) do
+    if M.fleetCount(F, role) < want then short[role] = true end
+  end
+  for _, o in ipairs(F.orders) do
+    if o.state == "queued" then short[o.role] = true end
+  end
+  return short
+end
+
+-- Plan the next craft for the assembler; stage its inputs; nil if nothing to do.
+local function startCraft(F, from)
+  local cfgp = F.cfg.production or {}
+  if cfgp.enabled == false or now(F) < (F.craftPauseUntil or 0) then return nil end
+  local stock = usableStock(F)
+  local wanted = production.wantedForFleet(shortRoles(F), F.cfg.forester.sapling)
+  local job, missing = production.plan(stock, F.hammer, wanted)
+  F.prod.missing = missing
+  if not job then return nil end
+  local items, select = {}, nil
+  for cell, item in pairs(job.grid) do
+    -- a repeated (hammer) job uses one hammer for all its sets
+    local n = (job.repeated and recipes.isHammer(item)) and 1 or job.sets
+    items[item] = (items[item] or 0) + n
+    if not select or cell < select then select = cell end
+  end
+  local ok, why = stage(F, items)
+  if not ok then
+    F.note = "Craft " .. job.item .. ": " .. why
+    F.craftPauseUntil = now(F) + CRAFT_PAUSE
+    return nil
+  end
+  F.craft = { id = F.nextCraftId, item = job.item, sets = job.sets, assembler = from, lastSeen = now(F) }
+  F.nextCraftId = F.nextCraftId + 1
+  F.craft.reply = { type = "craft", craft = F.craft.id, grid = job.grid, select = select,
+                    result = job.item, sets = job.sets, repeated = job.repeated }
+  F.note = ("Crafting %s x%d"):format(job.item:gsub("^%w+:", ""), job.sets * (job.count or 1))
+  return F.craft.reply
+end
+
+local function endCraft(F, made)
+  local c = F.craft
+  local supply = F.deps.storage.supply()
+  if supply then F.deps.storage.store(supply) end
+  if made and c then F.crafted[c.item] = (F.crafted[c.item] or 0) + made end
+  F.craft = nil
+end
+
 local handleAssemblerStep
 
 -- Every reply in a build is remembered: if it got lost (the assembler gave up
 -- waiting) and the assembler reports idle, it gets the same reply again.
 local function handleAssembler(F, from, msg)
+  -- a craft job in flight
+  local c = F.craft
+  if c and c.assembler == from then
+    c.lastSeen = now(F)
+    if msg.state == "crafted" and msg.craft == c.id then
+      endCraft(F, msg.made or (c.sets * 1))
+      return { type = "ok" }
+    elseif msg.state == "failed" then
+      F.note = "Craft " .. c.item .. " failed: " .. tostring(msg.reason)
+      endCraft(F, nil)
+      F.craftPauseUntil = now(F) + CRAFT_PAUSE
+      return { type = "ok" }
+    elseif msg.state == "idle" then
+      return c.reply -- lost on the way: say it again
+    end
+    return { type = "ok" }
+  end
   local o = activeOrder(F)
   if o and o.state == "building" and o.assembler == from then o.lastSeen = now(F) end
   if msg.state == "failed" and o and o.state == "building" and o.assembler == from then
@@ -268,8 +389,10 @@ end
 
 handleAssemblerStep = function(F, from, msg, o)
   if msg.state == "idle" then
-    if not o or o.state ~= "queued" then return { type = "ok" } end
-    if next(M.missingParts(F, o.role)) then return { type = "ok" } end
+    -- a build when its parts are all there, else make parts
+    if not o or o.state ~= "queued" or next(M.missingParts(F, o.role)) then
+      return startCraft(F, from) or { type = "ok" }
+    end
     -- the new turtle gets its home slot with its install data: it can fly there
     -- without talking first (there may be no modem at the build spot)
     local index, slot = claimHome(F, o.role, "order:" .. o.id)
@@ -373,9 +496,16 @@ function M.handle(F, from, msg)
       if msg.job.rule then F.ruleJobs[msg.job.rule] = nil end
       F.note = ("%s finished: %d %s"):format(label(F, from), msg.mined or 0, k)
     end
-    if msg.state == "idle" or msg.state == "done" then
+    if msg.state == "no fuel" and msg.job then
+      table.insert(F.queue, 1, msg.job) -- back to the front for someone else
+      t.noFuel, t.job = msg.fuel or 0, nil
+      F.note = ("%s needs fuel (~%d) for jobs"):format(label(F, from), msg.need or 0)
+    elseif msg.state == "idle" or msg.state == "done" then
       F.stopFor[from] = nil
-      if msg.state == "idle" and #F.queue > 0 then
+      local prevNoFuel = prev.noFuel
+      if prevNoFuel and (msg.fuel or 0) <= prevNoFuel then
+        t.noFuel = prevNoFuel -- still too little fuel: no job for it
+      elseif msg.state == "idle" and #F.queue > 0 then
         local job = table.remove(F.queue, 1)
         t.job, t.mined, t.state = job, 0, "assigned"
         F.note = ("%s took job: %s"):format(label(F, from), M.jobText(job))
@@ -392,10 +522,26 @@ function M.handle(F, from, msg)
   local D = F.deps.dist
   local safe = msg.state == "idle" or msg.state == "done" or msg.state == "resting"
   if D and D.version and msg.version ~= D.version and safe and reply.type ~= "job"
-     and not (t.role == "assembler" and activeOrder(F) and activeOrder(F).state == "building") then
+     and not (t.role == "assembler" and buildingOrder(F)) then
     reply.update = { version = D.version, files = D.files }
   end
   return reply
+end
+
+-- How much of `item` the factory has, counting what the furnaces and hammers
+-- turn it into: a rule for raw iron also counts iron dust and iron ingots
+-- (they get smelted as soon as they arrive).
+function M.stockOf(stock, item)
+  local seen, n = {}, 0
+  local function add(i) if i and not seen[i] then seen[i] = true; n = n + (stock[i] or 0) end end
+  add(item)
+  local dust = recipes.hammerDust(item)
+  add(dust)
+  local s = recipes.smelt(item)
+  add(s and s.out)
+  local ds = dust and recipes.smelt(dust)
+  add(ds and ds.out)
+  return n
 end
 
 -- Turtles of `role` that count for the fleet: seen recently, or built and on
@@ -426,18 +572,28 @@ function M.tick(F)
   local S = F.deps.storage
   S.drainInputs()
   local stock = S.list()
+  local cfgp = F.cfg.production or {}
+  if cfgp.enabled ~= false and S.furnaces then
+    F.prod.furnaces = production.smelt(S, cfgp, F.hammer, stock)
+    stock = S.list()
+  end
+  -- a craft job whose assembler went silent
+  if F.craft and now(F) - (F.craft.lastSeen or 0) > BUILD_TIMEOUT then
+    F.note = "Craft " .. F.craft.item .. ": assembler silent"
+    endCraft(F, nil)
+  end
   -- a rule's job that nobody has any more (its "done" got lost, the turtle is
   -- gone) must not block the rule forever
   for i, id in pairs(F.ruleJobs) do
     if not jobActive(F, id) then F.ruleJobs[i] = nil end
   end
   -- a build whose assembler went silent
-  local o = activeOrder(F)
-  if o and o.state == "building" and now(F) - (o.lastSeen or 0) > BUILD_TIMEOUT then
+  local o = buildingOrder(F)
+  if o and now(F) - (o.lastSeen or 0) > BUILD_TIMEOUT then
     failOrder(F, o, "assembler silent for " .. BUILD_TIMEOUT .. "s")
   end
   for i, rule in ipairs(F.cfg.rules) do
-    if (stock[rule.item] or 0) < rule.min and not F.ruleJobs[i] then
+    if M.stockOf(stock, rule.item) < rule.min and not F.ruleJobs[i] then
       local job = copy(rule.job)
       job.rule = i
       M.queueJob(F, job)
@@ -445,11 +601,14 @@ function M.tick(F)
       F.note = ("Low on %s: queued %s"):format(rule.item, M.jobText(job))
     end
   end
-  if not activeOrder(F) and now(F) - (F.lastFail or -math.huge) >= RETRY_AFTER
-     and (F.failStreak or 0) < MAX_FAILS then
+  if now(F) - (F.lastFail or -math.huge) >= RETRY_AFTER and (F.failStreak or 0) < MAX_FAILS then
+    local open = {}
+    for _, ord in ipairs(F.orders) do
+      if ord.state == "queued" or ord.state == "building" then open[ord.role] = true end
+    end
     for role, want in pairs(F.cfg.fleet) do
       local have = M.fleetCount(F, role)
-      if have < want and not next(M.missingParts(F, role)) then
+      if have < want and not open[role] and not next(M.missingParts(F, role)) then
         M.orderTurtle(F, role)
         break
       end

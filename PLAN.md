@@ -29,6 +29,15 @@ over rednet. Friends-only server: base-ID pinning, no signing.
   upgrade, left and right of the turtle in one row), so one craft
   `[pickaxe, turtle, scanner]` fits both upgrades.
 
+## Production facts (jars, 2026-11-21)
+
+- All The Ores 3.2.0: `alltheores:{copper,iron,bronze,invar,platinum}_ore_hammer`
+  (tag `alltheores:ore_hammers`), shaped ` as / sa / s  ` (a = storage block,
+  s = stick). `hammer + #c:raw_materials/<m>` shapeless -> 2 `alltheores:<m>_dust`;
+  OreHammer has durability and a crafting remainder. Dust smelts 1:1 to the
+  ingot (iron/gold/copper -> minecraft ingots). ATM10 KubeJS keeps these.
+- Observer needs nether quartz: a raw input the base cannot make.
+
 ## Assembly procedure (base stages, assembler crafts)
 
 Supply trapped chest above the assembler; build spot in front of it with the
@@ -78,6 +87,13 @@ rednet. Turtles never need http.
 - [x] M6 base UI tabs: Turtles / Stock / Jobs; harness coverage for all of it
 - [x] M7 independent review pass (critic + security), fixes
 - [ ] M8 deploy to the server and first live run (verify-live items below)
+- [x] M9 production: furnaces on the wired network run by the base (raw ore/dust
+      -> ingots, logs -> charcoal, cobble -> stone, sand -> glass); a recipe
+      planner crafts every part of a turtle through the assembler (craft jobs,
+      several sets at once); ore-hammer doubling toggle (All The Ores hammers:
+      raw ore + hammer -> 2 dust, hammer comes back damaged; assembler repeats).
+      Recipes are tested against the real recipe JSONs extracted from the jars
+      (test/fixtures/recipes.json), not against our own copy.
 
 ## Bugs the harnesses caught on the way (each test was red before its fix)
 
@@ -117,3 +133,15 @@ Each tested fix was proven by mutation (scenario fails without it).
 - Rednet message size of a full code update (~55 KB in one message).
 - Orientation of a turtle placed by the assembler (code measures it anyway).
 - Base event loop under real tick costs (not simulated).
+
+## M9 notes (2026-11-22)
+
+Bugs the production harness caught: rules on raw ore never filled once
+furnaces smelt it (rules now count dust and ingots too); a miner flew to a far
+lane without fuel to return (fuel is checked for the round trip, short jobs
+end early or are handed back as "no fuel"); a queued order waiting for parts
+blocked every other build (head-of-line); missing-raw lists depended on table
+order. Proven by mutation: hammer off -> 7 raw gold cannot build a turtle; one
+wrong observer cell -> no Geo Scanner.
+
+verify-live: furnace slot pushes with a bridge backend; real hammer durability.

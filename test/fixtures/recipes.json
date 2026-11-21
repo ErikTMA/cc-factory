@@ -1,0 +1,729 @@
+{
+ "crafting": {
+  "advancedperipherals:geo_scanner": {
+   "category": "redstone",
+   "key": {
+    "C": {
+     "item": "advancedperipherals:peripheral_casing"
+    },
+    "D": {
+     "tag": "c:gems/diamond"
+    },
+    "M": {
+     "item": "computercraft:wired_modem_full"
+    },
+    "O": {
+     "item": "minecraft:observer"
+    },
+    "R": {
+     "tag": "c:storage_blocks/redstone"
+    }
+   },
+   "pattern": [
+    "DMD",
+    "DCD",
+    "ROR"
+   ],
+   "result": {
+    "count": 1,
+    "id": "advancedperipherals:geo_scanner"
+   },
+   "type": "minecraft:crafting_shaped"
+  },
+  "advancedperipherals:peripheral_casing": {
+   "category": "redstone",
+   "key": {
+    "B": {
+     "item": "minecraft:iron_bars"
+    },
+    "I": {
+     "tag": "c:ingots/iron"
+    },
+    "R": {
+     "tag": "c:storage_blocks/redstone"
+    }
+   },
+   "pattern": [
+    "IBI",
+    "BRB",
+    "IBI"
+   ],
+   "result": {
+    "count": 1,
+    "id": "advancedperipherals:peripheral_casing"
+   },
+   "type": "minecraft:crafting_shaped"
+  },
+  "alltheores:copper_ore_hammer": {
+   "category": "misc",
+   "key": {
+    "a": {
+     "tag": "c:storage_blocks/copper"
+    },
+    "s": {
+     "tag": "c:rods/wooden"
+    }
+   },
+   "pattern": [
+    " as",
+    " sa",
+    "s  "
+   ],
+   "result": {
+    "count": 1,
+    "id": "alltheores:copper_ore_hammer"
+   },
+   "type": "minecraft:crafting_shaped"
+  },
+  "alltheores:crafting/hammer/copper/dust_from_raw": {
+   "category": "misc",
+   "ingredients": [
+    {
+     "tag": "alltheores:ore_hammers"
+    },
+    {
+     "tag": "c:raw_materials/copper"
+    }
+   ],
+   "result": {
+    "count": 2,
+    "id": "alltheores:copper_dust"
+   },
+   "type": "minecraft:crafting_shapeless"
+  },
+  "alltheores:crafting/hammer/gold/dust_from_raw": {
+   "category": "misc",
+   "ingredients": [
+    {
+     "tag": "alltheores:ore_hammers"
+    },
+    {
+     "tag": "c:raw_materials/gold"
+    }
+   ],
+   "result": {
+    "count": 2,
+    "id": "alltheores:gold_dust"
+   },
+   "type": "minecraft:crafting_shapeless"
+  },
+  "alltheores:crafting/hammer/iron/dust_from_raw": {
+   "category": "misc",
+   "ingredients": [
+    {
+     "tag": "alltheores:ore_hammers"
+    },
+    {
+     "tag": "c:raw_materials/iron"
+    }
+   ],
+   "result": {
+    "count": 2,
+    "id": "alltheores:iron_dust"
+   },
+   "type": "minecraft:crafting_shapeless"
+  },
+  "alltheores:iron_ore_hammer": {
+   "category": "misc",
+   "key": {
+    "a": {
+     "tag": "c:storage_blocks/iron"
+    },
+    "s": {
+     "tag": "c:rods/wooden"
+    }
+   },
+   "pattern": [
+    " as",
+    " sa",
+    "s  "
+   ],
+   "result": {
+    "count": 1,
+    "id": "alltheores:iron_ore_hammer"
+   },
+   "type": "minecraft:crafting_shaped"
+  },
+  "computercraft:computer_advanced": {
+   "category": "redstone",
+   "key": {
+    "#": {
+     "tag": "c:ingots/gold"
+    },
+    "G": {
+     "tag": "c:glass_panes"
+    },
+    "R": {
+     "tag": "c:dusts/redstone"
+    }
+   },
+   "pattern": [
+    "###",
+    "#R#",
+    "#G#"
+   ],
+   "result": {
+    "count": 1,
+    "id": "computercraft:computer_advanced"
+   },
+   "type": "minecraft:crafting_shaped"
+  },
+  "computercraft:turtle_advanced": {
+   "category": "redstone",
+   "function": [
+    {
+     "from": {
+      "item": "computercraft:computer_advanced"
+     },
+     "type": "computercraft:copy_components"
+    }
+   ],
+   "key": {
+    "#": {
+     "tag": "c:ingots/gold"
+    },
+    "C": {
+     "item": "computercraft:computer_advanced"
+    },
+    "I": {
+     "tag": "c:chests/wooden"
+    }
+   },
+   "pattern": [
+    "###",
+    "#C#",
+    "#I#"
+   ],
+   "result": {
+    "count": 1,
+    "id": "computercraft:turtle_advanced"
+   },
+   "type": "computercraft:transform_shaped"
+  },
+  "computercraft:turtle_upgrade": {
+   "category": "misc",
+   "type": "computercraft:turtle_upgrade"
+  },
+  "computercraft:wired_modem": {
+   "category": "redstone",
+   "key": {
+    "#": {
+     "item": "minecraft:stone"
+    },
+    "R": {
+     "tag": "c:dusts/redstone"
+    }
+   },
+   "pattern": [
+    "###",
+    "#R#",
+    "###"
+   ],
+   "result": {
+    "count": 1,
+    "id": "computercraft:wired_modem"
+   },
+   "type": "minecraft:crafting_shaped"
+  },
+  "computercraft:wired_modem_full_from": {
+   "category": "redstone",
+   "ingredients": [
+    {
+     "item": "computercraft:wired_modem"
+    }
+   ],
+   "result": {
+    "count": 1,
+    "id": "computercraft:wired_modem_full"
+   },
+   "type": "minecraft:crafting_shapeless"
+  },
+  "minecraft:chest": {
+   "category": "misc",
+   "key": {
+    "#": {
+     "tag": "minecraft:planks"
+    }
+   },
+   "pattern": [
+    "###",
+    "# #",
+    "###"
+   ],
+   "result": {
+    "count": 1,
+    "id": "minecraft:chest"
+   },
+   "type": "minecraft:crafting_shaped"
+  },
+  "minecraft:compass": {
+   "category": "equipment",
+   "key": {
+    "#": {
+     "item": "minecraft:iron_ingot"
+    },
+    "X": {
+     "item": "minecraft:redstone"
+    }
+   },
+   "pattern": [
+    " # ",
+    "#X#",
+    " # "
+   ],
+   "result": {
+    "count": 1,
+    "id": "minecraft:compass"
+   },
+   "type": "minecraft:crafting_shaped"
+  },
+  "minecraft:copper_block": {
+   "category": "building",
+   "key": {
+    "#": {
+     "item": "minecraft:copper_ingot"
+    }
+   },
+   "pattern": [
+    "###",
+    "###",
+    "###"
+   ],
+   "result": {
+    "count": 1,
+    "id": "minecraft:copper_block"
+   },
+   "type": "minecraft:crafting_shaped"
+  },
+  "minecraft:diamond_pickaxe": {
+   "category": "equipment",
+   "key": {
+    "#": {
+     "item": "minecraft:stick"
+    },
+    "X": {
+     "item": "minecraft:diamond"
+    }
+   },
+   "pattern": [
+    "XXX",
+    " # ",
+    " # "
+   ],
+   "result": {
+    "count": 1,
+    "id": "minecraft:diamond_pickaxe"
+   },
+   "type": "minecraft:crafting_shaped"
+  },
+  "minecraft:furnace": {
+   "category": "misc",
+   "key": {
+    "#": {
+     "tag": "minecraft:stone_crafting_materials"
+    }
+   },
+   "pattern": [
+    "###",
+    "# #",
+    "###"
+   ],
+   "result": {
+    "count": 1,
+    "id": "minecraft:furnace"
+   },
+   "type": "minecraft:crafting_shaped"
+  },
+  "minecraft:glass_pane": {
+   "category": "misc",
+   "key": {
+    "#": {
+     "item": "minecraft:glass"
+    }
+   },
+   "pattern": [
+    "###",
+    "###"
+   ],
+   "result": {
+    "count": 16,
+    "id": "minecraft:glass_pane"
+   },
+   "type": "minecraft:crafting_shaped"
+  },
+  "minecraft:iron_bars": {
+   "category": "misc",
+   "key": {
+    "#": {
+     "item": "minecraft:iron_ingot"
+    }
+   },
+   "pattern": [
+    "###",
+    "###"
+   ],
+   "result": {
+    "count": 16,
+    "id": "minecraft:iron_bars"
+   },
+   "type": "minecraft:crafting_shaped"
+  },
+  "minecraft:iron_block": {
+   "category": "building",
+   "key": {
+    "#": {
+     "item": "minecraft:iron_ingot"
+    }
+   },
+   "pattern": [
+    "###",
+    "###",
+    "###"
+   ],
+   "result": {
+    "count": 1,
+    "id": "minecraft:iron_block"
+   },
+   "type": "minecraft:crafting_shaped"
+  },
+  "minecraft:oak_planks": {
+   "category": "building",
+   "group": "planks",
+   "ingredients": [
+    {
+     "tag": "minecraft:oak_logs"
+    }
+   ],
+   "result": {
+    "count": 4,
+    "id": "minecraft:oak_planks"
+   },
+   "type": "minecraft:crafting_shapeless"
+  },
+  "minecraft:observer": {
+   "category": "redstone",
+   "key": {
+    "#": {
+     "item": "minecraft:cobblestone"
+    },
+    "Q": {
+     "item": "minecraft:quartz"
+    },
+    "R": {
+     "item": "minecraft:redstone"
+    }
+   },
+   "pattern": [
+    "###",
+    "RRQ",
+    "###"
+   ],
+   "result": {
+    "count": 1,
+    "id": "minecraft:observer"
+   },
+   "type": "minecraft:crafting_shaped"
+  },
+  "minecraft:redstone_block": {
+   "category": "redstone",
+   "key": {
+    "#": {
+     "item": "minecraft:redstone"
+    }
+   },
+   "pattern": [
+    "###",
+    "###",
+    "###"
+   ],
+   "result": {
+    "count": 1,
+    "id": "minecraft:redstone_block"
+   },
+   "type": "minecraft:crafting_shaped"
+  },
+  "minecraft:stick": {
+   "category": "misc",
+   "group": "sticks",
+   "key": {
+    "#": {
+     "tag": "minecraft:planks"
+    }
+   },
+   "pattern": [
+    "#",
+    "#"
+   ],
+   "result": {
+    "count": 4,
+    "id": "minecraft:stick"
+   },
+   "type": "minecraft:crafting_shaped"
+  }
+ },
+ "smelting": {
+  "alltheores:smelting/copper/dust_smelting": {
+   "category": "misc",
+   "cookingtime": 200,
+   "experience": 0.7,
+   "ingredient": {
+    "tag": "c:dusts/copper"
+   },
+   "result": {
+    "count": 1,
+    "id": "minecraft:copper_ingot"
+   },
+   "type": "minecraft:smelting"
+  },
+  "alltheores:smelting/gold/dust_smelting": {
+   "category": "misc",
+   "cookingtime": 200,
+   "experience": 0.7,
+   "ingredient": {
+    "tag": "c:dusts/gold"
+   },
+   "result": {
+    "count": 1,
+    "id": "minecraft:gold_ingot"
+   },
+   "type": "minecraft:smelting"
+  },
+  "alltheores:smelting/iron/dust_smelting": {
+   "category": "misc",
+   "cookingtime": 200,
+   "experience": 0.7,
+   "ingredient": {
+    "tag": "c:dusts/iron"
+   },
+   "result": {
+    "count": 1,
+    "id": "minecraft:iron_ingot"
+   },
+   "type": "minecraft:smelting"
+  },
+  "minecraft:charcoal": {
+   "category": "misc",
+   "cookingtime": 200,
+   "experience": 0.15,
+   "ingredient": {
+    "tag": "minecraft:logs_that_burn"
+   },
+   "result": {
+    "id": "minecraft:charcoal"
+   },
+   "type": "minecraft:smelting"
+  },
+  "minecraft:copper_ingot_from_smelting_raw_copper": {
+   "category": "misc",
+   "cookingtime": 200,
+   "experience": 0.7,
+   "group": "copper_ingot",
+   "ingredient": {
+    "item": "minecraft:raw_copper"
+   },
+   "result": {
+    "id": "minecraft:copper_ingot"
+   },
+   "type": "minecraft:smelting"
+  },
+  "minecraft:glass": {
+   "category": "blocks",
+   "cookingtime": 200,
+   "experience": 0.1,
+   "ingredient": {
+    "tag": "minecraft:smelts_to_glass"
+   },
+   "result": {
+    "id": "minecraft:glass"
+   },
+   "type": "minecraft:smelting"
+  },
+  "minecraft:gold_ingot_from_smelting_raw_gold": {
+   "category": "misc",
+   "cookingtime": 200,
+   "experience": 1.0,
+   "group": "gold_ingot",
+   "ingredient": {
+    "item": "minecraft:raw_gold"
+   },
+   "result": {
+    "id": "minecraft:gold_ingot"
+   },
+   "type": "minecraft:smelting"
+  },
+  "minecraft:iron_ingot_from_smelting_raw_iron": {
+   "category": "misc",
+   "cookingtime": 200,
+   "experience": 0.7,
+   "group": "iron_ingot",
+   "ingredient": {
+    "item": "minecraft:raw_iron"
+   },
+   "result": {
+    "id": "minecraft:iron_ingot"
+   },
+   "type": "minecraft:smelting"
+  },
+  "minecraft:stone": {
+   "category": "blocks",
+   "cookingtime": 200,
+   "experience": 0.1,
+   "ingredient": {
+    "item": "minecraft:cobblestone"
+   },
+   "result": {
+    "id": "minecraft:stone"
+   },
+   "type": "minecraft:smelting"
+  }
+ },
+ "sources": [
+  "server-1.21.1-20240808.144430-extra.jar",
+  "neoforge-21.1.266-universal.jar",
+  "neoforge-21.1.234-universal.jar",
+  "neoforge-21.1.221-universal.jar",
+  "neoforge-21.1.215-universal.jar",
+  "neoforge-21.1.224-universal.jar",
+  "neoforge-21.1.219-universal.jar",
+  "neoforge-21.1.228-universal.jar",
+  "cc-tweaked-1.21.1-forge-1.120.2.jar",
+  "AdvancedPeripherals-1.21.1-0.8.2a.jar",
+  "alltheores-3.2.0_neoforge_1.21.1.jar"
+ ],
+ "tags": {
+  "alltheores:ore_hammers": [
+   "alltheores:bronze_ore_hammer",
+   "alltheores:copper_ore_hammer",
+   "alltheores:invar_ore_hammer",
+   "alltheores:iron_ore_hammer",
+   "alltheores:platinum_ore_hammer"
+  ],
+  "c:chests/wooden": [
+   "minecraft:chest",
+   "minecraft:trapped_chest"
+  ],
+  "c:dusts/copper": [
+   "alltheores:copper_dust"
+  ],
+  "c:dusts/gold": [
+   "alltheores:gold_dust"
+  ],
+  "c:dusts/iron": [
+   "alltheores:iron_dust"
+  ],
+  "c:dusts/redstone": [
+   "minecraft:redstone"
+  ],
+  "c:gems/diamond": [
+   "minecraft:diamond"
+  ],
+  "c:glass_panes": [
+   "minecraft:black_stained_glass_pane",
+   "minecraft:blue_stained_glass_pane",
+   "minecraft:brown_stained_glass_pane",
+   "minecraft:cyan_stained_glass_pane",
+   "minecraft:glass_pane",
+   "minecraft:gray_stained_glass_pane",
+   "minecraft:green_stained_glass_pane",
+   "minecraft:light_blue_stained_glass_pane",
+   "minecraft:light_gray_stained_glass_pane",
+   "minecraft:lime_stained_glass_pane",
+   "minecraft:magenta_stained_glass_pane",
+   "minecraft:orange_stained_glass_pane",
+   "minecraft:pink_stained_glass_pane",
+   "minecraft:purple_stained_glass_pane",
+   "minecraft:red_stained_glass_pane",
+   "minecraft:white_stained_glass_pane",
+   "minecraft:yellow_stained_glass_pane"
+  ],
+  "c:ingots/gold": [
+   "minecraft:gold_ingot"
+  ],
+  "c:ingots/iron": [
+   "minecraft:iron_ingot"
+  ],
+  "c:raw_materials/copper": [
+   "minecraft:raw_copper"
+  ],
+  "c:raw_materials/gold": [
+   "minecraft:raw_gold"
+  ],
+  "c:raw_materials/iron": [
+   "minecraft:raw_iron"
+  ],
+  "c:rods/wooden": [
+   "minecraft:stick"
+  ],
+  "c:storage_blocks/copper": [
+   "minecraft:copper_block"
+  ],
+  "c:storage_blocks/iron": [
+   "minecraft:iron_block"
+  ],
+  "c:storage_blocks/redstone": [
+   "minecraft:redstone_block"
+  ],
+  "minecraft:logs_that_burn": [
+   "minecraft:acacia_log",
+   "minecraft:acacia_wood",
+   "minecraft:birch_log",
+   "minecraft:birch_wood",
+   "minecraft:cherry_log",
+   "minecraft:cherry_wood",
+   "minecraft:dark_oak_log",
+   "minecraft:dark_oak_wood",
+   "minecraft:jungle_log",
+   "minecraft:jungle_wood",
+   "minecraft:mangrove_log",
+   "minecraft:mangrove_wood",
+   "minecraft:oak_log",
+   "minecraft:oak_wood",
+   "minecraft:spruce_log",
+   "minecraft:spruce_wood",
+   "minecraft:stripped_acacia_log",
+   "minecraft:stripped_acacia_wood",
+   "minecraft:stripped_birch_log",
+   "minecraft:stripped_birch_wood",
+   "minecraft:stripped_cherry_log",
+   "minecraft:stripped_cherry_wood",
+   "minecraft:stripped_dark_oak_log",
+   "minecraft:stripped_dark_oak_wood",
+   "minecraft:stripped_jungle_log",
+   "minecraft:stripped_jungle_wood",
+   "minecraft:stripped_mangrove_log",
+   "minecraft:stripped_mangrove_wood",
+   "minecraft:stripped_oak_log",
+   "minecraft:stripped_oak_wood",
+   "minecraft:stripped_spruce_log",
+   "minecraft:stripped_spruce_wood"
+  ],
+  "minecraft:oak_logs": [
+   "minecraft:oak_log",
+   "minecraft:oak_wood",
+   "minecraft:stripped_oak_log",
+   "minecraft:stripped_oak_wood"
+  ],
+  "minecraft:planks": [
+   "minecraft:acacia_planks",
+   "minecraft:bamboo_planks",
+   "minecraft:birch_planks",
+   "minecraft:cherry_planks",
+   "minecraft:crimson_planks",
+   "minecraft:dark_oak_planks",
+   "minecraft:jungle_planks",
+   "minecraft:mangrove_planks",
+   "minecraft:oak_planks",
+   "minecraft:spruce_planks",
+   "minecraft:warped_planks"
+  ],
+  "minecraft:smelts_to_glass": [
+   "minecraft:red_sand",
+   "minecraft:sand"
+  ],
+  "minecraft:stone_crafting_materials": [
+   "minecraft:blackstone",
+   "minecraft:cobbled_deepslate",
+   "minecraft:cobblestone"
+  ]
+ }
+}

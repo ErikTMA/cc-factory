@@ -23,7 +23,7 @@ downloads it with `bootstrap.lua`.
 
 | Where | Files |
 |---|---|
-| Base | `base.lua` (screen + wiring), `factory.lua` (decisions), `storage.lua` (chest/bridge backends), `dist.lua` (code release + installer disk) |
+| Base | `base.lua` (screen + wiring), `factory.lua` (decisions), `production.lua` (furnaces + crafting planner), `recipes.lua` (recipe tree), `storage.lua` (chest/bridge backends), `dist.lua` (code release + installer disk) |
 | Every turtle | `startup.lua` (agent: role -> program), `link.lua` (talk to base, modem selection, updates), `tmove.lua` (journaled moves), `nav.lua` (heading), `oreconf.lua` (shared constants, build recipes) |
 | Roles | `oreminer.lua`, `forester.lua`, `assembler.lua`; `travel.lua` (new turtle -> home slot) |
 | Install | `bootstrap.lua` (GitHub -> base, or `bootstrap <role>` on a turtle), `install.lua` (installer disk), `manifest.lua` (which files go where) |
@@ -43,6 +43,14 @@ role.
 - **New file:** add it to `manifest.lua`, or bootstrap and turtles never get it.
 - **New CC/AP API use:** check it in the jar (decompile with javap in
   `eclipse-temurin:21-jdk`, or jar strings) and note it in PLAN.md.
+
+## Recipes are tested against the game
+
+`test/fixtures/recipes.json` holds the real recipe/tag JSON extracted from the
+server's jars (vanilla, NeoForge, CC, AP, All The Ores); the factory harness
+crafts with those, so a wrong grid in `recipes.lua` fails. To add a recipe:
+extract it into the fixture (see PLAN.md), run `test/fixtures/to_lua.py`, then
+add it to `recipes.lua`.
 
 ## Tests
 

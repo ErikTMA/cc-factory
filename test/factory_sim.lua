@@ -197,46 +197,152 @@ local function turtleAt(x, y, z)
 end
 
 local function addItem(T, item, n, meta)
-  for kk = 0, 15 do
-    local i = (T.sel - 1 + kk) % 16 + 1
-    local s = T.inv[i]
-    if s and s.name == item and s.count < 64 and not meta and not s.meta then s.count = s.count + n; return true end
-    if not s then T.inv[i] = { name = item, count = n, meta = meta }; return true end
+  while n > 0 do
+    local placed = false
+    for kk = 0, 15 do
+      local i = (T.sel - 1 + kk) % 16 + 1
+      local s = T.inv[i]
+      if s and s.name == item and s.count < 64 and not meta and not s.meta then
+        local m = math.min(64 - s.count, n); s.count = s.count + m; n = n - m; placed = true; break
+      end
+      if not s then
+        local m = math.min(64, n); T.inv[i] = { name = item, count = m, meta = meta }; n = n - m; placed = true; break
+      end
+    end
+    if not placed then return false end
+  end
+  return true
+end
+
+-- crafting the way TurtleInventoryCrafting does it, against the REAL recipes
+-- extracted from the server's jars (test/fixtures/recipes.json)
+local FIX = dofile(REPO .. "/test/fixtures/recipes.lua")
+local GRID = { 1, 2, 3, 5, 6, 7, 9, 10, 11 }
+local IS_GRID = {}
+for _, c in ipairs(GRID) do IS_GRID[c] = true end
+local HAMMER_USES = 64 -- sim durability of an ore hammer
+
+local function matches(name, ing)
+  if type(ing) == "string" then return name == ing end
+  if ing.item then return name == ing.item end
+  if ing.tag then
+    for _, it in ipairs(FIX.tags[ing.tag] or {}) do if it == name then return true end end
+    return false
+  end
+  for _, alt in ipairs(ing) do if matches(name, alt) then return true end end
+  return false
+end
+
+local function shapedMatch(r, g)
+  local pat = r.pattern
+  local h, w = #pat, #pat[1]
+  for _, mirror in ipairs({ false, true }) do
+    for dr = 0, 3 - h do for dc = 0, 3 - w do
+      local ok = true
+      for row = 0, 2 do for col = 0, 2 do
+        local pr, pc = row - dr, col - dc
+        local want
+        if pr >= 0 and pr < h and pc >= 0 and pc < w then
+          local ci = mirror and (w - pc) or (pc + 1)
+          local ch = pat[pr + 1]:sub(ci, ci)
+          if ch ~= " " then want = r.key[ch] end
+        end
+        local have = g[row * 3 + col]
+        if want then
+          if not have or not matches(have, want) then ok = false end
+        elseif have then ok = false end
+      end end
+      if ok then return true end
+    end end
   end
   return false
 end
 
--- crafting the way TurtleInventoryCrafting does it
-local GRID = { 1, 2, 3, 5, 6, 7, 9, 10, 11 }
-local IS_GRID = {}
-for _, c in ipairs(GRID) do IS_GRID[c] = true end
-local function craft(T)
+local function shapelessMatch(r, names)
+  if #names ~= #r.ingredients then return false end
+  local used = {}
+  for _, ing in ipairs(r.ingredients) do
+    local found = false
+    for i, name in ipairs(names) do
+      if not used[i] and matches(name, ing) then used[i], found = true, true; break end
+    end
+    if not found then return false end
+  end
+  return true
+end
+
+local function craft(T, limit)
   for i = 1, 16 do if T.inv[i] and not IS_GRID[i] then return false end end
-  local g = {}
-  for _, c in ipairs(GRID) do g[c] = T.inv[c] and T.inv[c].name end
-  local G, R, P = "minecraft:gold_ingot", "minecraft:redstone", "minecraft:glass_pane"
-  local function is(pattern)
-    for _, c in ipairs(GRID) do if g[c] ~= pattern[c] then return false end end
-    return true
+  local g, names, minStack = {}, {}, math.huge
+  for idx, c in ipairs(GRID) do
+    local st = T.inv[c]
+    if st then g[idx - 1] = st.name; names[#names + 1] = st.name; minStack = math.min(minStack, st.count) end
   end
-  local result, meta
-  if is({ [1] = G, [2] = G, [3] = G, [5] = G, [6] = R, [7] = G, [9] = G, [10] = P, [11] = G }) then
-    result = "computercraft:computer_advanced"
-  elseif is({ [1] = G, [2] = G, [3] = G, [5] = G, [6] = "computercraft:computer_advanced", [7] = G,
-              [9] = G, [10] = "minecraft:chest", [11] = G }) then
-    result = TURTLE_ITEM
-  elseif g[2] == TURTLE_ITEM and g[1] and g[3] and PTYPE[g[3]] and g[1]:find("pickaxe") then
-    local count = 0
-    for _, c in ipairs(GRID) do if g[c] then count = count + 1 end end
-    if count ~= 3 then return false end
-    result, meta = TURTLE_ITEM, { right = g[1], left = g[3] }
+  if #names == 0 then return false end
+  local result, count, meta
+  -- CC's own turtle upgrade recipe: [upgrade, turtle, upgrade] in a row
+  if g[1] == TURTLE_ITEM and g[0] and g[2] and PTYPE[g[2]] and g[0]:find("pickaxe") and #names == 3 then
+    result, count, meta = TURTLE_ITEM, 1, { right = g[0], left = g[2] }
   else
-    return false
+    for _, r in pairs(FIX.crafting) do
+      local shaped = r.type == "minecraft:crafting_shaped" or r.type == "computercraft:transform_shaped"
+      if (shaped and shapedMatch(r, g)) or (r.type == "minecraft:crafting_shapeless" and shapelessMatch(r, names)) then
+        result, count = r.result.id, r.result.count or 1
+        break
+      end
+    end
   end
+  if not result then return false end
+  local times = math.min(limit or 64, minStack)
+  local remainders = {}
   for _, c in ipairs(GRID) do
-    if T.inv[c] then T.inv[c].count = T.inv[c].count - 1; if T.inv[c].count == 0 then T.inv[c] = nil end end
+    local st = T.inv[c]
+    if st then
+      if st.name:find("_ore_hammer$") then
+        local uses = (st.meta and st.meta.uses or HAMMER_USES) - times
+        if uses > 0 then remainders[#remainders + 1] = { name = st.name, meta = { uses = uses } } end
+      end
+      st.count = st.count - times
+      if st.count <= 0 then T.inv[c] = nil end
+    end
   end
-  return addItem(T, result, 1, meta)
+  addItem(T, result, count * times, meta)
+  for _, rem in ipairs(remainders) do addItem(T, rem.name, 1, rem.meta) end
+  return true
+end
+
+-- furnaces, smelting by the REAL smelting recipes
+local SMELT_OUT = {}
+for _, r in pairs(FIX.smelting) do
+  local ing = r.ingredient
+  local list = ing.tag and FIX.tags[ing.tag] or { ing.item }
+  for _, it in ipairs(list or {}) do SMELT_OUT[it] = r.result.id end
+end
+W.furnaces = {}
+local function newFurnace(name, blast)
+  local I = newInv(name, nil, nil, nil, 3)
+  I.burn, I.progress, I.blast = 0, 0, blast
+  W.furnaces[#W.furnaces + 1] = I
+  return I
+end
+function W.smeltTick()
+  for _, I in ipairs(W.furnaces) do
+    local inp = I.slots[1]
+    local out = inp and SMELT_OUT[inp.name]
+    if out and I.blast and not (inp.name:find("raw_") or inp.name:find("_dust$")) then out = nil end
+    if out and (not I.slots[3] or I.slots[3].name == out) then
+      if I.burn <= 0 and I.slots[2] then I.take(2, 1); I.burn = 8 end
+      if I.burn > 0 then
+        I.progress = I.progress + 1
+        if I.progress >= 3 then
+          I.progress, I.burn = 0, I.burn - 1
+          I.take(1, 1)
+          I.insert(out, 1, 3)
+          W.smelted = (W.smelted or 0) + 1
+        end
+      end
+    end
+  end
 end
 
 local scheduler = { cos = {} }
@@ -368,7 +474,7 @@ local function turtleApi(T)
   function api.equipLeft() return equip("left") end
   function api.equipRight() return equip("right") end
   if T.left == "minecraft:crafting_table" or T.right == "minecraft:crafting_table" then
-    function api.craft() return craft(T) end
+    function api.craft(limit) return craft(T, limit) end
   end
   return api, front
 end
@@ -588,6 +694,7 @@ bootTurtle(A)
 local function runUntil(cond, maxTicks)
   for tick = 1, maxTicks do
     W.clock = W.clock + 1
+    W.smeltTick()
     for _, c in ipairs(scheduler.cos) do
       if coroutine.status(c.co) ~= "dead" then
         local ok, err = coroutine.resume(c.co)
@@ -663,7 +770,7 @@ do
     end
     -- every button's action runs without error
     for _, b in ipairs(UI.buttons) do
-      if b.label ~= "UPDATE" then
+      if b.label ~= "UPDATE" and not b.label:find("^HAMMER") then
         local okb, errb = pcall(b.action)
         if not okb then check(false, tab .. " button " .. b.label .. ": " .. tostring(errb)) end
       end
@@ -703,7 +810,9 @@ do
   bus.lose = nil
   check(lost, "the step-2 reply was lost on the way")
   check(ok, "the second miner was still built and flew to home slot 2")
-  check(F.orders[#F.orders].state == "built", "order built: " .. tostring(F.orders[#F.orders].state))
+  local built = 0
+  for _, o in ipairs(F.orders) do if o.role == "miner" and o.state == "built" then built = built + 1 end end
+  check(built == 2, "two miner orders built: " .. built)
 end
 
 print("scenario: a lost 'done' neither blocks the stock rule nor counts twice")
@@ -732,7 +841,7 @@ do
   check((F.totals.iron or 0) == expected, ("iron counted once per job: %d, expected %d"):format(F.totals.iron or 0, expected))
 end
 
-print("scenario: a build with a damaged pickaxe fails cleanly")
+print("scenario: a damaged pickaxe in storage is not used; the base asks for diamonds instead")
 do
   config.fleet.miner = 3
   table.insert(config.homes.miner, { east = 8, north = 0, facing = "north" })
@@ -744,17 +853,54 @@ do
   for _, sl in pairs(W.inv["minecraft:barrel_1"].slots) do
     if sl.name == "minecraft:diamond_pickaxe" then sl.damage = 120 end
   end
-  local ok = runUntil(function() local o = F.orders[#F.orders]; return o and o.state == "failed" end, 100000)
-  local o = F.orders[#F.orders]
-  check(ok, "the order failed: " .. tostring(o and o.reason))
-  check(F.homesTaken.miner[3] == nil, "its home slot is free again")
   local orders = #F.orders
-  runUntil(function() return false end, 250)
-  check(#F.orders == orders, "no new order right away (retry waits)")
+  runUntil(function() return false end, 3000)
+  check(#F.orders == orders, "no order placed with only a damaged pickaxe")
+  check((F.prod.missing["minecraft:diamond"] or 0) >= 3, "it needs 3 diamonds to make a pickaxe: "
+    .. tostring(F.prod.missing["minecraft:diamond"]))
   check(W.get(0, 0, -1) == nil, "nothing left on the build spot")
   local held = 0
   for _ in pairs(A.inv) do held = held + 1 end
-  check(held == 0, "assembler handed everything back")
+  check(held == 0, "assembler holds nothing")
+end
+
+print("scenario: from raw materials only: smelt, craft every part, double gold with a hammer, build")
+do
+  -- furnaces on the wired network
+  newFurnace("minecraft:furnace_0"); newFurnace("minecraft:furnace_1"); newFurnace("minecraft:blast_furnace_0", true)
+  -- the home slot for the new miner
+  newInv("minecraft:chest_2", 8, 0, 0)
+  W.set(8, 0, -2, "computercraft:wired_modem_full")
+  -- empty storage, then only raw materials. 7 raw gold: 14 gold needed, so
+  -- only the hammer's 2 dust per raw ore makes it.
+  for _, name in ipairs({ "minecraft:barrel_0", "minecraft:barrel_1" }) do W.inv[name].slots = {} end
+  local raw = {
+    { "minecraft:raw_gold", 7 }, { "minecraft:raw_iron", 10 }, { "minecraft:raw_copper", 18 },
+    { "minecraft:diamond", 7 }, { "minecraft:redstone", 40 }, { "minecraft:cobblestone", 40 },
+    { "minecraft:sand", 6 }, { "minecraft:oak_log", 24 }, { "minecraft:quartz", 1 }, { "minecraft:coal", 128 },
+  }
+  for _, r in ipairs(raw) do W.inv["minecraft:barrel_0"].insert(r[1], r[2]) end
+  F.failStreak, F.lastFail = 0, nil
+  if not F.hammer then factory.toggleHammer(F) end -- (the tab test pressed it already)
+  check(F.hammer, "hammer toggle on")
+  local ok = runUntil(function()
+    local T = W.turtles[4]
+    return T and T.x == 8 and T.z == -1 and F.turtles[4]
+  end, 400000)
+  check(ok, "a miner was built from raw materials and flew to home slot 3")
+  local c = F.crafted
+  check((c["alltheores:copper_ore_hammer"] or 0) >= 1, "crafted a copper ore hammer")
+  check((c["alltheores:gold_dust"] or 0) >= 14, "hammered 7 raw gold into 14 gold dust: " .. tostring(c["alltheores:gold_dust"]))
+  for _, part in ipairs({ "advancedperipherals:geo_scanner", "advancedperipherals:peripheral_casing",
+                          "computercraft:wired_modem_full", "minecraft:observer", "minecraft:diamond_pickaxe",
+                          "minecraft:chest", "minecraft:glass_pane", "minecraft:iron_bars", "minecraft:redstone_block" }) do
+    check((c[part] or 0) >= 1, "crafted " .. part)
+  end
+  check((W.smelted or 0) > 30, "furnaces smelted: " .. tostring(W.smelted))
+  if not ok then
+    print("    missing raw:", textutils.serialize(F.prod.missing), "note:", F.note)
+    print("    stock:", textutils.serialize(F.deps.storage.list()))
+  end
 end
 
 print("scenario: the installer leaves turtles that aren't on the build spot alone")

@@ -120,6 +120,38 @@ them apart by block type, nothing to configure:
   blocks above the build spot to get there and never dig inside the base.
 - The FACTORY tab shows what each role still needs and has a BUILD button.
 
+## Production: furnaces, crafting parts, ore doubling
+
+Put **furnaces** (and blast furnaces, for ores) on the base's wired network.
+Every 10 s the base takes finished items out, keeps them fuelled (charcoal
+first; coal only above a reserve the turtles need) and gives idle furnaces
+work: raw ore and dust → ingots, logs → charcoal, cobblestone → stone, sand →
+glass (each up to a target, see `production` in `factory.cfg`).
+
+When the fleet is short of turtles, the base works out every part a new
+turtle needs and has the **assembler craft them**: advanced computer, chest,
+glass panes, sticks/planks, diamond pickaxe, iron bars, redstone blocks,
+wired modem, peripheral casing, observer, Geo Scanner, compass. The FACTORY
+tab shows what it is crafting and which **raw** items it is waiting for.
+
+Raw inputs it cannot make itself: raw ores (miners), diamonds, redstone,
+coal, cobblestone, sand, logs (forester), and **nether quartz** (for the
+observer in a Geo Scanner) — bring that one yourself.
+
+**HAMMER** (FACTORY tab): doubles ores with an All The Ores ore hammer. Raw
+ore is hammered into 2 dust (1 raw → 2 dust → 2 ingots) instead of being
+smelted directly. The base crafts a copper ore hammer when it has none (2
+copper blocks + 3 sticks; it smelts the copper for that one directly) and
+replaces it when it breaks.
+
+```lua
+production = { enabled = true, hammer = false, charcoal = 64, stone = 64,
+               glass = 32, coalReserve = 64, keepLogs = 16, keepCobble = 16 },
+```
+
+Smelting needs barrel storage (exact furnace slots); with an ME/RS bridge as
+storage it is untested.
+
 ## Stock rules
 
 ```lua
@@ -130,7 +162,8 @@ rules = {
 ```
 
 When storage holds less than `min`, the base queues the job (once; the next
-one when it is done and stock is still low). Miners dig with a pickaxe, so
+one when it is done and stock is still low). A rule for a raw ore also counts
+what it becomes (iron dust, iron ingots), since the furnaces smelt it. Miners dig with a pickaxe, so
 rules are about the drops: `raw_iron`, `raw_gold`, `raw_copper`, `diamond`,
 `coal`, `redstone`, `lapis_lazuli`, `emerald`.
 

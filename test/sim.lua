@@ -5,7 +5,8 @@ local DIR = PROGRAM:match("^(.*)/[^/]*$") or "."
 local function readAll(path) return assert(io.open(path)):read("*a") end
 local BASE_SRC = readAll(DIR .. "/base.lua")
 local FACTORY_SRC = readAll(os.getenv("FACTORY") or (DIR .. "/factory.lua"))
-MODULES_EXTRA = { factory = FACTORY_SRC }
+MODULES_EXTRA = { factory = FACTORY_SRC, production = readAll(DIR .. "/production.lua"),
+                  recipes = readAll(DIR .. "/recipes.lua") }
 local MODULES = { oreconf = readAll(DIR .. "/oreconf.lua"), tmove = readAll(DIR .. "/tmove.lua"),
                   link = readAll(DIR .. "/link.lua"), nav = readAll(DIR .. "/nav.lua") }
 

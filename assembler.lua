@@ -46,9 +46,11 @@ local function emptyNonGrid()
   for _, i in ipairs(NON_GRID) do if turtle.getItemCount(i) == 0 then return i end end
 end
 
--- Put the step's items into their grid cells. Crafting needs every slot
--- outside the grid empty, so everything must end up in a cell.
-local function arrange(step)
+-- Put the step's items into their grid cells (`sets` of each). Crafting needs
+-- every slot outside the grid empty: leftovers fail the step, or with
+-- `spare` go back up into the supply chest for the next round.
+local function arrange(step, sets, spare)
+  sets = sets or 1
   local keep = step.keep or {}
   for _, cell in ipairs(C.GRID_CELLS) do
     if turtle.getItemCount(cell) > 0 and not keep[cell] then
@@ -63,16 +65,64 @@ local function arrange(step)
     if not d or d.name ~= item then return false, ("expected %s in slot %d"):format(item, cell) end
   end
   for cell, item in pairs(step.grid) do
-    local from = findIn(NON_GRID, item)
-    if not from then return false, "missing " .. item end
-    turtle.select(from)
-    turtle.transferTo(cell, 1)
+    local left = sets
+    while left > 0 do
+      local from = findIn(NON_GRID, item)
+      if not from then return false, "missing " .. item end
+      turtle.select(from)
+      local n = math.min(left, turtle.getItemCount(from))
+      turtle.transferTo(cell, n)
+      left = left - n
+    end
   end
   for _, i in ipairs(NON_GRID) do
     local d = turtle.getItemDetail(i)
-    if d then return false, ("%d unexpected %s"):format(d.count, d.name) end
+    if d then
+      if not spare then return false, ("%d unexpected %s"):format(d.count, d.name) end
+      turtle.select(i)
+      turtle.dropUp()
+    end
   end
   return true
+end
+
+local function count(item)
+  local n = 0
+  for i = 1, 16 do
+    local d = turtle.getItemDetail(i)
+    if d and d.name == item then n = n + d.count end
+  end
+  return n
+end
+
+-- A craft job from the base: `sets` crafts of one recipe, results back up into
+-- the supply chest. `repeated` (ore hammer): one craft at a time, because the
+-- hammer comes back damaged and must go into its cell again, until the ore
+-- runs out or the hammer breaks.
+local function craftJob(job)
+  local made = 0
+  if job.repeated then
+    for _ = 1, job.sets do
+      suckAll()
+      if not arrange(job, 1, true) then break end
+      turtle.select(job.select)
+      if not turtle.craft(1) then break end
+      made = made + count(job.result)
+      dumpAll()
+    end
+    dumpAll()
+    if made == 0 then return false, "nothing hammered (no hammer or ore?)" end
+    return true, made
+  end
+  suckAll()
+  local ok, why = arrange(job, job.sets)
+  if not ok then return false, why end
+  turtle.select(job.select)
+  if not turtle.craft(job.sets) then return false, "crafting " .. job.result .. " failed" end
+  made = count(job.result)
+  dumpAll()
+  if made == 0 then return false, "crafted the wrong thing for " .. job.result end
+  return true, made
 end
 
 local function craftStep(step)
@@ -151,7 +201,13 @@ while true do
     dumpAll()
   else
     local ok, why
-    if r.type == "step" then
+    if r.type == "craft" then
+      local made
+      ok, made = craftJob(r)
+      if ok then why = nil else why = made end
+      state, extra = "crafted", { craft = r.craft, made = ok and made or 0 }
+      if ok then log(("Crafted %d %s"):format(made, r.result)) end
+    elseif r.type == "step" then
       log(("Order #%d: step %d (%s)"):format(r.order, r.step, r.result))
       ok, why = craftStep(r)
       state, extra = "crafted", { order = r.order, step = r.step }
@@ -164,9 +220,9 @@ while true do
       if ok then log(("Order #%d done: new turtle switched on"):format(r.order)) end
     end
     if ok == false then
-      log("Build failed: " .. tostring(why))
+      log("Failed: " .. tostring(why))
       dumpAll()
-      state, extra = "failed", { order = r.order, reason = why }
+      state, extra = "failed", { order = r.order, craft = r.craft, reason = why }
     end
   end
 end
