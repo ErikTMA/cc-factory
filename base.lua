@@ -152,16 +152,35 @@ local function drawFactory(UI, out, w, row)
   row = row + 1
   put(out, 1, row, "FLEET", colors.yellow)
   row = row + 1
-  for role, want in pairs(F.cfg.fleet) do
+  -- roles the factory builds (target from factory.cfg), in a fixed order
+  local built = { "miner", "forester" }
+  if F.cfg.fleet.gps then built[#built + 1] = "gps" end
+  for role in pairs(F.cfg.fleet) do
+    local known = false
+    for _, r in ipairs(built) do if r == role then known = true end end
+    if not known then built[#built + 1] = role end
+  end
+  for _, role in ipairs(built) do
+    local want = F.cfg.fleet[role] or 0
     local have = factory.fleetCount(F, role)
     local missing = (UI.missing or {})[role] or {}
     local need = ""
-    for item, n in pairs(missing) do need = need .. (" %dx%s"):format(n, item:gsub("^%w+:", "")) end
+    local items = {}
+    for item in pairs(missing) do items[#items + 1] = item end
+    table.sort(items)
+    for _, item in ipairs(items) do need = need .. (" %dx%s"):format(missing[item], item:gsub("^%w+:", "")) end
     put(out, 1, row, ("%-9s %d / %d  %s"):format(role, have, want,
-      have < want and (need ~= "" and ("needs" .. need) or "parts ready") or ""):sub(1, w), colors.lightGray)
+      have < want and (need ~= "" and ("needs" .. need) or "parts ready") or ""):sub(1, w - 11), colors.lightGray)
     button(UI, out, w - 9, row, 10, "BUILD", false, function() factory.orderTurtle(F, role, true) end)
     row = row + 1
   end
+  -- helpers the factory doesn't build: shown so you know they're there
+  local asm = factory.fleetCount(F, "assembler")
+  put(out, 1, row, ("%-9s %d      %s"):format("assembler", asm,
+    asm == 0 and "none: nothing gets built (make the first by hand)" or ""):sub(1, w), asm == 0 and colors.red or colors.lightGray)
+  row = row + 1
+  put(out, 1, row, ("%-9s %d"):format("surveyor", factory.fleetCount(F, "surveyor")), colors.gray)
+  row = row + 1
   row = row + 1
   put(out, 1, row, "HOMES (tap to change role)", colors.yellow)
   if not F.gpsWanted then
@@ -169,7 +188,7 @@ local function drawFactory(UI, out, w, row)
   end
   row = row + 1
   if #F.homes == 0 then
-    put(out, 1, row, "none: `survey <facing>` / `home <role>` / $home", colors.lightGray); row = row + 1
+    put(out, 1, row, "none: run a surveyor / `home <role>` / $home", colors.lightGray); row = row + 1
   end
   for _, h in ipairs(F.homes) do
     local text = ("#%-2d %4d,%3d,%4d %-5s %-8s %-6s %s"):format(h.id, h.x, h.y, h.z, h.facing:sub(1, 5),

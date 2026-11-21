@@ -554,6 +554,12 @@ local function turtleEnv(T)
     setComputerLabel = function(l) T.label = l end,
     reboot = function() error("REBOOT", 0) end,
     clock = function() return W.clock end,
+    -- a queued event comes straight back (the turtle yields once, like in CC)
+    queueEvent = function(name) T.queued = name end,
+    pullEvent = function(filter)
+      if T.queued and (not filter or filter == T.queued) then local e = T.queued; T.queued = nil; yield(); return e end
+      error("pullEvent(" .. tostring(filter) .. "): nothing queued in the sim", 0)
+    end,
   }, { __index = os })
   env.rednet = {
     open = function(side) assert(ptype(side) == "modem", "rednet.open: no modem on " .. side); T.rednet = true end,
@@ -1112,6 +1118,7 @@ do
   for i = 1, 60 do text = text .. (screen[i] or "") .. "\n" end
   check(text:find("NETWORK") and text:find("barrels 2") and text:find("furnaces 3"), "FACTORY tab lists the network")
   check(not text:find("No storage"), "no warning when there are barrels")
+  check(text:find("assembler %d") and text:find("surveyor%s+%d"), "FLEET lists assemblers and surveyors")
   ui.devices = { storage = {}, input = { "minecraft:chest_9" }, supply = {}, furnace = {}, drive = {}, bridge = {}, other = {} }
   screen = {}
   UIlib.draw(ui, mon)
@@ -1162,6 +1169,64 @@ do
   check(ok, "installer exits quietly on a computer (" .. tostring(err) .. ")")
   check(BASE_STARTUP_RAN, "and runs the base's own startup instead")
   check(files["agent.cfg"] == nil and files["oreminer.lua"] == nil, "nothing copied onto the base")
+end
+
+print("scenario: surveyor on TOP of the computer, no fuel but coal; modem behind the computer a")
+print("          level down, cable over a 4-high wall to a home, a branch running out of range")
+do
+  -- (all at x ~ 40, away from everything else)
+  W.set(40, 0, 40, "computercraft:computer_advanced")
+  W.set(39, 0, 40, "computercraft:monitor_advanced")
+  W.set(40, 0, 41, "computercraft:wired_modem_full")        -- behind the computer
+  for z = 42, 46 do W.set(40, 0, z, "computercraft:cable") end
+  for x = 36, 44 do for y = 0, 3 do W.set(x, y, 47, "minecraft:cobblestone") end end
+  for y = 1, 4 do W.set(40, y, 46, "computercraft:cable") end -- up the near side
+  W.set(40, 4, 47, "computercraft:cable")                    -- over the top
+  for y = 4, 0, -1 do W.set(40, y, 48, "computercraft:cable") end -- down the far side
+  for z = 49, 50 do W.set(40, 0, z, "computercraft:cable") end
+  W.set(40, 0, 51, "computercraft:wired_modem_full")
+  newInv("minecraft:chest_77", 40, 0, 53)                    -- home spot (40,0,52)
+  for z = 42, 100 do W.set(41, 0, z, "computercraft:cable") end -- runs far out of range
+  local T = newTurtleEntity(60, 40, 1, 40, 0)
+  T.fuel = 0
+  for _, name in ipairs(manifest.turtle) do T.files[name] = repoFile(name) end
+  T.files["agent.cfg"] = ser({ role = "surveyor", base = 0 })
+  T.inv[1] = { name = "minecraft:cobblestone", count = 8 }
+  T.inv[2] = { name = "minecraft:compass", count = 1 }
+  T.inv[3] = { name = "minecraft:coal", count = 16 }
+  local minY, maxY, maxZ = 1, 1, 40
+  local homesBefore = #F.homes
+  bootTurtle(T)
+  local ok = runUntil(function()
+    minY, maxY, maxZ = math.min(minY, T.y), math.max(maxY, T.y), math.max(maxZ, T.z)
+    return T.files["surveyor.state"] and T.files["surveyor.state"]:find("done")
+  end, 400000)
+  check(ok, "the survey finished")
+  check(T.fuel > 0 and (not T.inv[3] or T.inv[3].count < 16), "it fuelled itself from its coal")
+  check(minY <= 0, "it climbed down off the computer: lowest y " .. minY)
+  check(maxY >= 5, "it climbed over the wall: highest y " .. maxY)
+  check(maxZ <= 40 + 33, "stayed within range of where it started: furthest z " .. maxZ)
+  local home
+  for _, h in ipairs(F.homes) do if h.chest == "minecraft:chest_77" then home = h end end
+  check(home ~= nil and home.facing == "north", "registered the home behind the wall, facing away from its chest")
+  check(#F.homes == homesBefore + 1, "one new home")
+  check(T.x == 40 and T.y == 1 and T.z == 40, ("back on the computer (%d,%d,%d)"):format(T.x, T.y, T.z))
+  check(W.get(40, 3, 47) == "minecraft:cobblestone" and W.get(40, 0, 41) == "computercraft:wired_modem_full", "nothing dug")
+end
+
+print("scenario: a surveyor with no fuel and nothing to burn says so and waits")
+do
+  W.set(60, 0, 60, "computercraft:computer_advanced")
+  local T = newTurtleEntity(61, 60, 1, 60, 0)
+  T.fuel = 0
+  for _, name in ipairs(manifest.turtle) do T.files[name] = repoFile(name) end
+  T.files["agent.cfg"] = ser({ role = "surveyor", base = 0 })
+  T.inv[1] = { name = "minecraft:cobblestone", count = 8 }
+  T.inv[2] = { name = "minecraft:compass", count = 1 }
+  bootTurtle(T)
+  runUntil(function() return false end, 2000)
+  check(T.x == 60 and T.y == 1 and T.z == 60, "did not move")
+  check(not (T.files["surveyor.state"] or ""):find("done"), "not marked done: it carries on after it gets fuel")
 end
 
 print(failures == 0 and "ALL PASSED" or (failures .. " FAILURE(S)"))

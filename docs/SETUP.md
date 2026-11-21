@@ -105,8 +105,12 @@ Instead of typing coordinates, let a turtle find the homes:
   wget run https://raw.githubusercontent.com/ErikTMA/cc-factory/main/bootstrap.lua surveyor
   ```
 
-  It installs, restarts and starts surveying by itself. It follows the cables
-  (climbing walls, never digging), drops a cobblestone into each home chest so
+  It installs, restarts and starts surveying by itself. It looks at every side
+  of every cable, modem and chest it finds, starting with the base computer,
+  so it follows the cables wherever they go: it climbs walls, goes over and
+  round them, never digs, and stays within 32 blocks (16 up or down) of where
+  it started. It burns coal or charcoal from its inventory; with nothing to
+  burn it says so and carries on after you add some and `reboot` it. It drops a cobblestone into each home chest so
   the base knows which chest it is, and registers the homes. It also finds the
   installer disk drive, which tells the base where the build spot is. (No
   compass? Then run `surveyor north`, with the way it faces from F3.) To survey

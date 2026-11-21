@@ -7,12 +7,17 @@
 -- starts on its own (`bootstrap ... surveyor` installs it). Without a compass,
 -- run `surveyor <facing>` with the way it looks (F3: "Facing: north").
 --
--- 1. It explores the open air around the computer and the cables and modems
---    it can see, climbing walls next to them (never digging): a turtle only
---    sees the blocks in front of, above and below it (it turns to see the
---    sides), so cables buried inside walls with no open air next to them are
---    missed (use `$home` in chat for those homes). The installer disk drive it
---    finds tells the base where the build spot is (the block above it).
+-- 1. It looks at every side of every network block it knows (computer,
+--    cable, modem, disk drive) and of every chest, starting with the base
+--    computer next to it, so it follows the cables wherever they go. To see an
+--    unseen side it plans the shortest way there through open air, treating
+--    unknown space as open until it sees otherwise (so it climbs walls and
+--    goes round them); it never digs. A turtle only sees the blocks next to
+--    it, so a side with no open air next to it (a cable buried in a wall) is
+--    never seen: use `$home` in chat for homes behind those. It stays within
+--    CFG.reach / CFG.height of where it started, and gives up on a side when
+--    no way to it turns up within CFG.maxSearch cells of searching. The
+--    installer disk drive it finds tells the base where the build spot is.
 -- 2. Every free spot next to a home chest (a vanilla chest on the network) with
 --    a modem next to it is a home spot: a turtle standing there faces away
 --    from the chest. It goes to each, and through that modem asks the base to
@@ -26,11 +31,11 @@ local link = require("link")
 local nav = require("nav")
 
 local CFG = {
-  reach = 32,       -- explore at most this far from the build spot (x and z) ...
-  height = 16,      -- ... and up/down
-  near = 2,         -- explore open air this close to a cable or modem
-  start = 4,        -- and this close to the build spot
+  reach = 32,        -- never further than this from where it started (x and z) ...
+  height = 16,       -- ... and up/down
+  maxSearch = 20000, -- cells one path search may visit before it gives up
   maxSteps = 4000,
+  minFuel = 100,     -- refuel from its inventory below this
   stateFile = "surveyor.state",
   mapFile = "surveyor.map",
 }
@@ -99,6 +104,26 @@ local function applyMove(st, kind)
   end
 end
 
+-- Burn fuel items from the inventory (coal, charcoal, logs...; not the
+-- markers' slot if it can help it) until it has `want` fuel.
+local function refuel(want)
+  if turtle.getFuelLevel() == "unlimited" then return true end
+  for i = 1, 16 do
+    if turtle.getFuelLevel() >= want then break end
+    if turtle.getItemCount(i) > 0 then
+      turtle.select(i)
+      while turtle.getFuelLevel() < want and turtle.getItemCount(i) > 0 and turtle.refuel(1) do end
+    end
+  end
+  turtle.select(1)
+  return turtle.getFuelLevel() >= want
+end
+
+local function fuel()
+  local f = turtle.getFuelLevel()
+  return f == "unlimited" and math.huge or f
+end
+
 -- One step into a cell we know is open; never digs. False if it stays blocked
 -- (a mob, a player, a turtle): the caller plans around it.
 local function stepTo(how)
@@ -106,6 +131,8 @@ local function stepTo(how)
   if how == "up" then fn, attack, kind = turtle.up, turtle.attackUp, "up"
   elseif how == "down" then fn, attack, kind = turtle.down, turtle.attackDown, "down"
   else turnTo(how); fn, attack, kind = turtle.forward, turtle.attack, "fwd" end
+  if fuel() < CFG.minFuel then refuel(1000) end
+  if fuel() < 1 then log("Out of fuel: put coal or charcoal in me"); return false end
   for _ = 1, 10 do
     if tmove.move(S, save, kind, fn, applyMove) then
       S.steps = (S.steps or 0) + 1
@@ -127,8 +154,9 @@ local function look()
   local p = S.pos
   if MAP[key(p.x, p.y + 1, p.z)] == nil then record(0, 1, 0, turtle.inspectUp()) end
   if MAP[key(p.x, p.y - 1, p.z)] == nil then record(0, -1, 0, turtle.inspectDown()) end
+  local first = S.heading -- turnTo changes S.heading inside the loop
   for i = 0, 3 do
-    local h = (S.heading + i) % 4
+    local h = (first + i) % 4
     local d = DIRS[h]
     if MAP[key(p.x + d[1], p.y, p.z + d[3])] == nil then
       turnTo(h)
@@ -198,42 +226,113 @@ local function noteNetwork()
   end
 end
 
--- open air worth standing in: near where it started, or horizontally close to
--- the network at any height (so it climbs the wall a cable runs through and
--- gets over to the other side)
-local function interesting(x, y, z)
-  if math.abs(x) + math.abs(y) + math.abs(z) <= CFG.start then return true end
-  for _, c in ipairs(networkCells) do
-    if math.abs(c[1] - x) + math.abs(c[3] - z) <= CFG.near then return true end
+-- What is still to see: the unknown sides of every network block and chest,
+-- and of every open cell next to a network block (a home spot is such a cell:
+-- its chest is one further).
+local given = {} -- sides it gave up on (no way there)
+local function nextToNetwork(x, y, z)
+  for _, n in ipairs(SIX) do
+    if isNetwork(MAP[key(x + n[1], y + n[2], z + n[3])] or nil) then return true end
   end
   return false
 end
-
-local function hasUnknownNeighbour(x, y, z)
-  for _, n in ipairs(SIX) do
-    local nx, ny, nz = x + n[1], y + n[2], z + n[3]
-    if MAP[key(nx, ny, nz)] == nil and inBounds(nx, ny, nz) then return true end
+local function unseenSides()
+  local want = {}
+  for k, name in pairs(MAP) do
+    local x, y, z = unkey(k)
+    if (name and (isNetwork(name) or isHomeChest(name))) or (name == false and nextToNetwork(x, y, z)) then
+      for _, n in ipairs(SIX) do
+        local nx, ny, nz = x + n[1], y + n[2], z + n[3]
+        local nk = key(nx, ny, nz)
+        if MAP[nk] == nil and not given[nk] and inBounds(nx, ny, nz) then want[nk] = true end
+      end
+    end
   end
-  return false
+  return want
+end
+
+-- let CC breathe during a long search ("too long without yielding")
+local function breathe()
+  os.queueEvent("surveyor_yield")
+  os.pullEvent("surveyor_yield")
+end
+
+-- Shortest way (breadth-first, every step costs 1) from here to a cell next
+-- to one of `targets`, through open air and through unknown cells (treated as
+-- open until seen), inside the bounds, visiting at most CFG.maxSearch cells.
+-- Returns the moves, or nil.
+local function planToSee(targets)
+  local start = key(S.pos.x, S.pos.y, S.pos.z)
+  local prev, queue, head = { [start] = false }, { start }, 1
+  while queue[head] and head <= CFG.maxSearch do
+    if head % 2000 == 0 then breathe() end
+    local cur = queue[head]
+    head = head + 1
+    local x, y, z = unkey(cur)
+    for _, n in ipairs(SIX) do
+      local nx, ny, nz = x + n[1], y + n[2], z + n[3]
+      local nk = key(nx, ny, nz)
+      if targets[nk] and cur ~= start then
+        local moves, k = {}, cur
+        while prev[k] do table.insert(moves, 1, prev[k][2]); k = prev[k][1] end
+        return moves
+      end
+      if prev[nk] == nil and (MAP[nk] == false or MAP[nk] == nil) and not blocked[nk] and not targets[nk]
+         and inBounds(nx, ny, nz) then
+        prev[nk] = { cur, n[4] }
+        queue[#queue + 1] = nk
+      end
+    end
+  end
+end
+
+local function cellAfter(how)
+  local d = type(how) == "number" and DIRS[how] or { 0, how == "up" and 1 or -1, 0 }
+  return key(S.pos.x + d[1], S.pos.y + d[2], S.pos.z + d[3])
+end
+
+-- Walk a planned way, looking around at every cell; stop as soon as the next
+-- cell turns out not to be open (then it plans again with what it learned).
+local function walkSeeing(moves)
+  for _, how in ipairs(moves) do
+    local nk = cellAfter(how)
+    if MAP[nk] == nil then
+      -- look() sees all six sides, so this never happens; if it does, say so
+      -- and stop instead of planning the same way forever
+      error("surveyor: unseen cell next to me at " .. nk, 0)
+    end
+    if MAP[nk] ~= false then return end
+    if not stepTo(how) then blocked[nk] = true; return end
+    look()
+  end
 end
 
 local function explore()
-  log("Mapping the network around the build spot...")
+  log("Mapping the network around the base computer...")
   look()
   while (S.steps or 0) < CFG.maxSteps do
-    noteNetwork()
-    local moves = pathTo(function(k)
-      local x, y, z = unkey(k)
-      return interesting(x, y, z) and hasUnknownNeighbour(x, y, z)
-    end, blocked)
-    if not moves then break end
-    follow(moves)
-    look()
+    local targets = unseenSides()
+    if next(targets) == nil then break end
+    if fuel() < CFG.minFuel and not refuel(1000) and fuel() < math.abs(S.pos.x) + math.abs(S.pos.y) + math.abs(S.pos.z) + 20 then
+      log("Low on fuel: stopping the survey here")
+      break
+    end
+    local moves = planToSee(targets)
+    if not moves then
+      for k in pairs(targets) do given[k] = true end -- no way to any of them
+      break
+    end
+    local before = S.steps or 0
+    walkSeeing(moves)
+    if (S.steps or 0) == before and #moves > 0 and fuel() < 1 then break end
   end
   noteNetwork()
-  local chests = 0
+  local chests, left = 0, 0
   for _, name in pairs(MAP) do if name and isHomeChest(name) then chests = chests + 1 end end
-  log(("Mapped: %d cable/modem blocks, %d chests."):format(#networkCells, chests))
+  for _ in pairs(unseenSides()) do left = left + 1 end
+  for _ in pairs(given) do left = left + 1 end
+  log(("Mapped: %d cable/modem blocks, %d chests, %d sides out of reach, %d steps.")
+    :format(#networkCells, chests, left, S.steps or 0))
 end
 
 -- ----------------------------------------------------------------- homes --
@@ -349,14 +448,10 @@ else
 end
 MAP = MAP or {}
 
-if turtle.getFuelLevel() ~= "unlimited" and turtle.getFuelLevel() < 200 then
-  for i = 1, 16 do
-    local d = turtle.getItemDetail(i)
-    if d and (d.name == "minecraft:coal" or d.name == "minecraft:charcoal") then
-      turtle.select(i); turtle.refuel(math.min(d.count, 16))
-    end
-  end
-  turtle.select(1)
+refuel(1000)
+if fuel() < CFG.minFuel then
+  print(("I have %d fuel and nothing to burn. Put coal or charcoal in me and reboot."):format(fuel()))
+  return -- not done: it carries on from here after the reboot
 end
 
 explore()
