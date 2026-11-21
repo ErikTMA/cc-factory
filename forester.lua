@@ -112,7 +112,18 @@ local function isPlant(b)
      or hasTag(b, "minecraft:small_flowers") then return true end
   local n = b.name
   return (n:find("grass") and not n:find("grass_block")) or n:find("fern") or n:find("flower")
-      or n:find("bush") or n:find("tulip") or n:find("poppy") or n:find("dandelion") or false
+      or n:find("bush") or n:find("tulip") or n:find("poppy") or n:find("dandelion")
+      or n:find("mushroom") and not n:find("block") or n:find("vine") or n:find("sugar_cane")
+      or n:find("berry") or false
+end
+
+local DIRT = "minecraft:dirt"
+
+local function isFluid(name) return name and (name:find("water") or name:find("lava")) and true or false end
+
+-- never dig these out of the floor (its modem, chests, other machines)
+local function isMachine(name)
+  return name:find("computercraft") or name:find("chest") or name:find("barrel") or name:find("modem")
 end
 
 -- may be removed when it is in a path or a spot (everything else is a border)
@@ -233,7 +244,44 @@ local function reserved(i, d)
       or (i == BONEMEAL_SLOT and d.name == "minecraft:bone_meal")
 end
 
-local function keep(i, d) return reserved(i, d) or link.isKeptItem(d.name) end
+-- dirt stays too: it lays the pen's floor with it
+local function keep(i, d) return reserved(i, d) or link.isKeptItem(d.name) or d.name == DIRT end
+
+local function dirtSlot()
+  for i = 1, 16 do
+    local d = turtle.getItemDetail(i)
+    if d and d.name == DIRT then return i end
+  end
+end
+
+-- Make the block under us floor: fill a hole (air, water, lava, a plant)
+-- with dirt; on a tree spot also swap other ground (stone...) for dirt.
+-- Returns the ground block's name, or nil if it needed dirt and had none.
+local function fixGround(treeSpot)
+  local ok, b = turtle.inspectDown()
+  if ok and isSoil(b.name) then return b.name end
+  if ok and not isFluid(b.name) then
+    if isClearable(b) then
+      turtle.digDown()
+    elseif treeSpot and not isMachine(b.name) then
+      if not dirtSlot() then return b.name end -- keep the floor until we have dirt for it
+      turtle.digDown()
+    else
+      return b.name -- solid floor; fine for a path
+    end
+  end
+  local slot = dirtSlot()
+  if not slot then return nil end
+  turtle.select(slot)
+  local placed = turtle.placeDown()
+  turtle.select(WORK_SLOT)
+  if not placed then return nil end
+  return DIRT
+end
+
+local function isSpotCell(x, z)
+  return (x ~= 0 or z ~= 0) and x % CFG.spacing == 0 and z % CFG.spacing == 0
+end
 
 -- Move anything that is not ours out of slots 1 and 2 (e.g. logs that landed
 -- there while slot 1 was empty), into the first free loot slot.
@@ -386,8 +434,7 @@ local function explore()
         if ok then
           border[nk] = true
         elseif move("fwd", turtle.forward) then
-          local okd, ground = turtle.inspectDown()
-          AREA.cells[nk] = okd and ground.name or "air"
+          AREA.cells[nk] = fixGround(isSpotCell(nx, nz)) or "air"
           count = count + 1
           if count > CFG.maxArea then
             error(("The pen is not closed: more than %d open cells. Close the fence and run 'forester rescan'.")
@@ -407,13 +454,12 @@ local function explore()
       end
     end
   end
-  -- tree spots: every `spacing` cells from home, on soil, next to a path cell
+  -- tree spots: every `spacing` cells from home (those still without soil get
+  -- dirt in a later round, once it has some)
   local spots = {}
-  for k, ground in pairs(AREA.cells) do
+  for k in pairs(AREA.cells) do
     local x, z = unkey(k)
-    if (x ~= 0 or z ~= 0) and x % CFG.spacing == 0 and z % CFG.spacing == 0 and isSoil(ground) then
-      spots[#spots + 1] = k
-    end
+    if isSpotCell(x, z) then spots[#spots + 1] = k end
   end
   table.sort(spots)
   AREA.spots = spots
@@ -479,7 +525,13 @@ local function round()
       local d = dist(S.pos, x, z)
       if d < bd then bi, bd = i, d end
     end
-    local sx, sz = unkey(table.remove(todo, bi))
+    local sk = table.remove(todo, bi)
+    local sx, sz = unkey(sk)
+    -- a spot without soil: stand on it and lay dirt, if we have some now
+    if not isSoil(AREA.cells[sk]) and dirtSlot() and walkTo({ x = sx, z = sz }) then
+      AREA.cells[sk] = fixGround(true) or AREA.cells[sk]
+      saveArea()
+    end
     -- the nearest path cell next to the spot we can reach
     local best, bestLen
     for h = 0, 3 do
@@ -490,7 +542,7 @@ local function round()
         if p and (not bestLen or #p < bestLen) then best, bestLen = { x = ax, z = az, h = h }, #p end
       end
     end
-    if best and walkTo(best) then
+    if best and isSoil(AREA.cells[sk]) and walkTo(best) then
       turnTo(best.h)
       tend()
     end
@@ -501,7 +553,10 @@ local function round()
   S.delivered = (S.delivered or 0) + delivered
   save()
   -- tell the base (if it can); code updates apply here
-  link.talk("resting", { delivered = delivered, total = S.delivered, sapling = S.sapling })
+  local noSoil = 0
+  for _, k in ipairs(AREA.spots) do if not isSoil(AREA.cells[k]) then noSoil = noSoil + 1 end end
+  if noSoil > 0 then log(("%d tree spots need dirt: put some dirt in me"):format(noSoil)) end
+  link.talk("resting", { delivered = delivered, total = S.delivered, sapling = S.sapling, needDirt = noSoil })
 end
 
 -- ------------------------------------------------------------------- main --

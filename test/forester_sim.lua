@@ -67,6 +67,14 @@ local function newWorld(opts)
     for _, v in pairs(W.b) do if v == name then n = n + 1 end end
     return n
   end
+  if opts.rough then
+    W.set(1, -1, -1, nil); W.set(-2, -1, -7, nil)        -- holes in the floor
+    W.set(-1, -1, -8, "minecraft:water")                 -- a puddle
+    W.set(3, -1, -3, "minecraft:stone")                  -- a tree spot on stone
+    W.set(-4, 0, -2, "minecraft:short_grass")
+    W.set(4, 0, -7, "minecraft:red_mushroom")
+    W.set(1, 0, -7, SAP); W.growAt(1, 0, -7); W.trees = 0            -- an old tree, off the grid
+  end
   return W
 end
 
@@ -108,6 +116,7 @@ local function newTurtle(W, fuel)
     if b:find("leaves") then tags["minecraft:leaves"] = true end
     if b:find("sapling") then tags["minecraft:saplings"] = true end
     if b == "minecraft:poppy" then tags["minecraft:small_flowers"] = true end
+    if b == "minecraft:short_grass" then tags["minecraft:replaceable"] = true end
     return true, { name = b, tags = tags }
   end
   local api = {}
@@ -144,6 +153,17 @@ local function newTurtle(W, fuel)
     else
       return false
     end
+    s.count = s.count - 1
+    if s.count == 0 then T.inv[T.sel] = nil end
+    return true
+  end
+  -- blocks placed under the turtle: into air or a fluid, like in the game
+  function api.placeDown()
+    local s = T.inv[T.sel]
+    if not s or s.name == SAP or s.name == "minecraft:bone_meal" then return false end
+    local below = W.get(T.x, T.y - 1, T.z)
+    if below and not below:find("water") and not below:find("lava") then return false end
+    W.set(T.x, T.y - 1, T.z, s.name)
     s.count = s.count - 1
     if s.count == 0 then T.inv[T.sel] = nil end
     return true
@@ -388,6 +408,47 @@ do
   local modemKept = false
   for i = 1, 16 do if T.inv[i] and T.inv[i].name == "computercraft:wireless_modem_normal" then modemKept = true end end
   check(modemKept and not W.chest["computercraft:wireless_modem_normal"], "modem kept, not unloaded")
+end
+
+print("scenario: a rough pen: holes, water, a stone tree spot, an old tree, plants")
+do
+  local W = newWorld({ rough = true })
+  local fences = W.fences()
+  local T, api = newTurtle(W, 3000)
+  T.inv[1] = { name = SAP, count = 64 }
+  T.inv[5] = { name = "minecraft:dirt", count = 16 }
+  local ok, err = run(makeEnv(T, api, {}, function() error("END OF TEST") end), "10")
+  check(tostring(err):find("END OF TEST") ~= nil, "one round (" .. tostring(err) .. ")")
+  check(W.get(1, -1, -1) == "minecraft:dirt" and W.get(-2, -1, -7) == "minecraft:dirt", "holes filled with dirt")
+  check(W.get(-1, -1, -8) == "minecraft:dirt", "the puddle filled with dirt")
+  check(W.get(3, -1, -3) == "minecraft:dirt", "stone under a tree spot swapped for dirt")
+  check(W.get(3, 0, -3) == SAP and plantedSpots(W) == #SPOTS, "every spot planted, the fixed one too")
+  check(W.get(1, 0, -7) == nil and W.get(1, 4, -7) == nil and W.count(LOG) == 0, "the old tree is gone")
+  check(W.get(-4, 0, -2) == nil and W.get(4, 0, -7) == nil, "grass and mushroom cleared")
+  check(W.fences() == fences, "no fence touched")
+  check(not W.chest["minecraft:dirt"], "dirt kept, not unloaded")
+  check(W.chest["minecraft:cobblestone"] or W.chest["minecraft:stone"], "the dug-out stone went to the chest")
+end
+
+print("scenario: no dirt: the stone spot waits, and gets fixed once it has dirt")
+do
+  local W = newWorld({ rough = true })
+  local T, api = newTurtle(W, 3000)
+  T.inv[1] = { name = SAP, count = 64 }
+  local files = {}
+  local rounds = 0
+  local function sl()
+    rounds = rounds + 1
+    if rounds == 1 then
+      check(W.get(3, 0, -3) ~= SAP and W.get(3, -1, -3) == "minecraft:stone", "round 1: no dirt, the stone spot is left alone")
+      T.inv[6] = { name = "minecraft:dirt", count = 8 } -- someone gives it dirt
+      return
+    end
+    error("END OF TEST")
+  end
+  local ok, err = run(makeEnv(T, api, files, sl), "10")
+  check(tostring(err):find("END OF TEST") ~= nil, "two rounds (" .. tostring(err) .. ")")
+  check(W.get(3, -1, -3) == "minecraft:dirt" and W.get(3, 0, -3) == SAP, "round 2: dirt laid and the spot planted")
 end
 
 print("scenario: refuses to start without saplings in slot 1")

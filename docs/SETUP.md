@@ -77,11 +77,16 @@ then says the block is connected. A modem that isn't lit does nothing.
 
 - A forester is an advanced turtle with a **diamond pickaxe** and a
   **compass**.
-- Fence off a pen with a dirt or grass floor. Put the forester inside, facing
-  in, with its chest directly behind it (in the fence line) and its wired
-  modem **under** it. Saplings go in **slot 1** (top left), coal anywhere.
-- First start: it walks the pen once and remembers it, then plants every 3rd
-  cell. Run `forester rescan` after changing the fence.
+- Fence off a pen. Put the forester inside, facing in, with its chest
+  directly behind it (in the fence line) and its wired modem **under** it.
+  Saplings go in **slot 1** (top left), coal anywhere, and a stack of **dirt**.
+- First start: it walks the pen once and remembers it. On the way it fells the
+  trees already inside, clears grass, flowers and mushrooms, fills holes and
+  water with dirt, and swaps stone under tree spots for dirt. Then it plants
+  every 3rd cell. It keeps its dirt (never unloads it); tree spots it had no
+  dirt for are fixed in a later round once you give it more. Other solid blocks
+  inside the pen count as walls. Run `forester rescan` after changing the
+  fence.
 
 ## 5. The surveyor: let the base find the homes
 
