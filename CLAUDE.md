@@ -54,7 +54,7 @@ add it to `recipes.lua`.
 
 ## Tests
 
-`test/run.sh` (Docker, Lua 5.2 like CC's Cobalt). Three harnesses run the real
+`test/run.sh` (Docker, Lua 5.2 like CC's Cobalt; ~17 s, each suite capped at 60 s so a loop fails as STUCK). Three harnesses run the real
 files unchanged: `sim.lua` (miner + dispatcher), `forester_sim.lua`,
 `factory_sim.lua` (whole factory: base over fake barrels/chests, assembler
 crafting the way CC does, disk boot, wired modems, updates). Every fix lands
