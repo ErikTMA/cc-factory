@@ -94,6 +94,13 @@ C.ROLES = {
     upgrades = { "minecraft:diamond_pickaxe", "minecraft:compass" },
     loadout = { { "@sapling", 16 }, WIRELESS, { "minecraft:coal", 16 } },
   },
+  -- surveyor: maps the network from the build spot (where it is built), then
+  -- parks next to a modem. No home slot; cobblestone = markers for home chests.
+  surveyor = {
+    upgrades = { "minecraft:compass" },
+    loadout = { { "minecraft:coal", 16 }, { "minecraft:cobblestone", 8 } },
+    noHome = true,
+  },
   -- GPS host: flies to a point high above the base and runs `gps host`. The
   -- compass tells it its heading on the way (there is no GPS yet).
   gps = {

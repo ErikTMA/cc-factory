@@ -585,7 +585,8 @@ end
 local args = { ... }
 S = readTable(CFG.stateFile)
 MAP = readTable(CFG.mapFile)
-local away = S and (S.pos.x ~= 0 or S.pos.y ~= 0 or S.pos.z ~= 0)
+local rest0 = S and S.rest or { x = 0, y = 0, z = 0 }
+local away = S and (S.pos.x ~= rest0.x or S.pos.y ~= rest0.y or S.pos.z ~= rest0.z)
 if args[1] and args[1] ~= "resume" and args[1] ~= "home" then -- a new survey ("survey", or a facing)
   if S and (away or not S.done) and args[2] ~= "here" then
     print(("My last survey isn't finished: I'm %d,%d,%d from where it started."):format(S.pos.x, S.pos.y, S.pos.z))
@@ -614,10 +615,50 @@ local function fitCompass()
 end
 
 fitCompass()
--- Back to the start. Marks the survey done there; otherwise it stays
+-- Where it rests after a survey: where it started, unless that is the build
+-- spot (the disk drive right under it: the factory built it there). Then the
+-- nearest known spot next to a modem, off the build spot and the column above
+-- it (new turtles fly up from there), so the next build isn't blocked.
+local function restPlace()
+  if S.rest then return S.rest end
+  if MAP[key(0, -1, 0)] ~= "computercraft:disk_drive" then return { x = 0, y = 0, z = 0 } end
+  local dist = stepsHome()
+  -- next to a modem (it can check in from there) if it can, else anywhere
+  -- off the build spot and its column
+  local best, bestD, bestM
+  for k, name in pairs(MAP) do
+    local x, y, z = unkey(k)
+    if name == false and dist[k] and not (x == 0 and z == 0 and y >= 0) then
+      local m = nextToModem(k)
+      if best == nil or (m and not bestM) or (m == bestM and (dist[k] < bestD or (dist[k] == bestD and k < best))) then
+        best, bestD, bestM = k, dist[k], m
+      end
+    end
+  end
+  if not best then return { x = 0, y = 0, z = 0 } end
+  if not bestM then log("No modem near the build spot to park by: parking off the build spot") end
+  local x, y, z = unkey(best)
+  S.rest = { x = x, y = y, z = z }
+  save()
+  return S.rest
+end
+
+-- Started by the agent (a built surveyor): after the survey it checks in from
+-- where it rests every 5 minutes, so it keeps counting in the fleet (and can
+-- get code updates, or be taken apart). A survey run by hand just ends.
+local function restLoop()
+  if args[1] ~= "resume" then return end
+  while true do
+    link.talk("resting", {}, true)
+    sleep(300)
+  end
+end
+
+-- Back to where it rests. Marks the survey done there; otherwise it stays
 -- "stranded" and tries again on the next start.
 local function returnHome()
-  local ok, why = goTo(0, 0, 0)
+  local r = restPlace()
+  local ok, why = goTo(r.x, r.y, r.z)
   if not ok then
     S.stranded = true
     save()
@@ -642,7 +683,11 @@ if S then
     if returnHome() then log("Back where I started.") end
     return
   end
-  if S.done then log("Survey done. Run 'surveyor survey' next to the base computer to survey again."); return end
+  if S.done then
+    log("Survey done. Run 'surveyor survey' next to the base computer to survey again.")
+    restLoop()
+    return
+  end
 else
   local h = nav.compass() or nav.index(args[1] or "")
   if not h then
@@ -682,4 +727,7 @@ if moves and follow(moves) then
   reported = link.talk("surveyed", { homes = S.homes, drives = drives }, false) ~= nil
 end
 if not reported then log("Could not report the survey to the base (no modem reached)") end
-if returnHome() then log("Survey done.") end
+if returnHome() then
+  log("Survey done.")
+  restLoop()
+end

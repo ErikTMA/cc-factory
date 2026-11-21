@@ -458,6 +458,19 @@ local function turtleApi(T)
   end
   local function dig(x, y, z)
     local b = W.get(x, y, z)
+    -- a turtle: mineable with a pickaxe (CC's mineable/pickaxe tag); it drops
+    -- as an item, its contents go to the digger too
+    if b == TURTLE_ITEM and (tostring(T.left):find("pickaxe") or tostring(T.right):find("pickaxe")) then
+      local other = turtleAt(x, y, z)
+      if other then
+        for i = 1, 16 do local st = other.inv[i]; if st then addItem(T, st.name, st.count, st.meta) end end
+        W.turtles[other.id] = nil
+        other.dug = true
+      end
+      W.set(x, y, z, nil)
+      addItem(T, TURTLE_ITEM, 1)
+      return true
+    end
     if not b or b == "minecraft:bedrock" or b:find("^computercraft") or b:find("chest") or b:find("barrel")
        or b == "computercraft:disk_drive" then return false end
     W.set(x, y, z, nil)
@@ -635,6 +648,16 @@ local function turtleEnv(T)
         if N and not N.on then bootTurtle(N) end
         return
       end
+      if side == "front" and method == "getID" then
+        local N = turtleAt(front())
+        if not N then error("peripheral.call front getID: no computer") end
+        return N.id
+      end
+      if side == "front" and method == "isOn" then
+        local N = turtleAt(front())
+        if not N then error("peripheral.call front isOn: no turtle") end
+        return N.on == true
+      end
       error("peripheral.call " .. side .. " " .. method)
     end,
   }
@@ -643,6 +666,7 @@ local function turtleEnv(T)
     getComputerLabel = function() return T.label end,
     setComputerLabel = function(l) T.label = l end,
     reboot = function() error("REBOOT", 0) end,
+    shutdown = function() T.on = false; error("SHUTDOWN", 0) end,
     clock = function() return W.clock end,
     -- a queued event comes straight back (the turtle yields once, like in CC)
     queueEvent = function(name) T.queued = name end,
@@ -718,7 +742,7 @@ bootTurtle = function(T)
         if env.fs.exists("disk/startup.lua") then env.shell.run("disk/startup.lua")
         elseif env.fs.exists("startup.lua") then env.shell.run("startup.lua") end
       end)
-      if ok then return end
+      if ok or err == "SHUTDOWN" then return end
       if err ~= "REBOOT" then error(err, 0) end
       T.boots = T.boots + 1
     end
@@ -806,6 +830,7 @@ for _, p in ipairs(stockParts) do W.inv["minecraft:barrel_0"].insert(p[1], p[2])
 scheduler.nextId = 2
 local A = newTurtleEntity(1, 0, 0, 0, 0)
 A.left = "minecraft:crafting_table" -- and no wireless modem: it talks over the wired one
+A.right = "minecraft:diamond_pickaxe" -- to pick up turtles taken apart on the build spot
 for _, name in ipairs(manifest.turtle) do A.files[name] = repoFile(name) end
 A.files["agent.cfg"] = ser({ role = "assembler", base = 0 })
 
@@ -893,12 +918,18 @@ do
     end
     -- every button's action runs without error
     for _, b in ipairs(UI.buttons) do
-      if b.label ~= "UPDATE" and not b.label:find("^HAMMER") then
+      if b.label ~= "UPDATE" and not b.label:find("^HAMMER") and b.label ~= "DISMANTLE" then
         local okb, errb = pcall(b.action)
         if not okb then check(false, tab .. " button " .. b.label .. ": " .. tostring(errb)) end
       end
     end
   end
+end
+
+-- (the BUILD presses above also queued a forester and a surveyor: the forester
+-- waits for saplings and would hold back later orders; neither is wanted)
+for _, o in ipairs({ table.unpack(F.orders) }) do
+  if (o.role == "surveyor" or o.role == "forester") and o.state == "queued" then factory.cancelOrder(F, o.id) end
 end
 
 print("scenario: a code update reaches the idle miner")
@@ -1069,6 +1100,75 @@ do
   local first = Cf.buildSteps("miner", factory.startFor(F, "miner"))[1]
   check(factory.startFor(F, "miner") == 2 and first.grid[6] == "computercraft:computer_advanced" and not first.keep,
     "a computer in storage: starts at step 2, the computer goes into cell 6")
+end
+
+print("scenario: the factory builds a surveyor: it surveys from the build spot and parks next to")
+print("          a modem, off the build spot")
+local SVB
+do
+  W.set(2, 0, -1, "computercraft:wired_modem_full") -- a modem it can reach near the build spot
+  local B = W.inv["minecraft:barrel_1"]
+  local function freeSlot() for i = 1, B.size do if not B.slots[i] then return i end end end
+  B.slots[freeSlot()] = { name = "computercraft:turtle_advanced", count = 1, displayName = "Advanced Turtle" }
+  B.insert("minecraft:compass", 1); B.insert("minecraft:coal", 16); B.insert("minecraft:cobblestone", 64)
+  -- BUILD on the monitor's FLEET row (surveyors are built by hand; target 0)
+  factory.orderTurtle(F, "surveyor", true)
+  local ok = runUntil(function()
+    for id, t in pairs(F.turtles) do
+      if t.role == "surveyor" and t.state == "resting" then SVB = W.turtles[id]; return true end
+    end
+  end, 400000)
+  check(ok, "a surveyor was built, surveyed and checks in")
+  if SVB then
+    local spot = SVB.x == 0 and SVB.y == 0 and SVB.z == -1
+    local above = SVB.x == 0 and SVB.z == -1 and SVB.y > 0
+    local nearModem = false
+    for _, d in ipairs({ { 1, 0, 0 }, { -1, 0, 0 }, { 0, 1, 0 }, { 0, -1, 0 }, { 0, 0, 1 }, { 0, 0, -1 } }) do
+      if W.get(SVB.x + d[1], SVB.y + d[2], SVB.z + d[3]) == "computercraft:wired_modem_full" then nearModem = true end
+    end
+    check(not spot and not above and nearModem, ("parked next to a modem, off the build spot (%d,%d,%d)"):format(SVB.x, SVB.y, SVB.z))
+    check(SVB.right == "minecraft:compass" or SVB.left == "minecraft:compass", "built with a compass")
+  end
+end
+
+print("scenario: DISMANTLE miner-2: it flies to the build spot, hands everything over and switches")
+print("          off; the assembler picks it up; parts and the plain turtle go to storage")
+do
+  local M2 = W.turtles[2]
+  config.fleet.miner = 0 -- (don't build a new one right away)
+  local before = stock()
+  F.selected = 2
+  factory.dismantle(F)
+  check(F.dismantle and F.dismantle.id == 2, "asked to take miner-2 apart")
+  local ok = runUntil(function() return F.dismantle == nil and W.turtles[2] == nil end, 200000)
+  check(ok, "taken apart: " .. tostring(F.note))
+  check(M2 and M2.on == false and M2.label == nil, "it switched off with its label cleared")
+  local after = stock()
+  local function gained(item) return (after[item] or 0) - (before[item] or 0) end
+  check(gained("minecraft:diamond_pickaxe") >= 1 and gained("advancedperipherals:geo_scanner") >= 1,
+    "its pickaxe and Geo Scanner are in storage")
+  check(gained("computercraft:turtle_advanced") >= 1, "and the turtle itself")
+  check(F.turtles[2] == nil, "gone from the fleet")
+  local held = 0
+  for _ in pairs(A.inv) do held = held + 1 end
+  check(held == 0 and W.get(0, 0, -1) == nil, "assembler empty, build spot free")
+end
+
+print("scenario: DISMANTLE a turtle with no way to the build spot (the surveyor): it switches off")
+print("          where it is, upgrades off, for you to pick up")
+do
+  if SVB then
+    F.selected = SVB.id
+    factory.dismantle(F)
+    local ok = runUntil(function() return F.dismantle == nil end, 200000)
+    check(ok and SVB.on == false and SVB.left == nil and SVB.right == nil and SVB.label == nil,
+      "switched off, upgrades off, label cleared: " .. tostring(F.note))
+    local inInv = false
+    for i = 1, 16 do if SVB.inv[i] and SVB.inv[i].name == "minecraft:compass" then inInv = true end end
+    check(inInv, "its compass is in its own inventory (no chest next to it)")
+    check(F.turtles[SVB.id] == nil, "gone from the fleet")
+  end
+  W.set(2, 0, -1, nil) -- (the extra modem: the next survey scenario expects its own world)
 end
 
 print("scenario: a plain turtle next to the base computer climbs the wall the cable goes through,")

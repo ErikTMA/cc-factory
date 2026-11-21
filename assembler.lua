@@ -2,8 +2,9 @@
 --
 -- The turtle: an advanced turtle with a crafting table, touching a wired
 -- modem on the base's network that is ENABLED (right-click it with the
--- assembler in place: the base then reaches the assembler's inventory). A
--- wireless modem upgrade is optional.
+-- assembler in place: the base then reaches the assembler's inventory). Its
+-- other upgrade: a DIAMOND PICKAXE, to pick up turtles that are taken apart
+-- on the build spot (or a wireless modem, without that).
 -- Layout:
 --   the wired modem behind it, under it or on top of it
 --   build spot directly IN FRONT of it, kept empty
@@ -218,6 +219,22 @@ local function loadout(items)
   return true -- (anything left over, e.g. a picked-up old turtle: the base takes it)
 end
 
+-- A turtle being taken apart flies to the build spot, hands its things over
+-- and switches off: wait for that, then pick it up (needs a pickaxe). Meanwhile
+-- say "collecting" now and then, so the base takes what was handed over.
+local function collect(r)
+  for t = 1, 300 do
+    local ok, b = turtle.inspect()
+    if ok and b.name:find("^computercraft:turtle") and not peripheral.call("front", "isOn") then
+      if not turtle.dig() then return false, "can't pick up the turtle: give the assembler a diamond pickaxe" end
+      return true
+    end
+    if t % 5 == 0 then talk("collecting", { dismantle = r.id }) end
+    sleep(2)
+  end
+  return false, "the turtle to take apart never arrived"
+end
+
 -- ------------------------------------------------------------------ main --
 if not turtle.craft then error("The assembler needs a crafting table upgrade", 0) end
 if not link.hasModem() then
@@ -254,6 +271,10 @@ while true do
     elseif r.type == "place" then
       ok, why = placeTurtle()
       state, extra = "placed", { order = r.order }
+    elseif r.type == "collect" then
+      ok, why = collect(r)
+      state, extra = "collected", { dismantle = r.id }
+      if ok then log("Picked up the dismantled turtle") end
     elseif r.type == "loadout" then
       ok, why = loadout(r.items)
       state, extra = "powered", { order = r.order }
@@ -261,7 +282,7 @@ while true do
     end
     if ok == false then
       log("Failed: " .. tostring(why))
-      state, extra = "failed", { order = r.order, craft = r.craft, reason = why }
+      state, extra = "failed", { order = r.order, craft = r.craft, dismantle = r.id, reason = why }
     end
   end
 end

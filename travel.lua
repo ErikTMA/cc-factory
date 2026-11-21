@@ -83,6 +83,19 @@ local function goTo(t)
   while st.pos.y < t.y do step("up") end
 end
 
+-- Back from the home slot to the build spot (to be taken apart there).
+function T.toBuildSpot()
+  local cfg = link.config()
+  local slot = cfg.slot
+  refuel()
+  st = readState() or { pos = { x = slot.x or slot.east or 0, y = slot.y or 0, z = slot.z or -(slot.north or 0) } }
+  tmove.recover(st, save, apply)
+  st.heading = nav.heading(nil)
+  save()
+  goTo({ x = 0, y = 0, z = 0 })
+  fs.delete(STATE)
+end
+
 -- Ask for a home slot, walk there, record it in agent.cfg.
 function T.toHomeSlot()
   local cfg = link.config()

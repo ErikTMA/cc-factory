@@ -23,7 +23,7 @@ M.QTY = { 8, 16, 32, 64, 128, 256, 0 } -- job sizes on the monitor; 0 = no limit
 local PERSIST = { "turtles", "queue", "nextJobId", "nextSector", "totals", "counted",
                   "orders", "nextOrderId", "homes", "nextHomeId", "buildSpot", "gpsWanted", "anchor", "ruleJobs", "lastFail", "failStreak",
                   "hammer", "tinyFuel", "craft", "nextCraftId", "crafted",
-                  "saplings", "boneMeal" }
+                  "saplings", "boneMeal", "dismantle" }
 
 local CRAFT_PAUSE = 60      -- seconds without craft jobs after one failed
 
@@ -274,6 +274,25 @@ function M.toggleOnly(F) F.sel.onlyThis = not F.sel.onlyThis end
 function M.addY(F, d) F.sel.y = math.max(-64, math.min(319, F.sel.y + d)) end
 function M.qtyStep(F, d) F.sel.qty = math.max(1, math.min(#M.QTY, F.sel.qty + d)) end
 function M.selectTurtle(F, id) F.selected = (F.selected ~= id) and id or nil end
+
+-- TURTLES tab: take the selected turtle apart. At its next safe stop at home
+-- it is told to (see handle); one at a time; builds wait meanwhile.
+function M.dismantle(F)
+  local t = F.selected and F.turtles[F.selected]
+  if not t then F.note = "Select a turtle first"; return end
+  if t.role == "assembler" then F.note = "The assembler can't take itself apart"; return end
+  if F.dismantle then F.note = ("Already taking %s apart"):format(label(F, F.dismantle.id)); return end
+  F.dismantle = { id = t.id, state = "asked", since = now(F) }
+  F.note = ("%s will be taken apart at its next stop at home"):format(label(F, t.id))
+end
+
+-- The dismantled turtle is gone: out of the fleet, its home free again.
+local function dismantled(F, id, how)
+  F.note = ("%s %s"):format(label(F, id), how)
+  F.turtles[id] = nil
+  homes.release(F, id)
+  F.dismantle = nil
+end
 
 function M.start(F)
   local q = M.QTY[F.sel.qty]
@@ -652,6 +671,24 @@ local handleAssemblerStep
 -- Every reply in a build is remembered: if it got lost (the assembler gave up
 -- waiting) and the assembler reports idle, it gets the same reply again.
 local function handleAssembler(F, from, msg)
+  -- a turtle being taken apart on the build spot
+  local dm = F.dismantle
+  if dm and msg.state == "collecting" then
+    clearAssembler(F, from) -- what it handed over goes to storage
+    return { type = "ok" }
+  elseif dm and msg.state == "collected" and msg.dismantle == dm.id then
+    clearAssembler(F, from)
+    dismantled(F, dm.id, "taken apart: its parts and the plain turtle are in storage")
+    return { type = "ok" }
+  elseif dm and msg.state == "failed" and msg.dismantle == dm.id then
+    F.note = ("Taking %s apart: %s"):format(label(F, dm.id), tostring(msg.reason))
+    F.dismantle = nil
+    clearAssembler(F, from)
+    return { type = "ok" }
+  elseif dm and msg.state == "idle" then
+    if dm.state == "coming" then return { type = "collect", id = dm.id } end
+    return { type = "ok" } -- (no new builds while one is being taken apart)
+  end
   -- a craft job in flight
   local c = F.craft
   if c and c.assembler == from then
@@ -706,14 +743,17 @@ handleAssemblerStep = function(F, from, msg, o)
     end
     -- the new turtle gets its home slot with its install data: it can fly there
     -- without talking first (there may be no modem at the build spot)
-    local home = homes.claim(F, o.role, "order:" .. o.id)
-    if not home then
+    -- (a role without homes, e.g. the surveyor, starts right on the build spot)
+    local noHome = C.ROLES[o.role].noHome
+    local home = nil
+    if not noHome then home = homes.claim(F, o.role, "order:" .. o.id) end
+    if not noHome and not home then
       F.note = ("No free %s home: add one (monitor HOMES, `home %s` or $home)"):format(o.role, o.role)
       return { type = "ok" }
     end
-    o.state, o.assembler, o.step, o.home, o.lastSeen = "building", from, 1, home.id, now(F)
+    o.state, o.assembler, o.step, o.home, o.lastSeen = "building", from, 1, home and home.id, now(F)
     o.install = { role = o.role, order = o.id, trees = F.cfg.forester.trees,
-                  wait = F.cfg.forester.wait, slot = slotFor(F, home), homeY = F.cfg.build.y,
+                  wait = F.cfg.forester.wait, slot = home and slotFor(F, home) or nil, homeY = F.cfg.build.y,
                   host = o.role == "gps" and { x = home.x, y = home.y, z = home.z } or nil }
     F.deps.writeInstall(copy(o.install))
     o.from = startFor(F, o.role) -- AE2-style: skip what storage already has
@@ -861,6 +901,23 @@ function M.handle(F, from, msg)
     end
   end
 
+  local dm = F.dismantle
+  local safe = msg.state == "idle" or msg.state == "done" or msg.state == "resting"
+  if dm and dm.id == from and dm.state == "asked" and safe and t.role ~= "assembler"
+     and not buildingOrder(F) and not F.craft then
+    dm.state = "told"
+    local asm
+    for id, tt in pairs(F.turtles) do if tt.role == "assembler" then asm = id end end
+    return { type = "dismantle", assembler = asm }
+  elseif dm and dm.id == from and msg.state == "dismantling" then
+    if msg.toBuildSpot then
+      dm.state, dm.since = "coming", now(F)
+      F.note = ("%s is flying to the build spot to be taken apart"):format(label(F, from))
+    else
+      dismantled(F, from, "switched off where it is (its things in the chest next to it, or in itself): pick it up")
+    end
+    return { type = "ok" }
+  end
   if msg.wantFuel then
     reply = M.deliverFuel(F, from, msg.wantFuel)
   elseif (msg.state == "mark1" or msg.state == "mark2") and t.role ~= "surveyor" then
@@ -1000,8 +1057,14 @@ local function jobActive(F, id)
   return false
 end
 
+local DISMANTLE_TIMEOUT = 3600 -- seconds before giving up on a turtle to take apart
+
 function M.tick(F)
   local S = F.deps.storage
+  if F.dismantle and now(F) - (F.dismantle.since or 0) > DISMANTLE_TIMEOUT then
+    F.note = ("Gave up taking %s apart (it didn't come)"):format(label(F, F.dismantle.id))
+    F.dismantle = nil
+  end
   if not M.marking(F) then M.serviceChests(F) end -- (a marker must stay put)
   local stock = S.list()
   local cfgp = F.cfg.production or {}

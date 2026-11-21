@@ -168,7 +168,8 @@ Use the chat fallback for those (step 8).
   it empty), touching a **wired modem** on the base's network (behind it, under
   it or on top). **Right-click that modem with the assembler in place**: the
   base then pushes the parts straight into the assembler and takes the results
-  back out, so no chest is needed. A wireless modem is optional. A **disk
+  back out, so no chest is needed. Its second upgrade: a **diamond pickaxe**
+  (it picks up turtles you take apart, see below), or a wireless modem. A **disk
   drive with a floppy** goes **under the build spot**: never next to the
   assembler. Install it with `bootstrap.lua assembler`.
 - Set a fleet target in `factory.cfg`, e.g. `fleet = { miner = 3 }`, and give
@@ -186,6 +187,17 @@ Use the chat fallback for those (step 8).
   Raw inputs it needs: raw ores, diamonds, redstone, coal, cobblestone, sand,
   logs, and **nether quartz** (for the Geo Scanner's observer: bring that
   yourself).
+
+- **Surveyors** are built by hand: **BUILD** on the surveyor row under FLEET
+  (FACTORY tab). A new surveyor starts its survey right on the build spot and
+  then parks next to a modem, off the build spot.
+- **Taking a turtle apart:** TURTLES tab, tap the turtle, **DISMANTLE**. At its
+  next stop at home a turtle the factory built flies to the build spot, hands
+  everything to the assembler, takes its upgrades off and hands those over
+  too, and switches off; the assembler picks it up (it needs the pickaxe) and
+  the base stores the parts and the plain turtle, which the next build reuses.
+  A turtle you installed by hand puts its things and upgrades in the chest
+  next to it (or keeps them) and switches off for you to pick up.
 
 ## 7. GPS
 

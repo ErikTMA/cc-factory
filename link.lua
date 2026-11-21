@@ -196,6 +196,7 @@ function L.talk(state, extra, updates)
   end)
   if type(reply) ~= "table" then return nil end
   if reply.update and updates ~= false then L.applyUpdate(reply.update) end
+  if reply.type == "dismantle" then L.dismantle(reply.assembler) end
   if reply.role and reply.role ~= cfg.role then
     cfg.role = reply.role
     L.saveConfig(cfg)
@@ -244,6 +245,58 @@ function L.claimChest()
     return true
   end
   return false
+end
+
+-- ---------------------------------------------------------- dismantle --
+-- The base asked to take this turtle apart (TURTLES tab: DISMANTLE). Built by
+-- the factory (it knows its way, cfg.slot): it flies to the build spot, hands
+-- everything to the assembler in front of it there, takes its upgrades off
+-- and hands those over too, clears its label and switches off; the assembler
+-- picks it up and the base stores the plain turtle. Otherwise it empties
+-- itself into the chest next to it and switches off, to be picked up.
+function L.dismantle(assembler)
+  local cfg = L.config()
+  local toSpot = type(cfg.slot) == "table" and assembler ~= nil
+  L.talk("dismantling", { toBuildSpot = toSpot }, false)
+  if toSpot then require("travel").toBuildSpot() end
+  -- face the assembler (by its computer ID: other turtles may stand next to
+  -- the build spot too), or else a chest
+  local function isTarget()
+    local ok, b = turtle.inspect()
+    if not ok then return false end
+    if toSpot then
+      if not b.name:find("^computercraft:turtle") then return false end
+      local okId, id = pcall(peripheral.call, "front", "getID")
+      return okId and id == assembler
+    end
+    return b.name:find("chest") ~= nil
+  end
+  local facing = false
+  for _ = 1, 4 do
+    if isTarget() then facing = true; break end
+    turtle.turnRight()
+  end
+  local function handOver()
+    if not facing then return end
+    for i = 1, 16 do
+      if turtle.getItemCount(i) > 0 then turtle.select(i); turtle.drop() end
+    end
+  end
+  handOver()
+  -- the upgrades off, each into an EMPTY slot (equipping from a full one
+  -- would swap that item in), then over as well
+  for _, equip in ipairs({ turtle.equipLeft, turtle.equipRight }) do
+    for i = 1, 16 do
+      if turtle.getItemCount(i) == 0 then turtle.select(i); equip(); break end
+    end
+  end
+  handOver()
+  turtle.select(1)
+  cfg.role, cfg.slot, cfg.home, cfg.chest = nil, nil, nil, nil
+  L.saveConfig(cfg)
+  os.setComputerLabel(nil)
+  print(toSpot and "Dismantled: the assembler picks me up." or "Dismantled: pick me up.")
+  os.shutdown()
 end
 
 -- Burn fuel items (oreconf.FUEL) from the inventory up to `target`.

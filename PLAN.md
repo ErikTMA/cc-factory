@@ -199,6 +199,12 @@ Each tested fix was proven by mutation (scenario fails without it).
 - Rednet message size of a full code update (~55 KB in one message).
 - Orientation of a turtle placed by the assembler (code measures it anyway).
 - Base event loop under real tick costs (not simulated).
+- Dismantle: a turtle with a diamond pickaxe digging another (switched off)
+  turtle collects it as an item (turtles are in mineable/pickaxe, checked);
+  `turtle.drop` into a turtle in front fills its inventory; `isOn`/`getID`
+  on the turtle peripheral in front. The sim models all three.
+- Surveys re-register homes that were defined another way (factory.cfg,
+  $home) as new ones: homes aren't de-duplicated across frames yet.
 - ME/RS bridge (AP 0.8.2a): item entries include `components` and `nbt`
   (LuaConverter). Check live what a fresh turtle's entry looks like and that
   `exportItem` with a filter takes that exact stack; then the AE2-style

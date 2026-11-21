@@ -77,6 +77,9 @@ local function drawTurtles(UI, out, w, row)
   row = row + 1
   button(UI, out, 1, row, 16, F.selected and "STOP turtle" or "CANCEL last job", false,
     function() factory.stop(F) end)
+  if F.selected then
+    button(UI, out, 18, row, 12, "DISMANTLE", F.dismantle ~= nil, function() factory.dismantle(F) end)
+  end
   return row + 2
 end
 
@@ -236,7 +239,7 @@ local function drawFactory(UI, out, w, row)
   put(out, 1, row, "FLEET", colors.yellow)
   row = row + 1
   -- roles the factory builds (target from factory.cfg), in a fixed order
-  local built = { "miner", "forester" }
+  local built = { "miner", "forester", "surveyor" }
   if F.cfg.fleet.gps then built[#built + 1] = "gps" end
   for role in pairs(F.cfg.fleet) do
     local known = false
@@ -262,8 +265,7 @@ local function drawFactory(UI, out, w, row)
   put(out, 1, row, ("%-9s %d      %s"):format("assembler", asm,
     asm == 0 and "none: nothing gets built (make the first by hand)" or ""):sub(1, w), asm == 0 and colors.red or colors.lightGray)
   row = row + 1
-  put(out, 1, row, ("%-9s %d"):format("surveyor", factory.fleetCount(F, "surveyor")), colors.gray)
-  row = row + 1
+
   row = row + 1
   put(out, 1, row, "HOMES (tap to change role)", colors.yellow)
   if not F.gpsWanted then
