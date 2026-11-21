@@ -367,7 +367,7 @@ local function turtleApi(T)
   local function dig(x, y, z)
     local b = W.get(x, y, z)
     if not b or b == "minecraft:bedrock" or b:find("^computercraft") or b:find("chest") or b:find("barrel")
-       or b == "drive" then return false end
+       or b == "computercraft:disk_drive" then return false end
     W.set(x, y, z, nil)
     addItem(T, DROPS[b] or b, 1)
     return true
@@ -498,7 +498,7 @@ local function turtleEnv(T)
   local api, front = turtleApi(T)
   local mounts = {}
   -- the installer disk is attached when the drive is right below the turtle
-  local function diskAttached() return W.get(T.x, T.y - 1, T.z) == "drive" end
+  local function diskAttached() return W.get(T.x, T.y - 1, T.z) == "computercraft:disk_drive" end
   if diskAttached() then mounts.disk = DISK end
   local env = setmetatable({}, { __index = _G })
   env.turtle = api
@@ -514,13 +514,15 @@ local function turtleEnv(T)
     if side == "top" then return W.get(T.x, T.y + 1, T.z) end
     if side == "bottom" then return W.get(T.x, T.y - 1, T.z) end
     local h = side == "front" and T.h or side == "back" and (T.h + 2) % 4
+           or side == "left" and (T.h + 3) % 4 or side == "right" and (T.h + 1) % 4
     if h then local d = DIRS[h]; return W.get(T.x + d[1], T.y, T.z + d[2]) end
   end
   local function ptype(side)
-    if side == "left" or side == "right" then return PTYPE[T[side] or ""] end
+    -- left/right are upgrade slots; with no upgrade there, the block beside it
+    if (side == "left" or side == "right") and T[side] then return PTYPE[T[side]] end
     local b = adjacent(side)
     if b == "computercraft:wired_modem_full" then return "modem" end
-    if b == "drive" then return "drive" end
+    if b == "computercraft:disk_drive" then return "drive" end
   end
   env.disk = { getMountPath = function(side) if ptype(side) == "drive" then return "disk" end end }
   env.peripheral = {
@@ -664,7 +666,7 @@ for x = -12, 24 do for z = -30, 12 do
 end end
 -- assembler at (0,0,0) facing north; build spot (0,0,-1); drive under it;
 -- supply trapped chest above the assembler
-W.set(0, -1, -1, "drive")
+W.set(0, -1, -1, "computercraft:disk_drive")
 newInv("minecraft:trapped_chest_0", 0, 1, 0)
 -- storage barrels (no position needed: only reached over the network)
 newInv("minecraft:barrel_0"); newInv("minecraft:barrel_1")
@@ -901,6 +903,74 @@ do
     print("    missing raw:", textutils.serialize(F.prod.missing), "note:", F.note)
     print("    stock:", textutils.serialize(F.deps.storage.list()))
   end
+end
+
+
+print("scenario: a plain turtle next to the base computer climbs the wall the cable goes through,")
+print("          maps the network, finds the build spot and registers homes")
+do
+  -- the base computer stands against a 3-high wall (z = -4); the modem is in
+  -- the wall right behind it and the cable runs on the far side to two home
+  -- chests (one a level up); a modem in front of each home spot. A chest with
+  -- no modem near it is not a home. A cable also runs to the installer drive
+  -- under the build spot.
+  for x = -9, 1 do for y = 0, 2 do W.set(x, y, -4, "minecraft:cobblestone") end end
+  W.set(-2, 0, -3, "computercraft:computer_advanced")
+  W.set(-2, 0, -4, "computercraft:wired_modem_full")
+  for x = -2, -7, -1 do W.set(x, 0, -5, "computercraft:cable") end
+  newInv("minecraft:chest_3", -4, 0, -7)          -- home spot (-4,0,-6) faces south
+  W.set(-4, 0, -5, "computercraft:wired_modem_full")
+  newInv("minecraft:chest_4", -7, 1, -7)          -- home spot (-7,1,-6), a level up
+  W.set(-7, 1, -5, "computercraft:wired_modem_full")
+  W.set(-9, 0, -7, "minecraft:chest")             -- not wired: no home here
+  W.set(-1, 0, -3, "computercraft:cable"); W.set(-1, 0, -2, "computercraft:cable")
+  W.set(-1, -1, -1, "computercraft:cable")        -- to the drive under the build spot
+  -- the surveyor: a plain turtle in front of the computer, facing it (north)
+  local SV = newTurtleEntity(50, -2, 0, -2, 0)
+  SV.fuel = 4000
+  for _, name in ipairs(manifest.turtle) do SV.files[name] = repoFile(name) end
+  SV.files["agent.cfg"] = ser({ role = "surveyor", base = 0 })
+  SV.inv[1] = { name = "minecraft:cobblestone", count = 8 }
+  local env = turtleEnv(SV)
+  local co = coroutine.create(function() env.shell.run("surveyor", "north") end)
+  scheduler.cos[#scheduler.cos + 1] = { T = SV, co = co }
+  local homesBefore = #F.homes
+  local cfgHome = F.homes[1] and { x = F.homes[1].x, y = F.homes[1].y, z = F.homes[1].z }
+  local ok = runUntil(function() return coroutine.status(co) == "dead" end, 400000)
+  check(ok, "the survey finished")
+  -- frame: the surveyor's start, world (-2,0,-2), is (0,0,0)
+  local function rel(x, y, z) return x + 2, y, z + 2 end
+  local bx, by, bz = rel(0, 0, -1)
+  check(F.buildSpot and F.buildSpot.x == bx and F.buildSpot.y == by and F.buildSpot.z == bz,
+    "found the build spot above the disk drive: " .. textutils.serialize(F.buildSpot))
+  local found = {}
+  for _, h in ipairs(F.homes) do if h.source == "survey" then found[h.chest] = h end end
+  local h3, h4 = found["minecraft:chest_3"], found["minecraft:chest_4"]
+  local x3, y3, z3 = rel(-4, 0, -6)
+  check(h3 and h3.x == x3 and h3.y == y3 and h3.z == z3 and h3.facing == "south",
+    "home behind the wall at chest_3, facing away from it: " .. (h3 and ("%d,%d,%d %s"):format(h3.x, h3.y, h3.z, h3.facing) or "none"))
+  local x4, y4, z4 = rel(-7, 1, -6)
+  check(h4 and h4.x == x4 and h4.y == y4 and h4.z == z4, "home a level up at chest_4: " ..
+    (h4 and ("%d,%d,%d"):format(h4.x, h4.y, h4.z) or "none"))
+  check(#F.homes == homesBefore + 2, ("only those two homes added (%d -> %d)"):format(homesBefore, #F.homes))
+  check(h3 and h3.role == "off" and h4 and h4.role == "off", "new homes wait for a role")
+  -- homes from before (factory.cfg) moved into the new frame with the build spot
+  local h1 = F.homes[1]
+  check(cfgHome and h1.x == cfgHome.x + bx and h1.z == cfgHome.z + bz, "earlier homes moved along with the build spot")
+  check(SV.x == -2 and SV.y == 0 and SV.z == -2, ("surveyor back where it started (%d,%d,%d)"):format(SV.x, SV.y, SV.z))
+  check(W.get(-2, 0, -4) == "computercraft:wired_modem_full" and W.get(-3, 1, -4) == "minecraft:cobblestone",
+    "nothing dug: it went over the wall")
+  -- tap the home on the monitor: off -> miner; a new miner would fly to it
+  if h3 then factory.cycleHome(F, h3.id) end
+  check(h3 and h3.role == "miner", "the monitor sets its role: " .. tostring(h3 and h3.role))
+  -- a new miner asking for a home gets it relative to the build spot:
+  -- world (-4,0,-6) seen from the build spot at world (0,0,-1)
+  for _, h in ipairs(F.homes) do if h.role == "miner" and h ~= h3 then h.role = "off" end end
+  local r = factory.handle(F, 77, { type = "status", state = "new", role = "miner", label = "new-77" })
+  check(r and r.type == "home" and r.home.x == -4 and r.home.y == 0 and r.home.z == -5 and r.home.facing == "south",
+    "a new miner is sent to it from the build spot: " .. textutils.serialize(r and r.home))
+  runUntil(function() return false end, 400)
+  check(W.inv["minecraft:chest_3"].count("minecraft:cobblestone") == 0, "the marker got drained into storage afterwards")
 end
 
 print("scenario: the installer leaves turtles that aren't on the build spot alone")

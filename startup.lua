@@ -6,6 +6,7 @@
 --   miner      oreminer serve   (jobs from the base)
 --   forester   forester         (tree farm, reports each round)
 --   assembler  assembler        (builds new turtles for the base)
+--   surveyor   surveyor         (maps the wired network, registers homes)
 -- A turtle fresh from the assembler first walks to the home slot the base
 -- gives it (travel.lua).
 
@@ -38,6 +39,8 @@ elseif cfg.role == "forester" then
   shell.run("forester", tostring(cfg.trees or ""), tostring(cfg.wait or ""))
 elseif cfg.role == "assembler" then
   shell.run("assembler")
+elseif cfg.role == "surveyor" then
+  shell.run("surveyor", "resume")
 else
   print("cc-factory turtle without a role. Set one in agent.cfg, e.g.")
   print('  { role = "miner", base = <base computer id> }')

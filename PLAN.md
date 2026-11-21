@@ -87,8 +87,10 @@ rednet. Turtles never need http.
 - [x] M6 base UI tabs: Turtles / Stock / Jobs; harness coverage for all of it
 - [x] M7 independent review pass (critic + security), fixes
 - [ ] M8 deploy to the server and first live run (verify-live items below)
-- [ ] M10 homes without typing coordinates. One frame: the build spot is
-      (0,0,0), world axes (x east, y up, z south).
+- [ ] M10 homes without typing coordinates. Home frame: where the surveyor
+      started (next to the base computer) is (0,0,0), world axes (x east, y up,
+      z south); the build spot is found by the survey (above the installer
+      drive) and turtles get homes relative to it. No survey: frame = build spot.
   - [x] M10a base-managed home list (F.homes: pos, facing, role, source);
         FACTORY tab cycles each home's role miner/forester/off; factory.cfg
         homes imported; travel to homes at any height
@@ -96,7 +98,7 @@ rednet. Turtles never need http.
         factory, flies to a host point above the base and runs `gps host` in
         the build-spot frame; turtles use gps.locate when in range; `home
         <role>` on a turtle registers its spot
-  - [ ] M10c no GPS: surveyor = a plain advanced turtle (no upgrades; early
+  - [x] M10c no GPS: surveyor = a plain advanced turtle (no upgrades; early
         game). Sees only front/up/down via inspect (turning for sides), so it
         follows cables/modems it can reach from open air; cables fully inside
         walls are missed (chat fallback). Heading from a compass if equipped,

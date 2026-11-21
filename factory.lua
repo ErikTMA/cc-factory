@@ -21,7 +21,7 @@ local M = {}
 M.QTY = { 8, 16, 32, 64, 128, 256, 0 } -- job sizes on the monitor; 0 = no limit
 
 local PERSIST = { "turtles", "queue", "nextJobId", "nextSector", "totals", "counted",
-                  "orders", "nextOrderId", "homes", "nextHomeId", "ruleJobs", "lastFail", "failStreak",
+                  "orders", "nextOrderId", "homes", "nextHomeId", "buildSpot", "ruleJobs", "lastFail", "failStreak",
                   "hammer", "craft", "nextCraftId", "crafted" }
 
 local CRAFT_PAUSE = 60      -- seconds without craft jobs after one failed
@@ -104,7 +104,27 @@ function M.restore(F, t)
   if type(t) == "table" then
     for _, k in ipairs(PERSIST) do if t[k] ~= nil then F[k] = t[k] end end
   end
-  homes.import(F, F.cfg.homes) -- (no duplicates: same position = same home)
+  homes.import(F, F.cfg.homes, F.buildSpot) -- (no duplicates: same position = same home)
+end
+
+-- Homes are stored relative to the survey's start (next to the base
+-- computer); turtles get them relative to the build spot. Before a survey the
+-- two are the same. When the build spot becomes known, homes registered in
+-- the old frame (factory.cfg, by hand) move along.
+function M.setBuildSpot(F, p)
+  local old = F.buildSpot or { x = 0, y = 0, z = 0 }
+  for _, h in ipairs(F.homes) do
+    if h.source ~= "survey" then h.x, h.y, h.z = h.x + p.x - old.x, h.y + p.y - old.y, h.z + p.z - old.z end
+  end
+  F.buildSpot = { x = p.x, y = p.y, z = p.z }
+end
+
+-- A home as a turtle flying from the build spot needs it.
+local function slotFor(F, h)
+  local b = F.buildSpot or { x = 0, y = 0, z = 0 }
+  local s = homes.slot(h)
+  s.x, s.y, s.z = s.x - b.x, s.y - b.y, s.z - b.z
+  return s
 end
 
 -- Home list actions for the monitor.
@@ -409,7 +429,7 @@ handleAssemblerStep = function(F, from, msg, o)
     end
     o.state, o.assembler, o.step, o.home, o.lastSeen = "building", from, 1, home.id, now(F)
     o.install = { role = o.role, order = o.id, trees = F.cfg.forester.trees,
-                  wait = F.cfg.forester.wait, slot = homes.slot(home), homeY = F.cfg.build.y }
+                  wait = F.cfg.forester.wait, slot = slotFor(F, home), homeY = F.cfg.build.y }
     F.deps.writeInstall(copy(o.install))
     local steps = C.buildSteps(o.role)
     local ok, why = stage(F, stepItems(steps[1]))
@@ -456,10 +476,63 @@ local function assignHome(F, from, msg)
   local h = homes.claim(F, role, from)
   if h then
     F.note = ("%s goes to %s home %d"):format(label(F, from), role, h.id)
-    return { type = "home", home = homes.slot(h), y = F.cfg.build.y, index = h.id }
+    return { type = "home", home = slotFor(F, h), y = F.cfg.build.y, index = h.id }
   end
   F.note = ("No free %s home for %s: add one"):format(role, label(F, from))
   return { type = "wait" }
+end
+
+-- -------------------------------------------------------------- surveyor --
+-- The surveyor drops a marker into a home chest; the base sees which input
+-- chest it landed in. Draining is paused meanwhile, or the marker would move.
+local MARK_TIMEOUT = 60
+
+local function inputCounts(F)
+  local S, counts = F.deps.storage, {}
+  for _, name in ipairs(S.inputs and S.inputs() or {}) do
+    local c = {}
+    for _, it in pairs(S.slots(name)) do c[it.name] = (c[it.name] or 0) + it.count end
+    counts[name] = c
+  end
+  return counts
+end
+
+function M.marking(F) return F.mark and now(F) < F.mark.untilTime end
+
+local function handleSurveyor(F, from, msg)
+  if msg.state == "mark1" then
+    F.mark = { from = from, untilTime = now(F) + MARK_TIMEOUT, snap = inputCounts(F) }
+    return { type = "ok" }
+  elseif msg.state == "mark2" then
+    local mark = F.mark
+    F.mark = nil
+    if not mark or mark.from ~= from then return { type = "nomark" } end
+    local found
+    for name, c in pairs(inputCounts(F)) do
+      local before = mark.snap[name] or {}
+      for item, n in pairs(c) do
+        if n > (before[item] or 0) then found = name end
+      end
+    end
+    if not found or not msg.home then
+      F.note = "Survey: marker not found in any home chest"
+      return { type = "nomark" }
+    end
+    local h = homes.add(F, { x = msg.home.x, y = msg.home.y, z = msg.home.z, facing = msg.home.facing,
+                             source = "survey", chest = found })
+    F.note = ("Survey: home %d at %d,%d,%d (%s)"):format(h.id, h.x, h.y, h.z, found)
+    return { type = "marked", chest = found, home = h.id }
+  elseif msg.state == "surveyed" then
+    local n = 0
+    for _ in pairs(msg.homes or {}) do n = n + 1 end
+    -- the installer drive is under the build spot
+    local d = msg.drives and #msg.drives == 1 and msg.drives[1]
+    if d then M.setBuildSpot(F, { x = d.x, y = d.y + 1, z = d.z }) end
+    F.note = ("Survey done: %d homes%s; pick their roles under HOMES"):format(n,
+      d and "" or (msg.drives and #msg.drives > 1 and ", several disk drives: build spot unknown"
+                   or ", no disk drive found: build spot unknown"))
+  end
+  return { type = "ok" }
 end
 
 -- ------------------------------------------------------------- protocol --
@@ -490,6 +563,8 @@ function M.handle(F, from, msg)
     reply = assignHome(F, from, msg)
   elseif t.role == "assembler" then
     reply = handleAssembler(F, from, msg)
+  elseif t.role == "surveyor" then
+    reply = handleSurveyor(F, from, msg)
   elseif t.role == "forester" then
     if msg.state == "resting" and msg.delivered then
       F.totals.logs = (F.totals.logs or 0) + msg.delivered
@@ -576,7 +651,7 @@ end
 
 function M.tick(F)
   local S = F.deps.storage
-  S.drainInputs()
+  if not M.marking(F) then S.drainInputs() end -- (a survey marker must stay put)
   local stock = S.list()
   local cfgp = F.cfg.production or {}
   if cfgp.enabled ~= false and S.furnaces then

@@ -23,6 +23,7 @@
 --   store(fromName)               -> moved   (everything in an inventory -> storage)
 --   drainInputs()                 -> moved   (all input chests -> storage)
 --   supply()                      -> name of the supply chest, or nil
+--   inputs()                      -> names of the input (home) chests
 --   kind                          "chests" | "me_bridge" | "rs_bridge"
 
 local M = {}
@@ -47,6 +48,7 @@ end
 local function base(api)
   local S = {}
   function S.supply() return inventories(api, "supply")[1] end
+  function S.inputs() return inventories(api, "input") end
   function S.furnaces()
     local out = {}
     for _, n in ipairs(inventories(api, "furnace")) do

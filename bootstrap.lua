@@ -7,7 +7,7 @@
 --
 -- On a turtle you set up by hand (built ones install from the disk):
 --   wget run https://raw.githubusercontent.com/ErikTMA/cc-factory/main/bootstrap.lua miner
--- (or forester / assembler). It installs the turtle files, sets the role and
+-- (or forester / assembler / surveyor). It installs the turtle files, sets the role and
 -- reboots; the turtle pins itself to the first base that answers it.
 
 local REPO = "ErikTMA/cc-factory"

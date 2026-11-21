@@ -39,12 +39,14 @@ function H.add(F, home)
   return h
 end
 
--- factory.cfg's homes: { miner = { { east = 4, north = 0, facing = "north" } } }
-function H.import(F, cfgHomes)
+-- factory.cfg's homes: { miner = { { east = 4, north = 0, facing = "north" } } },
+-- offsets from the build spot (`at` = where the build spot is in the home frame)
+function H.import(F, cfgHomes, at)
+  at = at or { x = 0, y = 0, z = 0 }
   for role, list in pairs(cfgHomes or {}) do
     for _, slot in ipairs(list) do
-      H.add(F, { x = slot.east or slot.x or 0, y = slot.up or slot.y or 0,
-                 z = slot.z or -(slot.north or 0), facing = slot.facing, role = role, source = "cfg" })
+      H.add(F, { x = at.x + (slot.east or slot.x or 0), y = at.y + (slot.up or slot.y or 0),
+                 z = at.z + (slot.z or -(slot.north or 0)), facing = slot.facing, role = role, source = "cfg" })
     end
   end
 end
