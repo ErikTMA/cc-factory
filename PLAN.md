@@ -199,6 +199,10 @@ Each tested fix was proven by mutation (scenario fails without it).
 - Rednet message size of a full code update (~55 KB in one message).
 - Orientation of a turtle placed by the assembler (code measures it anyway).
 - Base event loop under real tick costs (not simulated).
+- ME/RS bridge (AP 0.8.2a): item entries include `components` and `nbt`
+  (LuaConverter). Check live what a fresh turtle's entry looks like and that
+  `exportItem` with a filter takes that exact stack; then the AE2-style
+  shortcut can work with a bridge too (today: barrels only).
 - A freshly crafted plain turtle/computer item has no `nbt` in getItemDetail
   (the AE2-style shortcut only uses items without it; if fresh items do carry
   some, the shortcut just never fires).

@@ -356,7 +356,8 @@ local function acceptFor(item)
 end
 
 -- Storage contents, counting only usable tools and fresh computers/turtles
--- (a bridge can't show item details: none of those count there).
+-- (with a bridge, fresh computers/turtles aren't counted yet: see
+-- storage.lua's bridge countWhere).
 local function usableStock(F)
   local S = F.deps.storage
   local stock = S.list()

@@ -197,7 +197,10 @@ local function bridge(api, name, kind)
     return tonumber(api.call(name, "importItem", { name = item }, fromName)) or 0
   end
 
-  function S.countWhere(item) return S.count(item) end -- bridges: no item details
+  -- (AP 0.8.2a's item entries DO carry `components`/`nbt`, but what a fresh
+  -- item's entry looks like and whether exportItem can pick that exact stack
+  -- is unverified: until checked live, callers treat a bridge as "no details")
+  function S.countWhere(item) return S.count(item) end
 
   function S.craft(item, count)
     return api.call(name, "craftItem", { name = item, count = count })

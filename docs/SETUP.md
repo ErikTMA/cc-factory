@@ -178,8 +178,9 @@ Use the chat fallback for those (step 8).
   Like AE2, it uses what is already made: a fresh **plain advanced turtle**
   in storage only gets its upgrades fitted, a fresh **advanced computer**
   skips the computer step. (Only fresh ones: an upgraded turtle or a computer
-  that was in use carries data and is left alone. Needs barrel storage; a
-  storage bridge can't show that.)
+  that was in use carries data and is left alone. For now this needs barrel
+  storage: with an ME/RS bridge it isn't verified yet that the base can pick
+  the fresh one, so it builds from scratch there.)
   Raw inputs it needs: raw ores, diamonds, redstone, coal, cobblestone, sand,
   logs, and **nether quartz** (for the Geo Scanner's observer: bring that
   yourself).
