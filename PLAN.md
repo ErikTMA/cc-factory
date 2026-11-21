@@ -61,7 +61,7 @@ rednet. Turtles never need http.
 ## Milestones
 
 - [x] M0 miner + base dispatcher + forester + journaled moves (tested)
-- [ ] M1 (in progress: link.lua written, not wired yet) `link.lua`: one shared base link (modem swap at home, pinned base id,
+- [x] M1 `link.lua`: one shared base link (modem swap at home, pinned base id,
       status/reply); oreminer + forester use it; forester reports to the base
 - [ ] M2 agent + updates: `startup.lua` agent (role from `agent.cfg`), version
       in every status, base serves `/dist` (checksum version) in replies,

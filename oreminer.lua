@@ -26,6 +26,7 @@
 
 local C = require("oreconf")
 local tmove = require("tmove")
+local link = require("link")
 
 local CFG = {
   radius = 8,          -- scan radius; 8 is free on this server, 9-16 costs fuel
@@ -87,51 +88,10 @@ local function dist(a, b)
 end
 
 -- -------------------------------------------------------------- equipment --
--- The Geo Scanner and the modem share one upgrade slot; the other is in the
--- inventory. These helpers swap them.
-local EQUIP = { left = turtle.equipLeft, right = turtle.equipRight }
-
-local function equippedSide(ptype)
-  for _, side in ipairs({ "left", "right" }) do
-    if peripheral.getType(side) == ptype then return side end
-  end
-end
-
-local function findItem(pred)
-  for i = 1, 16 do
-    local d = turtle.getItemDetail(i)
-    if d and pred(d.name) then return i end
-  end
-end
-
-local function isKeptItem(name) return C.MODEM_ITEMS[name] or name == C.SCANNER_ITEM end
-
--- Make sure the scanner is equipped (e.g. after a restart while the modem was in).
+-- The Geo Scanner shares its upgrade slot with the wireless modem (link.lua).
 local function ensureScanner()
-  if equippedSide("geoScanner") then return true end
-  local side = equippedSide("modem")
-  local slot = findItem(function(n) return n == C.SCANNER_ITEM end)
-  if side and slot then
-    turtle.select(slot); EQUIP[side](); turtle.select(1)
-  end
-  return equippedSide("geoScanner") ~= nil
-end
-
--- Run fn(modemSide) with the wireless modem equipped; nil if there is none.
-local function withModem(fn)
-  local side = equippedSide("modem")
-  if not side then
-    local slot = findItem(function(n) return C.MODEM_ITEMS[n] end)
-    side = equippedSide("geoScanner")
-    if not slot or not side then return nil end
-    turtle.select(slot); EQUIP[side](); turtle.select(1)
-  end
-  rednet.open(side)
-  local ok, result = pcall(fn, side)
-  rednet.close(side)
-  ensureScanner()
-  if not ok then error(result, 0) end
-  return result
+  link.restoreUpgrade()
+  return link.equippedSide("geoScanner") ~= nil
 end
 
 -- ---------------------------------------------------------------- scanner --
@@ -296,7 +256,7 @@ local function unload()
   for i = 1, 16 do
     turtle.select(i)
     local d = turtle.getItemDetail(i)
-    if d and not isKeptItem(d.name) then
+    if d and not link.isKeptItem(d.name) then
       if not keptFuel and turtle.refuel(0) then
         keptFuel = true -- keep one stack of fuel
       else
@@ -308,18 +268,13 @@ local function unload()
 end
 
 -- -------------------------------------------------------------- base link --
--- Only used at home. Sends a status and returns the base's reply (or nil if
--- there is no modem or no base answering).
+local function status()
+  return { job = S and S.job, mined = S and S.mined or 0 }
+end
+
+-- Report to the base (only at home). Code updates wait until the job is done.
 local function talk(state)
-  return withModem(function()
-    rednet.broadcast({
-      type = "status", state = state, label = os.getComputerLabel(),
-      job = S and S.job, mined = S and S.mined or 0,
-      fuel = turtle.getFuelLevel(),
-    }, C.PROTOCOL)
-    local _, reply = rednet.receive(C.PROTOCOL, 3)
-    return reply
-  end)
+  return link.talk(state, status(), state == "idle" or state == "done")
 end
 
 local function finished()
@@ -492,36 +447,37 @@ if args[1] == "resume" then
   if not resumeUnfinished() then log("Nothing to resume.") end
 
 elseif args[1] == "serve" then
+  -- serve [at=<Y>] [heading=<0-3>]: the agent passes both for a new turtle
+  local opt = {}
+  for _, a in ipairs(args) do
+    local k, v = a:match("^(%w+)=(.+)$")
+    if k then opt[k] = tonumber(v) end
+  end
   local home = readFile(CFG.homeFile)
   if not home then
     log("First start: telling the turtle where home is.")
-    home = { y = tonumber(args[2] and args[2]:match("^at=(.+)$")) or askY() }
+    home = { y = opt.at or askY() }
     refuel()
     S = { pos = { x = 0, y = 0, z = 0 }, heading = 0, homeHeading = 0 }
-    home.heading = detectHeading()
+    home.heading = opt.heading or detectHeading()
     writeFile(CFG.homeFile, home)
     log(("Home is Y %d facing %s."):format(home.y, HEADING_NAME[home.heading]))
   end
   resumeUnfinished()
-  if not findItem(function(n) return C.MODEM_ITEMS[n] end) and not equippedSide("modem") then
+  if S and S.done then talk("done") end
+  if not link.hasModem() then
     error("serve needs a wireless modem in the turtle's inventory", 0)
   end
   log("Waiting for jobs from the base...")
   while true do
-    -- idle at home: keep the modem in and poll the base
-    local job = withModem(function()
-      while true do
-        rednet.broadcast({ type = "status", state = "idle", label = os.getComputerLabel(),
-                           fuel = turtle.getFuelLevel(), mined = S and S.mined or 0,
-                           job = S and S.job }, C.PROTOCOL)
-        local _, reply = rednet.receive(C.PROTOCOL, 3)
-        if type(reply) == "table" and reply.type == "job" then return reply.job end
-        if reply then sleep(3) end -- base answered "nothing for you": poll again later
-      end
-    end)
-    newJob(job, home)
-    run()
-    talk("done")
+    local reply = talk("idle")
+    if type(reply) == "table" and reply.type == "job" then
+      newJob(reply.job, home)
+      run()
+      talk("done")
+    else
+      sleep(3)
+    end
   end
 
 else

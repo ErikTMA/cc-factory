@@ -4,7 +4,8 @@ local PROGRAM = arg[1] or "../oreminer.lua"
 local DIR = PROGRAM:match("^(.*)/[^/]*$") or "."
 local function readAll(path) return assert(io.open(path)):read("*a") end
 local BASE_SRC = readAll(os.getenv("BASE") or (DIR .. "/base.lua"))
-local MODULES = { oreconf = readAll(DIR .. "/oreconf.lua"), tmove = readAll(DIR .. "/tmove.lua") }
+local MODULES = { oreconf = readAll(DIR .. "/oreconf.lua"), tmove = readAll(DIR .. "/tmove.lua"),
+                  link = readAll(DIR .. "/link.lua") }
 
 -- yield to the scheduler when running as one of several coroutines
 local function yieldIfCo()
@@ -187,6 +188,7 @@ local function makeEnv(T, api, scanner, files, bus, id)
   env.rednet = {
     open = function(side) assert(PTYPE[T[side] or ""] == "modem", "rednet.open on " .. tostring(side)); T.rednetOpen = true end,
     close = function() T.rednetOpen = false end,
+    send = function(to, msg) return env.rednet.broadcast(msg) end,
     broadcast = function(msg)
       assert(T.rednetOpen, "broadcast without open modem")
       local reply = bus.base.handleMessage(bus.B, id, msg)
@@ -196,7 +198,7 @@ local function makeEnv(T, api, scanner, files, bus, id)
     end,
     receive = function()
       local q = bus.inbox[id]
-      if q and #q > 0 then return bus.B and 0 or 0, table.remove(q, 1) end
+      if q and #q > 0 then return bus.baseId or 0, table.remove(q, 1) end
       return nil
     end,
   }

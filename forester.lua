@@ -25,6 +25,7 @@
 -- meal and a few logs for fuel. startup.lua resumes it after a restart.
 
 local tmove = require("tmove")
+local link = require("link")
 
 local CFG = {
   trees = 6,
@@ -146,11 +147,14 @@ end
 -- ------------------------------------------------------------ inventory --
 local function select(slot) turtle.select(slot) end
 
--- Slot 1 holds our saplings and slot 2 bone meal; everything else is loot.
+-- Slot 1 holds our saplings and slot 2 bone meal; everything else is loot,
+-- except the wireless modem and compass the base link swaps (link.lua).
 local function reserved(i, d)
   return (i == SAPLING_SLOT and d.name == S.sapling)
       or (i == BONEMEAL_SLOT and d.name == "minecraft:bone_meal")
 end
+
+local function keep(i, d) return reserved(i, d) or link.isKeptItem(d.name) end
 
 -- Move anything that is not ours out of slots 1 and 2 (e.g. logs that landed
 -- there while slot 1 was empty), into the first free loot slot.
@@ -276,25 +280,30 @@ end
 local function unload()
   turnTo(2) -- chest is behind the home spot
   clearReservedSlots()
-  local logsKept = 0
+  local logsKept, delivered = 0, 0
   for i = 1, 16 do
     local d = turtle.getItemDetail(i)
-    if d and not reserved(i, d) then
+    if d and not keep(i, d) then
       select(i)
       if d.name == S.sapling then
         turtle.transferTo(SAPLING_SLOT)
         if turtle.getItemCount(i) > 0 then turtle.drop() end
       elseif isLog(d) and logsKept < CFG.keepLogs then
-        local keep = math.min(d.count, CFG.keepLogs - logsKept)
-        logsKept = logsKept + keep
-        if d.count > keep then turtle.drop(d.count - keep) end
+        local keepN = math.min(d.count, CFG.keepLogs - logsKept)
+        logsKept = logsKept + keepN
+        if d.count > keepN then
+          turtle.drop(d.count - keepN)
+          delivered = delivered + d.count - keepN
+        end
       else
+        if isLog(d) then delivered = delivered + d.count end
         turtle.drop()
       end
     end
   end
   select(WORK_SLOT)
   turnTo(0)
+  return delivered
 end
 
 local function goHome()
@@ -315,11 +324,16 @@ local function round()
   end
   goHome()
   refuel()
-  unload()
+  local delivered = unload()
+  S.delivered = (S.delivered or 0) + delivered
+  save()
+  -- tell the base (if it has a wireless modem); code updates apply here
+  link.talk("resting", { delivered = delivered, total = S.delivered, sapling = S.sapling })
 end
 
 -- ------------------------------------------------------------------- main --
 local args = { ... }
+link.restoreUpgrade() -- compass back in, if a restart caught it mid-talk
 S = load()
 if S then
   -- settle a move that was in flight when it stopped, and re-read the facing:

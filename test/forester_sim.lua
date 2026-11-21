@@ -4,7 +4,10 @@
 local PROGRAM = arg[1] or "../forester.lua"
 local SRC = assert(io.open(PROGRAM)):read("*a")
 local DIR = PROGRAM:match("^(.*)/[^/]*$") or "."
-local TMOVE = assert(io.open(DIR .. "/tmove.lua")):read("*a")
+local MODULES = {}
+for _, m in ipairs({ "tmove", "link", "oreconf" }) do
+  MODULES[m] = assert(io.open(DIR .. "/" .. m .. ".lua")):read("*a")
+end
 
 local failures = 0
 local function check(cond, msg)
@@ -170,9 +173,33 @@ end
 local function makeEnv(T, api, files, onSleep)
   local env = setmetatable({}, { __index = _G })
   env.turtle = api
-  env.require = function(name) assert(name == "tmove", name); return assert(load(TMOVE, name, "t", env))() end
+  env.require = function(name) return assert(load(assert(MODULES[name], name), name, "t", env))() end
   local compass = { getFacing = function() return ({ [0] = "north", "east", "south", "west" })[T.h] end }
-  env.peripheral = { find = function(t) if t == "compass" and not T.noCompass then return compass end end }
+  local PTYPE = { ["minecraft:compass"] = "compass", ["computercraft:wireless_modem_normal"] = "modem" }
+  T.left, T.right = T.left or "minecraft:diamond_pickaxe", T.right or (not T.noCompass and "minecraft:compass" or nil)
+  env.peripheral = {
+    getType = function(side) return PTYPE[T[side] or ""] end,
+    find = function(t)
+      if t == "compass" and (T.left == "minecraft:compass" or T.right == "minecraft:compass") then return compass end
+    end,
+  }
+  local function equip(side)
+    local cur, new = T[side], T.inv[T.sel]
+    T[side] = new and new.name or nil
+    T.inv[T.sel] = cur and { name = cur, count = 1 } or nil
+    return true
+  end
+  api.equipLeft = function() return equip("left") end
+  api.equipRight = function() return equip("right") end
+  env.os = setmetatable({ getComputerLabel = function() return "F" end, reboot = function() error("REBOOT") end },
+                        { __index = os })
+  env.rednet = {
+    open = function(side) assert(PTYPE[T[side] or ""] == "modem"); T.open = true end,
+    close = function() T.open = false end,
+    send = function(_, msg) T.sent = T.sent or {}; T.sent[#T.sent + 1] = msg end,
+    broadcast = function(msg) T.sent = T.sent or {}; T.sent[#T.sent + 1] = msg end,
+    receive = function() return nil end,
+  }
   env.print = os.getenv("VERBOSE") and print or function() end
   env.sleep = onSleep
   local function ser(v)
@@ -285,6 +312,24 @@ for _, nth in ipairs({ 5, 23, 61 }) do
   ok, err = run(makeEnv(T, api, files, sl))
   check(tostring(err):find("END OF TEST") ~= nil, "turn " .. nth .. ": resumed (" .. tostring(err) .. ")")
   check(T.x == 0 and T.y == 0 and T.z == 0 and T.h == 0, ("turn %d: home facing out (%d,%d,%d h%d)"):format(nth, T.x, T.y, T.z, T.h))
+end
+
+print("scenario: reports each round to the base through a swapped-in modem")
+do
+  local W = newWorld()
+  local T, api = newTurtle(W, 1000)
+  T.inv[1] = { name = SAP, count = 64 }
+  T.inv[2] = { name = "computercraft:wireless_modem_normal", count = 1 }
+  local ok, err = run(makeEnv(T, api, {}, sleeper(W, 3)), "3", "10")
+  check(tostring(err):find("END OF TEST") ~= nil, "ran (" .. tostring(err) .. ")")
+  check(T.sent and #T.sent == 3, "one status per round (3 rounds): " .. tostring(T.sent and #T.sent))
+  local last = T.sent and T.sent[#T.sent] or {}
+  check(last.type == "status" and last.state == "resting" and (last.delivered or 0) > 0,
+    "status carries delivered logs: " .. tostring(last.delivered))
+  check(T.right == "minecraft:compass", "compass back in its slot after talking")
+  local modemKept = false
+  for i = 1, 16 do if T.inv[i] and T.inv[i].name == "computercraft:wireless_modem_normal" then modemKept = true end end
+  check(modemKept and not W.chest["computercraft:wireless_modem_normal"], "modem kept, not unloaded")
 end
 
 print("scenario: refuses to start without saplings in slot 1")
