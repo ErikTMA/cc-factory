@@ -123,14 +123,13 @@ local function drawFactory(UI, out, w, row)
   put(out, 1, row, "FLEET", colors.yellow)
   row = row + 1
   for role, want in pairs(F.cfg.fleet) do
-    local have = 0
-    for _, t in pairs(F.turtles) do if t.role == role then have = have + 1 end end
-    local missing = factory.missingParts(F, role)
+    local have = factory.fleetCount(F, role)
+    local missing = (UI.missing or {})[role] or {}
     local need = ""
     for item, n in pairs(missing) do need = need .. (" %dx%s"):format(n, item:gsub("^%w+:", "")) end
     put(out, 1, row, ("%-9s %d / %d  %s"):format(role, have, want,
       have < want and (need ~= "" and ("needs" .. need) or "parts ready") or ""):sub(1, w), colors.lightGray)
-    button(UI, out, w - 9, row, 10, "BUILD", false, function() factory.orderTurtle(F, role) end)
+    button(UI, out, w - 9, row, 10, "BUILD", false, function() factory.orderTurtle(F, role, true) end)
     row = row + 1
   end
   row = row + 1
@@ -232,7 +231,11 @@ local F = factory.new(config, {
 })
 factory.restore(F, readTable("/base.state"))
 if release then
-  dist.writeDisk(peripheral, release, { base = os.getComputerID(), role = "miner" })
+  -- the installer disk gets the active build's data again (a base restart
+  -- mid-build must not turn a forester into a miner)
+  local install = factory.installData(F)
+  install.base = os.getComputerID()
+  dist.writeDisk(peripheral, release, install)
 end
 
 local UI = { F = F, tab = "TURTLES", buttons = {} }
@@ -240,7 +243,10 @@ local mon = peripheral.find("monitor")
 local out = mon or term
 if mon then mon.setTextScale(0.5) end
 
-local function persist() writeTable("/base.state", factory.snapshot(F)) end
+local function persist()
+  local ok, err = pcall(writeTable, "/base.state", factory.snapshot(F))
+  if not ok then F.note = "could not save state: " .. tostring(err) end
+end
 
 local function update()
   F.note = "Updating from GitHub..."
@@ -250,26 +256,66 @@ local function update()
   os.reboot()
 end
 
-local timer = os.startTimer(1)
-local lastTick = 0
-while true do
-  local ev = { os.pullEvent() }
-  if ev[1] == "rednet_message" and ev[4] == C.PROTOCOL then
-    local reply = factory.handle(F, ev[2], ev[3])
-    if reply then rednet.send(ev[2], reply, C.PROTOCOL) end
-    persist()
-  elseif ev[1] == "monitor_touch" or ev[1] == "mouse_click" then
-    M.touch(UI, ev[3], ev[4])
-    persist()
-  elseif ev[1] == "timer" and ev[2] == timer then
-    timer = os.startTimer(1)
-    if os.clock() - lastTick >= 10 then
-      lastTick = os.clock()
-      local ok, stock = pcall(factory.tick, F)
-      if ok then UI.stock = stock else F.note = "tick: " .. tostring(stock) end
+-- Four coroutines. Every chest access costs the base a game tick and makes it
+-- wait for its result, throwing away other events meanwhile, so:
+--   receiver  only receives rednet messages into a queue (never misses one)
+--   worker    answers them in order (may touch storage)
+--   ticker    drains inputs, rules, fleet every 10 s (its own sleep timer)
+--   screen    touches and redraws
+local inbox = {}
+local function receiver()
+  while true do
+    local from, msg = rednet.receive(C.PROTOCOL)
+    inbox[#inbox + 1] = { from, msg }
+    os.queueEvent("factory_inbox")
+  end
+end
+
+local function worker()
+  while true do
+    if #inbox == 0 then os.pullEvent("factory_inbox") end
+    local item = table.remove(inbox, 1)
+    if item then
+      local ok, reply = pcall(factory.handle, F, item[1], item[2])
+      if ok and reply then rednet.send(item[1], reply, C.PROTOCOL)
+      elseif not ok then F.note = "handle: " .. tostring(reply) end
       persist()
+      os.queueEvent("factory_redraw")
     end
   end
-  if UI.wantUpdate then update() end
-  M.draw(UI, out)
 end
+
+local function ticker()
+  while true do
+    local ok, stock = pcall(factory.tick, F)
+    if ok then
+      UI.stock = stock
+      local missing = {}
+      for role in pairs(F.cfg.fleet) do missing[role] = factory.missingParts(F, role) end
+      UI.missing = missing
+    else
+      F.note = "tick: " .. tostring(stock)
+    end
+    persist()
+    os.queueEvent("factory_redraw")
+    sleep(10)
+  end
+end
+
+local function screen()
+  M.draw(UI, out)
+  local timer = os.startTimer(1)
+  while true do
+    local ev = { os.pullEvent() }
+    if ev[1] == "monitor_touch" or ev[1] == "mouse_click" then
+      M.touch(UI, ev[3], ev[4])
+      persist()
+    elseif ev[1] == "timer" and ev[2] == timer then
+      timer = os.startTimer(1)
+    end
+    if UI.wantUpdate then update() end
+    M.draw(UI, out)
+  end
+end
+
+parallel.waitForAny(receiver, worker, ticker, screen)

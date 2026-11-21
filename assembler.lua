@@ -87,7 +87,14 @@ local function craftStep(step)
 end
 
 local function placeTurtle()
-  if turtle.detect() then return false, "build spot in front is not empty" end
+  if turtle.detect() then
+    -- a turtle left behind by an earlier failed build: pick it up (it goes back
+    -- to storage with the rest)
+    local ok, b = turtle.inspect()
+    if not (ok and b.name:find("^computercraft:turtle") and turtle.dig()) then
+      return false, "build spot in front is not empty"
+    end
+  end
   local slot
   for i = 1, 16 do
     local d = turtle.getItemDetail(i)
@@ -117,6 +124,7 @@ local function loadout(items)
   end
   turtle.select(1)
   peripheral.call("front", "turnOn")
+  dumpAll() -- anything left over (e.g. a picked-up old turtle) back to storage
   return true
 end
 
@@ -131,10 +139,15 @@ link.talk("failed", { reason = "assembler restarted" })
 local state, extra = "idle", {}
 while true do
   local r = link.talk(state, extra)
-  state, extra = "idle", {}
-  if type(r) ~= "table" or r.type == "ok" or r.type == "wait" then
+  if type(r) ~= "table" then
+    -- no answer: say the same again (the base may be busy or restarting); a
+    -- step's result must not be forgotten
+    sleep(3)
+  elseif r.type == "ok" or r.type == "wait" then
+    state, extra = "idle", {}
     sleep(3)
   elseif r.type == "abort" then
+    state, extra = "idle", {}
     dumpAll()
   else
     local ok, why

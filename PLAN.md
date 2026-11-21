@@ -76,7 +76,8 @@ rednet. Turtles never need http.
       it on the build spot, gives it a modem and fuel, turns it on; new turtle
       asks the base for a home slot and walks there (no digging at the base)
 - [x] M6 base UI tabs: Turtles / Stock / Jobs; harness coverage for all of it
-- [ ] M7 (next) independent review pass (critic + security), fixes, deploy to server
+- [x] M7 independent review pass (critic + security), fixes
+- [ ] M8 deploy to the server and first live run (verify-live items below)
 
 ## Bugs the harnesses caught on the way (each test was red before its fix)
 
@@ -92,3 +93,27 @@ rednet. Turtles never need http.
   that touches the home level now uses the shaft, and unload refuses to drop
   anything without a chest in front.
 - Idle miners would have polled the base every tick.
+
+## Independent review (2026-11-21) — fixed
+
+Base main loop rebuilt as receiver/worker/ticker/screen coroutines (peripheral
+calls swallow other events); assembler repeats its last status until answered
+and the base re-sends a lost build reply; builds time out; miners repeat
+"done" until acknowledged and the base frees rule jobs nobody works on; base
+restart rewrites the active build's install data; installer only installs on
+a turtle directly on top of the drive; failed builds free their home slot and
+pause auto-ordering after 3 in a row; only undamaged, unenchanted pickaxes are
+staged; a turtle stranded on the build spot is picked up; miners wait at home
+while the chest is full; sectors are bounded (job.maxLanes); at home a resuming
+miner finds its heading from the chest, never digging; updates accept plain
+`*.lua` names only; only vanilla chests are inputs; fleet ignores turtles
+unseen for 2 h; refuel stops at 4000.
+
+Each tested fix was proven by mutation (scenario fails without it).
+
+## Still verify-live
+
+- ME/RS bridge argument order (`base probe`).
+- Rednet message size of a full code update (~55 KB in one message).
+- Orientation of a turtle placed by the assembler (code measures it anyway).
+- Base event loop under real tick costs (not simulated).

@@ -12,12 +12,17 @@ local function runOwnStartup()
   if fs.exists("/startup.lua") then shell.run("/startup.lua") end
 end
 
-if not turtle or fs.exists("/agent.cfg") then
+local mount = fs.getDir(shell.getRunningProgram())
+
+-- Install only on a turtle sitting right on top of this drive (the build
+-- spot). Computers on the base's wired network see the drive too, and CC boots
+-- them from it: they just run their own startup.
+local onBuildSpot = turtle and peripheral.getType("bottom") == "drive"
+                    and disk.getMountPath("bottom") == mount
+if not onBuildSpot or fs.exists("/agent.cfg") then
   runOwnStartup()
   return
 end
-
-local mount = fs.getDir(shell.getRunningProgram())
 local cfgFile = fs.combine(mount, "install.cfg")
 if not fs.exists(cfgFile) then
   print("Installer disk has no install.cfg yet; the base writes it.")

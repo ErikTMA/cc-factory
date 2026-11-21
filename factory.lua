@@ -18,7 +18,11 @@ local M = {}
 M.QTY = { 8, 16, 32, 64, 128, 256, 0 } -- job sizes on the monitor; 0 = no limit
 
 local PERSIST = { "turtles", "queue", "nextJobId", "nextSector", "totals", "counted",
-                  "orders", "nextOrderId", "homesTaken", "ruleJobs", "lastFail" }
+                  "orders", "nextOrderId", "homesTaken", "ruleJobs", "lastFail", "failStreak" }
+
+local BUILD_TIMEOUT = 600   -- seconds of assembler silence before a build is given up
+local TURTLE_GONE = 7200    -- seconds unseen before a turtle stops counting for the fleet
+local MAX_FAILS = 3         -- failed builds in a row before automatic ordering pauses
 
 -- Default config: base.lua writes it to /factory.cfg on first start; edit it there.
 M.DEFAULT_CONFIG = {
@@ -39,7 +43,9 @@ M.DEFAULT_CONFIG = {
     -- { item = "minecraft:raw_iron", min = 256, job = { only = "iron", y = 16, quantity = 64 } },
   },
   forester = { sapling = "minecraft:oak_sapling", trees = 6, wait = 300 },
-  job = { lanes = 3, length = 64 },
+  -- lanes per job; sectors reuse lanes from 0 after maxLanes (bounds how far
+  -- out miners go: maxLanes x 16 blocks to the right of their home)
+  job = { lanes = 3, length = 64, maxLanes = 24 },
 }
 
 local function copy(t)
@@ -92,6 +98,7 @@ end
 function M.queueJob(F, job)
   local sector = F.nextSector[job.y] or 0
   local lanes = job.lanes or F.cfg.job.lanes
+  if sector + lanes > (F.cfg.job.maxLanes or 24) then sector = 0 end
   F.nextSector[job.y] = sector + lanes
   job.id, job.sector = F.nextJobId, sector
   job.lanes, job.length = lanes, job.length or F.cfg.job.length
@@ -167,7 +174,16 @@ function M.missingParts(F, role)
   return missing
 end
 
-function M.orderTurtle(F, role)
+-- The install data a new turtle should get: the active build's, or a plain
+-- miner's (for a turtle someone places on the build spot by hand).
+function M.installData(F)
+  local o = activeOrder(F)
+  if o and o.state == "building" and o.install then return copy(o.install) end
+  return { role = "miner" }
+end
+
+function M.orderTurtle(F, role, manual)
+  if manual then F.failStreak = 0 end
   local o = { id = F.nextOrderId, role = role, state = "queued", step = 0 }
   F.nextOrderId = F.nextOrderId + 1
   F.orders[#F.orders + 1] = o
@@ -182,7 +198,11 @@ local function stage(F, items)
   if not supply then return false, "no supply chest (trapped chest) on the network" end
   S.store(supply)
   for item, n in pairs(items) do
-    local moved = S.send(supply, item, n)
+    -- turtle upgrades must be undamaged and unenchanted, or the craft fails
+    local accept = item:find("pickaxe") and function(d)
+      return (d.damage or 0) == 0 and not (d.enchantments and next(d.enchantments))
+    end or nil
+    local moved = S.send(supply, item, n, accept)
     if moved < n then return false, ("only %d of %d %s in storage"):format(moved, n, item) end
   end
   return true
@@ -203,6 +223,11 @@ local RETRY_AFTER = 300 -- seconds before ordering again after a failed build
 
 local function failOrder(F, o, why)
   o.state, o.reason, F.lastFail = "failed", why, now(F)
+  F.failStreak = (F.failStreak or 0) + 1
+  local taken = F.homesTaken[o.role] or {}
+  for i, owner in pairs(taken) do
+    if owner == "order:" .. o.id then taken[i] = nil end -- free its home slot
+  end
   local supply = F.deps.storage.supply()
   if supply then F.deps.storage.store(supply) end
   F.note = ("Build #%d failed: %s"):format(o.id, why)
@@ -222,12 +247,26 @@ local function claimHome(F, role, owner)
 end
 
 -- The assembler's side of a build: it reports, we stage and say what's next.
+local handleAssemblerStep
+
+-- Every reply in a build is remembered: if it got lost (the assembler gave up
+-- waiting) and the assembler reports idle, it gets the same reply again.
 local function handleAssembler(F, from, msg)
   local o = activeOrder(F)
+  if o and o.state == "building" and o.assembler == from then o.lastSeen = now(F) end
   if msg.state == "failed" and o and o.state == "building" and o.assembler == from then
     failOrder(F, o, msg.reason or "assembler failed")
     return { type = "ok" }
   end
+  if msg.state == "idle" and o and o.state == "building" and o.assembler == from and o.lastReply then
+    return o.lastReply
+  end
+  local reply = handleAssemblerStep(F, from, msg, o)
+  if o and o.state == "building" and reply.type ~= "ok" then o.lastReply = reply end
+  return reply
+end
+
+handleAssemblerStep = function(F, from, msg, o)
   if msg.state == "idle" then
     if not o or o.state ~= "queued" then return { type = "ok" } end
     if next(M.missingParts(F, o.role)) then return { type = "ok" } end
@@ -238,9 +277,10 @@ local function handleAssembler(F, from, msg)
       F.note = ("No free %s home slot: add one to factory.cfg"):format(o.role)
       return { type = "ok" }
     end
-    o.state, o.assembler, o.step, o.home = "building", from, 1, index
-    F.deps.writeInstall({ role = o.role, order = o.id, trees = F.cfg.forester.trees,
-                          wait = F.cfg.forester.wait, slot = copy(slot), homeY = F.cfg.build.y })
+    o.state, o.assembler, o.step, o.home, o.lastSeen = "building", from, 1, index, now(F)
+    o.install = { role = o.role, order = o.id, trees = F.cfg.forester.trees,
+                  wait = F.cfg.forester.wait, slot = copy(slot), homeY = F.cfg.build.y }
+    F.deps.writeInstall(copy(o.install))
     local steps = C.buildSteps(o.role)
     local ok, why = stage(F, stepItems(steps[1]))
     if not ok then failOrder(F, o, why); return { type = "ok" } end
@@ -273,7 +313,7 @@ local function handleAssembler(F, from, msg)
     o.step = "loadout"
     return { type = "loadout", order = o.id, items = list }
   elseif msg.state == "powered" then
-    o.state = "built"
+    o.state, o.lastReply, F.failStreak = "built", nil, 0
     F.note = ("Built a %s turtle (#%d); it is installing"):format(o.role, o.id)
     return { type = "ok" }
   end
@@ -358,13 +398,44 @@ function M.handle(F, from, msg)
   return reply
 end
 
+-- Turtles of `role` that count for the fleet: seen recently, or built and on
+-- their way.
+function M.fleetCount(F, role)
+  local have = 0
+  for _, t in pairs(F.turtles) do
+    if t.role == role and now(F) - (t.seen or 0) < TURTLE_GONE then have = have + 1 end
+  end
+  for _, o in ipairs(F.orders) do
+    if o.role == role and o.state == "built" and not o.arrived then have = have + 1 end
+  end
+  return have
+end
+
 -- ------------------------------------------------------------------ tick --
 -- Periodic work: drain input chests, queue jobs for rules below their minimum,
 -- order turtles for fleet targets that aren't met.
+local function jobActive(F, id)
+  for _, j in ipairs(F.queue) do if j.id == id then return true end end
+  for _, t in pairs(F.turtles) do
+    if t.job and t.job.id == id and t.state ~= "idle" and t.state ~= "done" then return true end
+  end
+  return false
+end
+
 function M.tick(F)
   local S = F.deps.storage
   S.drainInputs()
   local stock = S.list()
+  -- a rule's job that nobody has any more (its "done" got lost, the turtle is
+  -- gone) must not block the rule forever
+  for i, id in pairs(F.ruleJobs) do
+    if not jobActive(F, id) then F.ruleJobs[i] = nil end
+  end
+  -- a build whose assembler went silent
+  local o = activeOrder(F)
+  if o and o.state == "building" and now(F) - (o.lastSeen or 0) > BUILD_TIMEOUT then
+    failOrder(F, o, "assembler silent for " .. BUILD_TIMEOUT .. "s")
+  end
   for i, rule in ipairs(F.cfg.rules) do
     if (stock[rule.item] or 0) < rule.min and not F.ruleJobs[i] then
       local job = copy(rule.job)
@@ -374,11 +445,10 @@ function M.tick(F)
       F.note = ("Low on %s: queued %s"):format(rule.item, M.jobText(job))
     end
   end
-  if not activeOrder(F) and now(F) - (F.lastFail or -math.huge) >= RETRY_AFTER then
+  if not activeOrder(F) and now(F) - (F.lastFail or -math.huge) >= RETRY_AFTER
+     and (F.failStreak or 0) < MAX_FAILS then
     for role, want in pairs(F.cfg.fleet) do
-      local have = 0
-      for _, t in pairs(F.turtles) do if t.role == role then have = have + 1 end end
-      for _, o in ipairs(F.orders) do if o.role == role and o.state == "built" and not o.arrived then have = have + 1 end end
+      local have = M.fleetCount(F, role)
       if have < want and not next(M.missingParts(F, role)) then
         M.orderTurtle(F, role)
         break

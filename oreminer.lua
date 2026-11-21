@@ -221,12 +221,15 @@ local function dropJunk()
   turtle.select(1)
 end
 
+-- Burn fuel items up to FUEL_TARGET, one at a time, so mined coal mostly
+-- reaches the chest (coal jobs!) instead of all going into the tank.
+local FUEL_TARGET = 4000
 local function refuel()
   if turtle.getFuelLevel() == "unlimited" then return end
   for i = 1, 16 do
     turtle.select(i)
-    if turtle.getFuelLevel() >= turtle.getFuelLimit() - 1000 then break end
-    if turtle.refuel(0) then turtle.refuel() end
+    while turtle.getFuelLevel() < FUEL_TARGET and turtle.getItemCount(i) > 0 and turtle.refuel(1) do end
+    if turtle.getFuelLevel() >= FUEL_TARGET then break end
   end
   turtle.select(1)
 end
@@ -243,6 +246,8 @@ local function needHome()
   return nil
 end
 
+local talk -- defined in the base link section below
+
 local function unload()
   turnTo((S.homeHeading + 2) % 4) -- chest is behind the start position
   -- never empty the inventory anywhere but into the home chest
@@ -250,19 +255,31 @@ local function unload()
   if not (ok and b.name:find("chest")) then
     error("No chest behind me: I'm not where I think home is. Not unloading.", 0)
   end
-  local keptFuel = false
-  for i = 1, 16 do
-    turtle.select(i)
-    local d = turtle.getItemDetail(i)
-    if d and not link.isKeptItem(d.name) then
-      if not keptFuel and turtle.refuel(0) then
-        keptFuel = true -- keep one stack of fuel
-      else
-        turtle.drop()
+  -- drop everything but the kept items and one stack of fuel; if the chest is
+  -- full, wait here (going back out full would just bring us straight back)
+  local waited = 0
+  while true do
+    local keptFuel, left = false, 0
+    for i = 1, 16 do
+      turtle.select(i)
+      local d = turtle.getItemDetail(i)
+      if d and not link.isKeptItem(d.name) then
+        if not keptFuel and turtle.refuel(0) then
+          keptFuel = true -- keep one stack of fuel
+        elseif not turtle.drop() then
+          left = left + 1
+        end
       end
     end
+    turtle.select(1)
+    if left == 0 then return end
+    if waited % 60 == 0 then
+      log("Home chest is full; waiting for the base to empty it")
+      if talk then talk("chest full") end
+    end
+    sleep(5)
+    waited = waited + 5
   end
-  turtle.select(1)
 end
 
 -- -------------------------------------------------------------- base link --
@@ -271,8 +288,17 @@ local function status()
 end
 
 -- Report to the base (only at home). Code updates wait until the job is done.
-local function talk(state)
+talk = function(state)
   return link.talk(state, status(), state == "idle" or state == "done")
+end
+
+-- The base counts the job (and frees its stock rule) on "done": say it until
+-- the base has heard it.
+local function reportDone()
+  while not talk("done") do
+    log("Base didn't answer; telling it again in 30s")
+    sleep(30)
+  end
 end
 
 local function finished()
@@ -400,7 +426,20 @@ local function resumeUnfinished()
     -- settle a move that was in flight when it stopped, and re-measure the
     -- heading: a turn may have happened without being saved
     tmove.recover(S, save, applyMove)
-    S.heading = detectHeading()
+    if S.pos.x == 0 and S.pos.y == 0 and S.pos.z == 0 then
+      -- at home: the chest is behind the home heading; find it by turning,
+      -- never dig here (the walls around home may be the base)
+      local found = false
+      for _ = 1, 4 do
+        local ok, b = turtle.inspect()
+        if ok and b.name:find("chest") then found = true; break end
+        turtle.turnRight()
+      end
+      if not found then error("At home but no chest around me", 0) end
+      S.heading = (S.homeHeading + 2) % 4
+    else
+      S.heading = detectHeading()
+    end
     save()
     log("Resuming at " .. key(S.pos.x, S.pos.y, S.pos.z) .. " facing " .. HEADING_NAME[S.heading])
     run()
@@ -434,7 +473,7 @@ elseif args[1] == "serve" then
     log(("Home is Y %d facing %s."):format(home.y, HEADING_NAME[home.heading]))
   end
   resumeUnfinished()
-  if S and S.done then talk("done") end
+  if S and S.done then reportDone() end
   if not link.hasModem() then
     error("serve needs a wireless modem in the turtle's inventory", 0)
   end
@@ -444,7 +483,7 @@ elseif args[1] == "serve" then
     if type(reply) == "table" and reply.type == "job" then
       newJob(reply.job, home)
       run()
-      talk("done")
+      reportDone()
     else
       sleep(3)
     end

@@ -2,16 +2,19 @@
 --
 -- The base sees everything on its wired modem network and sorts inventories by
 -- block type, so no configuration is needed:
---   barrels        storage
---   chests         input (turtle home chests); drained into storage
---   trapped chest  the assembler's supply chest
+--   barrels        storage (any mod's barrel)
+--   chests         input (turtle home chests); drained into storage. Only the
+--                  plain vanilla chest, so players' modded chests on the same
+--                  network are left alone.
+--   trapped chest  the assembler's supply chest (vanilla trapped chest)
 -- If an AE2 ME Bridge or Refined Storage RS Bridge is on the network it becomes
 -- the storage instead of the barrels.
 --
 -- Interface (both backends):
 --   list()                        -> { [item] = count }
 --   count(item)                   -> number
---   send(toName, item, count)     -> moved   (storage -> an inventory)
+--   send(toName, item, count[, accept]) -> moved   (storage -> an inventory;
+--                                    accept(itemDetail) picks which stacks)
 --   store(fromName)               -> moved   (everything in an inventory -> storage)
 --   drainInputs()                 -> moved   (all input chests -> storage)
 --   supply()                      -> name of the supply chest, or nil
@@ -20,9 +23,9 @@
 local M = {}
 
 function M.classify(name)
-  if name:find("trapped_chest") then return "supply" end
+  if name:find("^minecraft:trapped_chest_%d+$") then return "supply" end
+  if name:find("^minecraft:chest_%d+$") then return "input" end
   if name:find("barrel") then return "storage" end
-  if name:find("chest") then return "input" end
   return nil
 end
 
@@ -62,11 +65,12 @@ local function chests(api)
     return total
   end
 
-  function S.send(toName, item, count)
+  function S.send(toName, item, count, accept)
     local moved = 0
     for _, n in ipairs(inventories(api, "storage")) do
       for slot, it in pairs(api.call(n, "list")) do
-        if it.name == item and moved < count then
+        if it.name == item and moved < count
+           and (not accept or accept(api.call(n, "getItemDetail", slot) or {})) then
           moved = moved + api.call(n, "pushItems", toName, slot, count - moved)
         end
       end
@@ -108,7 +112,7 @@ local function bridge(api, name, kind)
     return total
   end
 
-  function S.send(toName, item, count)
+  function S.send(toName, item, count) -- (bridges can't check damage: best effort)
     local moved = api.call(name, "exportItem", { name = item, count = count }, toName)
     return tonumber(moved) or 0
   end

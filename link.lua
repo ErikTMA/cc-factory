@@ -15,6 +15,10 @@ local C = require("oreconf")
 
 local L = {}
 
+-- Seconds to wait for the base's reply. Every chest the base touches costs it
+-- a game tick, so a build step can take a few seconds to answer.
+L.REPLY_TIMEOUT = 10
+
 local CFG_FILE, VERSION_FILE = "agent.cfg", "version"
 
 -- Items that may sit in the upgrade slot that the modem borrows.
@@ -128,7 +132,19 @@ end
 -- Apply a code update from the base: write every file, then the version, then
 -- reboot into the new code. A crash half-way leaves the old version number, so
 -- the base simply sends the update again.
+-- Only plain program names are accepted: no paths. (Rednet sender ids can be
+-- spoofed, and a home turtle can see the installer disk at /disk.)
+local function safeName(name)
+  return type(name) == "string" and name:match("^[%w_%-]+%.lua$") ~= nil
+end
+
 function L.applyUpdate(update)
+  for name in pairs(update.files) do
+    if not safeName(name) then
+      print("Rejected update: bad file name " .. tostring(name))
+      return
+    end
+  end
   for name, content in pairs(update.files) do
     local tmp = name .. ".new"
     local f = fs.open(tmp, "w")
@@ -162,7 +178,7 @@ function L.talk(state, extra, updates)
                   equipment = equipment() }
     for k, v in pairs(extra or {}) do msg[k] = v end
     if cfg.base then rednet.send(cfg.base, msg, C.PROTOCOL) else rednet.broadcast(msg, C.PROTOCOL) end
-    local deadline = os.clock() + 3
+    local deadline = os.clock() + L.REPLY_TIMEOUT
     while true do
       local left = deadline - os.clock()
       if left <= 0 then return nil end

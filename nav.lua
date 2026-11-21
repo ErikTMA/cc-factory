@@ -62,8 +62,15 @@ function N.scanHeading(mayDig)
     end
     if score > bestScore then best, bestScore = h, score end
   end
-  turtle.back()
-  return best
+  -- step back to where we started; a mob behind us must not leave us 1 off
+  for _ = 1, 20 do
+    if turtle.back() then return best end
+    turtle.turnRight(); turtle.turnRight()
+    turtle.attack()
+    turtle.turnRight(); turtle.turnRight()
+    sleep(0.5)
+  end
+  error("Could not step back after measuring my heading", 0)
 end
 
 -- Compass if equipped, else the scanner method.

@@ -159,6 +159,9 @@ local function baseNetwork()
       local out = {}
       for i, s in pairs(I.slots) do out[i] = { name = s.name, count = s.count } end
       return out
+    elseif method == "getItemDetail" then
+      local st = I.slots[a[1]]
+      return st and { name = st.name, count = st.count, damage = st.damage or 0, enchantments = st.enchantments } or nil
     elseif method == "pushItems" then
       local to, slot, limit, toSlot = W.inv[a[1]], a[2], a[3], a[4]
       local s = I.slots[slot]
@@ -409,8 +412,11 @@ local function turtleEnv(T)
   end
   local function ptype(side)
     if side == "left" or side == "right" then return PTYPE[T[side] or ""] end
-    if adjacent(side) == "computercraft:wired_modem_full" then return "modem" end
+    local b = adjacent(side)
+    if b == "computercraft:wired_modem_full" then return "modem" end
+    if b == "drive" then return "drive" end
   end
+  env.disk = { getMountPath = function(side) if ptype(side) == "drive" then return "disk" end end }
   env.peripheral = {
     getType = ptype,
     find = function(t)
@@ -533,6 +539,10 @@ function bus.deliver(from, msg)
   local reply = factory.handle(F, from, msg)
   bus.sent[#bus.sent + 1] = { from = from, msg = msg, reply = reply }
   if VERBOSE then print(("  [bus] %s %s -> %s"):format(from, tostring(msg.state), reply and reply.type or "nil")) end
+  if bus.lose and bus.lose(from, msg, reply) then
+    if VERBOSE then print("  [bus] reply LOST") end
+    return
+  end
   if reply then bus.inbox[from] = bus.inbox[from] or {}; table.insert(bus.inbox[from], reply) end
 end
 
@@ -673,6 +683,101 @@ do
   check(ok, "miner installed the update and reports the new version")
   check(M and M.files["oreminer.lua"]:find("%-%- v2") ~= nil, "new file content on the turtle")
   check(M and M.boots > bootsBefore, "it rebooted into the new code")
+end
+
+
+print("scenario: a lost reply to the assembler does not stall the next build")
+do
+  config.fleet.miner = 2
+  table.insert(config.homes.miner, { east = 6, north = 0, facing = "north" })
+  newInv("minecraft:chest_1", 6, 0, 0)
+  W.set(6, 0, -2, "computercraft:wired_modem_full")
+  for _, p in ipairs(stockParts) do W.inv["minecraft:barrel_1"].insert(p[1], p[2]) end
+  local lost = false
+  bus.lose = function(from, msg, reply)
+    if not lost and from == 1 and reply and reply.type == "step" and reply.step == 2 then lost = true; return true end
+  end
+  local ok = runUntil(function()
+    return W.turtles[3] and W.turtles[3].x == 6 and W.turtles[3].z == -1 and F.turtles[3]
+  end, 200000)
+  bus.lose = nil
+  check(lost, "the step-2 reply was lost on the way")
+  check(ok, "the second miner was still built and flew to home slot 2")
+  check(F.orders[#F.orders].state == "built", "order built: " .. tostring(F.orders[#F.orders].state))
+end
+
+print("scenario: a lost 'done' neither blocks the stock rule nor counts twice")
+do
+  local before = F.totals.iron or 0
+  config.rules[1].min = (stock()["minecraft:raw_iron"] or 0) + 4
+  local lostDone = false
+  bus.lose = function(from, msg, reply)
+    if not lostDone and msg.state == "done" then lostDone = true; return true end
+  end
+  local ok = runUntil(function() return lostDone and next(F.ruleJobs) == nil and #F.queue == 0
+    and F.turtles[2].state == "idle" and F.turtles[3].state == "idle" end, 200000)
+  bus.lose = nil
+  check(lostDone, "a done reply was lost")
+  check(ok, "the miner said done again, went idle, the rule is free")
+  -- what each distinct job reported as done (a repeated done must not add up twice)
+  local perJob, dones = {}, 0
+  for _, e in ipairs(bus.sent) do
+    if e.msg.state == "done" and e.msg.job and e.msg.job.only == "iron" then
+      perJob[e.msg.job.id] = e.msg.mined; dones = dones + 1
+    end
+  end
+  local expected, jobs = 0, 0
+  for _, n in pairs(perJob) do expected = expected + n; jobs = jobs + 1 end
+  check(dones > jobs, ("a done was repeated (%d dones for %d jobs)"):format(dones, jobs))
+  check((F.totals.iron or 0) == expected, ("iron counted once per job: %d, expected %d"):format(F.totals.iron or 0, expected))
+end
+
+print("scenario: a build with a damaged pickaxe fails cleanly")
+do
+  config.fleet.miner = 3
+  table.insert(config.homes.miner, { east = 8, north = 0, facing = "north" })
+  -- only a damaged pickaxe left in storage
+  for _, I in pairs(W.inv) do
+    for i, sl in pairs(I.slots) do if sl.name == "minecraft:diamond_pickaxe" then I.slots[i] = nil end end
+  end
+  for _, p in ipairs(stockParts) do W.inv["minecraft:barrel_1"].insert(p[1], p[2]) end
+  for _, sl in pairs(W.inv["minecraft:barrel_1"].slots) do
+    if sl.name == "minecraft:diamond_pickaxe" then sl.damage = 120 end
+  end
+  local ok = runUntil(function() local o = F.orders[#F.orders]; return o and o.state == "failed" end, 100000)
+  local o = F.orders[#F.orders]
+  check(ok, "the order failed: " .. tostring(o and o.reason))
+  check(F.homesTaken.miner[3] == nil, "its home slot is free again")
+  local orders = #F.orders
+  runUntil(function() return false end, 250)
+  check(#F.orders == orders, "no new order right away (retry waits)")
+  check(W.get(0, 0, -1) == nil, "nothing left on the build spot")
+  local held = 0
+  for _ in pairs(A.inv) do held = held + 1 end
+  check(held == 0, "assembler handed everything back")
+end
+
+print("scenario: the installer leaves turtles that aren't on the build spot alone")
+do
+  local T = newTurtleEntity(99, 10, 0, 5, 0) -- somewhere else, sees the disk over the network
+  local env = turtleEnv(T)
+  env.fs = newFS(T.files, { disk = DISK }) -- disk visible (wired network), drive not below
+  local ran = false
+  env.shell.getRunningProgram = function() return "disk/startup.lua" end
+  local realRun = env.shell.run
+  env.shell.run = function(p, ...) if p == "/startup.lua" then ran = true; return end; return realRun(p, ...) end
+  local ok, err = pcall(assert(load(DISK["startup.lua"], "installer", "t", env)))
+  check(ok, "installer exited (" .. tostring(err) .. ")")
+  check(T.files["agent.cfg"] == nil and T.files["oreminer.lua"] == nil, "nothing installed on it")
+end
+
+print("scenario: an update with a path in a file name is rejected")
+do
+  local env = turtleEnv(M)
+  local link = env.require("link")
+  local diskBefore = DISK["startup.lua"]
+  local ok = pcall(link.applyUpdate, { version = "evil", files = { ["disk/startup.lua"] = "print('owned')" } })
+  check(DISK["startup.lua"] == diskBefore and M.files["version"] ~= "evil", "disk and turtle untouched")
 end
 
 print("scenario: the installer disk never installs onto the base")
