@@ -216,6 +216,12 @@ end
 local storage = require("storage")
 local dist = require("dist")
 
+if args[1] == "update" then
+  -- `base update`: newest code from GitHub, then restart (turtles follow)
+  shell.run("/bootstrap.lua")
+  os.reboot()
+end
+
 if args[1] == "probe" then
   -- check a storage bridge's export/import argument order on the real thing
   local S = storage.open(peripheral)
@@ -280,8 +286,44 @@ local function update()
   F.note = "Updating from GitHub..."
   M.draw(UI, out)
   persist()
-  shell.run("/bootstrap.lua")
-  os.reboot()
+  local ok, err = pcall(shell.run, "/bootstrap.lua")
+  if ok then os.reboot() end
+  F.note = "Update failed: " .. tostring(err)
+end
+
+-- Auto-update: check GitHub for a newer commit now and then (one small
+-- request) and update when there is one. `autoUpdate = false` in factory.cfg
+-- turns it off; `base update` or the UPDATE button update by hand.
+local UPDATE_EVERY = 1800
+
+local function latestCommit()
+  if not http then return nil end
+  local ok, res = pcall(http.get, "https://api.github.com/repos/ErikTMA/cc-factory/commits/main",
+                        { ["User-Agent"] = "cc-factory" })
+  if not ok or not res then return nil end
+  local body = res.readAll()
+  res.close()
+  return body:match('"sha"%s*:%s*"(%x+)"')
+end
+
+local function installedRelease()
+  if not fs.exists("/release") then return nil end
+  local f = fs.open("/release", "r")
+  local r = f.readAll()
+  f.close()
+  return r
+end
+
+local function updater()
+  sleep(60)
+  while true do
+    if F.cfg.autoUpdate ~= false then
+      local sha = latestCommit()
+      -- only a real commit id counts (the API can be rate limited)
+      if sha and sha ~= installedRelease() then update() end
+    end
+    sleep(UPDATE_EVERY)
+  end
 end
 
 -- Four coroutines. Every chest access costs the base a game tick and makes it
@@ -385,4 +427,4 @@ local function screen()
   end
 end
 
-parallel.waitForAny(receiver, worker, ticker, screen, chatter)
+parallel.waitForAny(receiver, worker, ticker, screen, chatter, updater)

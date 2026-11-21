@@ -56,6 +56,8 @@ M.DEFAULT_CONFIG = {
   -- lanes per job; sectors reuse lanes from 0 after maxLanes (bounds how far
   -- out miners go: maxLanes x 16 blocks to the right of their home)
   job = { lanes = 3, length = 64, maxLanes = 24 },
+  -- check GitHub every 30 minutes and update the base (and so all turtles)
+  autoUpdate = true,
 }
 
 local function copy(t)

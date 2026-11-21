@@ -22,7 +22,10 @@ then says the block is connected. A modem that isn't lit does nothing.
   ```
 
   It downloads everything and starts the base (it also starts by itself after
-  a server restart). Settings are in `factory.cfg` (`edit factory.cfg`, then
+  a server restart). It keeps itself up to date: every 30 minutes it checks
+  GitHub for a new version and updates itself, and every turtle gets the new
+  code the next time it is home. `base update` updates right away;
+  `autoUpdate = false` in `factory.cfg` turns automatic updates off. Settings are in `factory.cfg` (`edit factory.cfg`, then
   `reboot`).
 - The base sorts what's on its network **by block type**, no configuration:
 

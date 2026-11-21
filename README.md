@@ -28,7 +28,9 @@ jars; see [PLAN.md](PLAN.md).
    wget run https://raw.githubusercontent.com/ErikTMA/cc-factory/main/bootstrap.lua
    ```
 
-   It downloads everything and starts the base. It writes `/factory.cfg` with
+   It downloads everything and starts the base, and from then on keeps itself
+   up to date (it checks GitHub every 30 minutes; `base update` updates right
+   away, `autoUpdate = false` in `factory.cfg` turns it off). It writes `/factory.cfg` with
    defaults on first start: `edit factory.cfg` to set things up, then reboot.
 3. Add turtles (by hand, or let the base build them — see below).
 
