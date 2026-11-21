@@ -496,7 +496,8 @@ function M.suppliesFor(F, chest, stock)
     if #kinds == 0 then -- auto: the kind storage has most of
       local best
       for item, n in pairs(stock) do
-        if isSaplingItem(item) and n > 0 and (not best or n > stock[best] or (n == stock[best] and item < best)) then
+        if isSaplingItem(item) and not C.tree(item).twoByTwo and n > 0
+           and (not best or n > stock[best] or (n == stock[best] and item < best)) then
           best = item
         end
       end

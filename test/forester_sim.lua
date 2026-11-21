@@ -72,7 +72,7 @@ local function newWorld(opts)
   if opts.rough then
     W.set(1, -1, -1, nil); W.set(-2, -1, -7, nil)        -- holes in the floor
     W.set(-1, -1, -8, "minecraft:water")                 -- a puddle
-    W.set(3, -1, -3, "minecraft:stone")                  -- a tree spot on stone
+    W.set(3, -1, -2, "minecraft:stone")                  -- a tree spot on stone
     W.set(-4, 0, -2, "minecraft:short_grass")
     W.set(4, 0, -7, "minecraft:red_mushroom")
     W.set(1, 0, -7, SAP); W.growAt(1, 0, -7); W.trees = 0            -- an old tree, off the grid
@@ -298,10 +298,18 @@ local function sleeper(W, rounds)
 end
 
 -- tree spots: every 3rd cell from home inside the pen
-local SPOTS = {}
-for _, x in ipairs({ -3, 0, 3 }) do for _, z in ipairs({ -9, -6, -3, 0 }) do
-  if not (x == 0 and z == 0) then SPOTS[#SPOTS + 1] = { x, z } end
-end end
+-- Tree spots: every `spacing` cells from the pen's corner (x -4, z -9),
+-- starting one cell in: x -3, 0, 3 and z -8, -5, -2 for oak (3), minus the
+-- inner fence (z -5, x -4..2).
+local function spotsFor(spacing)
+  local list = {}
+  for x = -3, 4, spacing do for z = -8, 0, spacing do
+    local fence = (z == -5 and x <= 2)
+    if not fence and not (x == 0 and z == 0) then list[#list + 1] = { x, z } end
+  end end
+  return list
+end
+local SPOTS = spotsFor(3)
 
 local function plantedSpots(W)
   local n = 0
@@ -322,7 +330,7 @@ do
   check(W.fences() == fences, "no fence touched (" .. W.fences() .. " of " .. fences .. ")")
   check(W.count(LOG) == 0, "no logs left standing (branches included): " .. W.count(LOG))
   check(plantedSpots(W) == #SPOTS, ("all %d spots replanted: %d"):format(#SPOTS, plantedSpots(W)))
-  check(W.get(3, 0, -9) == SAP and W.get(-3, 0, -9) == SAP, "spots behind the inner fence reached")
+  check(isSap(W.get(3, 0, -8)) and isSap(W.get(-3, 0, -8)), "spots behind the inner fence reached")
   local outside = 0
   for x = -12, 12 do for z = -40, 6 do
     if W.get(x, 0, z) == SAP and (x < -4 or x > 4 or z < -9 or z > 0) then outside = outside + 1 end
@@ -387,7 +395,7 @@ end
 print("scenario: restart in the middle of felling a tree")
 do
   local W = newWorld()
-  W.set(-3, 0, -3, SAP) -- a grown tree on a spot when it starts
+  W.set(-3, 0, -2, SAP) -- a grown tree on a spot when it starts
   W.growAll()
   local T, api = newTurtle(W, 2000)
   T.inv[1] = { name = SAP, count = 64 }
@@ -398,7 +406,7 @@ do
   ok, err = run(makeEnv(T, api, files, function() error("END OF TEST") end))
   check(tostring(err):find("END OF TEST") ~= nil, "resumed and finished the round (" .. tostring(err) .. ")")
   check(T.x == 0 and T.y == 0 and T.z == 0, ("home after resume (%d,%d,%d)"):format(T.x, T.y, T.z))
-  check(W.get(-3, 0, -3) == SAP and plantedSpots(W) == #SPOTS, "all spots planted after resume")
+  check(isSap(W.get(-3, 0, -2)) and plantedSpots(W) == #SPOTS, "all spots planted after resume")
 end
 
 print("scenario: restart right after a turn, before it was saved")
@@ -450,8 +458,8 @@ do
   check(tostring(err):find("END OF TEST") ~= nil, "one round (" .. tostring(err) .. ")")
   check(W.get(1, -1, -1) == "minecraft:dirt" and W.get(-2, -1, -7) == "minecraft:dirt", "holes filled with dirt")
   check(W.get(-1, -1, -8) == "minecraft:dirt", "the puddle filled with dirt")
-  check(W.get(3, -1, -3) == "minecraft:dirt", "stone under a tree spot swapped for dirt")
-  check(W.get(3, 0, -3) == SAP and plantedSpots(W) == #SPOTS, "every spot planted, the fixed one too")
+  check(W.get(3, -1, -2) == "minecraft:dirt", "stone under a tree spot swapped for dirt")
+  check(isSap(W.get(3, 0, -2)) and plantedSpots(W) == #SPOTS, "every spot planted, the fixed one too")
   check(W.get(1, 0, -7) == nil and W.get(1, 4, -7) == nil and W.count(LOG) == 0, "the old tree is gone")
   check(W.get(-4, 0, -2) == nil and W.get(4, 0, -7) == nil, "grass and mushroom cleared")
   check(W.fences() == fences, "no fence touched")
@@ -469,7 +477,7 @@ do
   local function sl()
     rounds = rounds + 1
     if rounds == 1 then
-      check(W.get(3, 0, -3) ~= SAP and W.get(3, -1, -3) == "minecraft:stone", "round 1: no dirt, the stone spot is left alone")
+      check(not isSap(W.get(3, 0, -2)) and W.get(3, -1, -2) == "minecraft:stone", "round 1: no dirt, the stone spot is left alone")
       T.inv[6] = { name = "minecraft:dirt", count = 8 } -- someone gives it dirt
       return
     end
@@ -477,7 +485,7 @@ do
   end
   local ok, err = run(makeEnv(T, api, files, sl), "10")
   check(tostring(err):find("END OF TEST") ~= nil, "two rounds (" .. tostring(err) .. ")")
-  check(W.get(3, -1, -3) == "minecraft:dirt" and W.get(3, 0, -3) == SAP, "round 2: dirt laid and the spot planted")
+  check(W.get(3, -1, -2) == "minecraft:dirt" and isSap(W.get(3, 0, -2)), "round 2: dirt laid and the spot planted")
 end
 
 print("scenario: starts without saplings and takes them from its home chest (the mailbox)")
@@ -515,6 +523,51 @@ do
   check(oakLeft == 0 and (W.chest[SAP] or 0) > 0, "oak saplings went into the chest: " .. tostring(W.chest[SAP]))
   local before = (W.planted or {})[SAP] or 0
   check(((W.planted or {})[BIRCH] or 0) > 0, "birch planted")
+end
+
+local MENRIL = "integrateddynamics:menril_sapling"
+local function plantedAt(W, list)
+  local n = 0
+  for _, p in ipairs(list) do if isSap(W.get(p[1], 0, p[2])) then n = n + 1 end end
+  return n
+end
+
+print("scenario: menril needs more room: spots 4 apart from the corner, dirt under its side cells")
+do
+  local W = newWorld()
+  local M4 = spotsFor(4)
+  W.set(1, -1, -7, "minecraft:stone") -- the floor north... south of spot (1,-8): a side cell on stone
+  local T, api = newTurtle(W, 3000)
+  T.inv[1] = { name = MENRIL, count = 32 }
+  T.inv[5] = { name = "minecraft:dirt", count = 8 }
+  local ok, err = run(makeEnv(T, api, {}, sleeper(W, 2)), "10")
+  local onGrid, menril = plantedAt(W, M4), 0
+  for _, p in ipairs(M4) do if W.get(p[1], 0, p[2]) == MENRIL then menril = menril + 1 end end
+  check(onGrid == #M4 and menril == #M4,
+    ("all %d spots 4 apart hold menril: %d"):format(#M4, menril))
+  local off = 0
+  for key, v in pairs(W.b) do
+    local x, y, z = key:match("^(-?%d+),(-?%d+),(-?%d+)$")
+    x, y, z = tonumber(x), tonumber(y), tonumber(z)
+    if y == 0 and isSap(v) and not ((x + 3) % 4 == 0 and (z + 8) % 4 == 0) then off = off + 1 end
+  end
+  check(off == 0, "nothing planted off the 4-grid: " .. off)
+  check(W.get(1, -1, -7) == "minecraft:dirt", "the stone under a menril spot's side cell became dirt")
+end
+
+print("scenario: the base selects menril instead of oak: the next round lays out a new grid")
+do
+  local W = newWorld()
+  local T, api = newTurtle(W, 4000)
+  T.inv[1] = { name = SAP, count = 32 }
+  T.inv[4] = { name = MENRIL, count = 32 }
+  T.inv[6] = { name = "computercraft:wireless_modem_normal", count = 1 }
+  T.reply = function(msg) if msg.state == "resting" then return { type = "ok", plant = { MENRIL } } end end
+  local files = {}
+  local ok, err = run(makeEnv(T, api, files, sleeper(W, 3)), "10")
+  local area = files["forester.area"] and load("return " .. files["forester.area"])() or {}
+  check(area.spacing == 4, "the pen's grid is 4 apart now: " .. tostring(area.spacing))
+  check((W.planted[MENRIL] or 0) > 0, "menril planted")
 end
 
 print(failures == 0 and "ALL PASSED" or (failures .. " FAILURE(S)"))

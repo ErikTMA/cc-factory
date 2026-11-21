@@ -41,6 +41,30 @@ C.TINY = { "utilitarian:tiny_charcoal", "utilitarian:tiny_coal",
   "actuallyadditions:tiny_charcoal", "actuallyadditions:tiny_coal" }
 function C.isFuel(name) return C.FUEL[name] ~= nil end
 
+-- ---------------------------------------------------------------- trees --
+-- Per sapling kind: `spacing` between tree spots, from how far the tree's
+-- LOGS reach sideways (worldgen data in the 1.21.1 jars; leaves don't stop a
+-- tree from growing, so crowns may overlap):
+--   straight 1x1 trunks (oak, birch, spruce, small jungle): 3
+--   menril (Integrated Dynamics TrunkPlacerMenril): its first 3 blocks are
+--     plus-shaped (a log on each side), and it only grows when the ground
+--     under its 4 side cells is grass or dirt (`soilAround`): 4, so a free
+--     cell stays between two trees' bases
+--   acacia (forking trunk), cherry (branches 2-4 sideways), mangrove
+--     (branches and roots): 5
+--   dark oak only grows from 4 saplings in a square (`twoByTwo`): not planted
+-- Unknown (modded) kinds: 4.
+C.TREES = {
+  ["minecraft:oak_sapling"] = { spacing = 3 }, ["minecraft:birch_sapling"] = { spacing = 3 },
+  ["minecraft:spruce_sapling"] = { spacing = 3 }, ["minecraft:jungle_sapling"] = { spacing = 3 },
+  ["integrateddynamics:menril_sapling"] = { spacing = 4, soilAround = true },
+  ["minecraft:acacia_sapling"] = { spacing = 5 }, ["minecraft:cherry_sapling"] = { spacing = 5 },
+  ["minecraft:mangrove_propagule"] = { spacing = 5 },
+  ["minecraft:dark_oak_sapling"] = { twoByTwo = true },
+}
+local UNKNOWN_TREE = { spacing = 4 }
+function C.tree(name) return C.TREES[name] or UNKNOWN_TREE end
+
 -- ------------------------------------------------------------- building --
 -- Crafting grid cells in a turtle's inventory (slots 1-3, 5-7, 9-11).
 C.GRID_CELLS = { 1, 2, 3, 5, 6, 7, 9, 10, 11 }

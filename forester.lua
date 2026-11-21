@@ -42,7 +42,7 @@ local C = require("oreconf")
 local nav = require("nav")
 
 local CFG = {
-  spacing = 3,         -- tree spots every `spacing` cells, counted from home
+  spacing = 3,         -- tree spots when it has no saplings yet (else oreconf.TREES)
   wait = 300,
   maxHeight = 40,      -- never climb higher than this when felling
   maxArea = 1024,      -- more open cells than this: the pen is not closed
@@ -199,9 +199,61 @@ end
 
 -- ---------------------------------------------------------------- paths --
 local isSpot = {}
+local placeSpots -- (below)
 local function indexSpots()
   isSpot = {}
   for _, k in ipairs(AREA.spots or {}) do isSpot[k] = true end
+end
+
+-- The sapling kinds it plants now: the ones the base selected, else the ones
+-- it carries (never a 2x2-only kind).
+local function isSaplingName(name) return name:find("sapling") ~= nil or name:find("propagule") ~= nil end
+local function kindsInPlay()
+  local kinds = {}
+  if S.allowed then
+    for k in pairs(S.allowed) do kinds[k] = true end
+  else
+    for i = 1, 16 do
+      local d = turtle.getItemDetail(i)
+      if d and isSaplingName(d.name) then kinds[d.name] = true end
+    end
+  end
+  for k in pairs(kinds) do if C.tree(k).twoByTwo then kinds[k] = nil end end
+  return kinds
+end
+
+-- Spacing for the kinds in play: the widest one decides (mixed kinds share
+-- one grid). And whether any needs grass/dirt under its 4 side cells.
+local function treeNeeds()
+  local spacing, around = nil, false
+  for k in pairs(kindsInPlay()) do
+    local t = C.tree(k)
+    spacing = math.max(spacing or 0, t.spacing)
+    around = around or t.soilAround == true
+  end
+  return spacing or CFG.spacing, around
+end
+
+-- Tree spots: every `spacing` cells, counted from the pen's corner (its
+-- lowest x and z), starting one cell in so a path runs along the fence.
+-- Spots still without soil get dirt in the rounds.
+placeSpots = function()
+  local spacing = treeNeeds()
+  local minX, minZ
+  for k in pairs(AREA.cells) do
+    local x, z = unkey(k)
+    minX, minZ = math.min(minX or x, x), math.min(minZ or z, z)
+  end
+  local ax, az = minX + 1, minZ + 1
+  local spots = {}
+  for k in pairs(AREA.cells) do
+    local x, z = unkey(k)
+    if (x ~= 0 or z ~= 0) and (x - ax) % spacing == 0 and (z - az) % spacing == 0 then spots[#spots + 1] = k end
+  end
+  table.sort(spots)
+  AREA.spots, AREA.spacing = spots, spacing
+  saveArea()
+  indexSpots()
 end
 
 -- Directions from `from` to `to` over the pen's path cells (not tree spots),
@@ -242,7 +294,7 @@ end
 -- ------------------------------------------------------------ inventory --
 local function select(slot) turtle.select(slot) end
 
-local function isSaplingItem(name) return name:find("sapling") ~= nil or name:find("propagule") ~= nil end
+local isSaplingItem = isSaplingName
 
 -- the kinds the base selected (nil: any kind it carries)
 local function allowed(name) return not S.allowed or S.allowed[name] == true end
@@ -290,9 +342,6 @@ local function fixGround(treeSpot)
   return DIRT
 end
 
-local function isSpotCell(x, z)
-  return (x ~= 0 or z ~= 0) and x % CFG.spacing == 0 and z % CFG.spacing == 0
-end
 
 -- Move anything that is not bone meal out of slot 2, into a free loot slot.
 local function clearReservedSlots()
@@ -462,7 +511,7 @@ local function explore()
         if ok then
           border[nk] = true
         elseif move("fwd", turtle.forward) then
-          AREA.cells[nk] = fixGround(isSpotCell(nx, nz)) or "air"
+          AREA.cells[nk] = fixGround(false) or "air" -- (tree spots: soil later, in the rounds)
           count = count + 1
           if count > CFG.maxArea then
             error(("The pen is not closed: more than %d open cells. Close the fence and run 'forester rescan'.")
@@ -482,19 +531,9 @@ local function explore()
       end
     end
   end
-  -- tree spots: every `spacing` cells from home (those still without soil get
-  -- dirt in a later round, once it has some)
-  local spots = {}
-  for k in pairs(AREA.cells) do
-    local x, z = unkey(k)
-    if isSpotCell(x, z) then spots[#spots + 1] = k end
-  end
-  table.sort(spots)
-  AREA.spots = spots
   AREA.done = true
-  saveArea()
-  indexSpots()
-  log(("Pen: %d cells, %d tree spots."):format(count, #spots))
+  placeSpots()
+  log(("Pen: %d cells, %d tree spots %d apart."):format(count, #AREA.spots, AREA.spacing))
 end
 
 -- ------------------------------------------------------------- the round --
@@ -542,6 +581,12 @@ local function dist(a, x, z) return math.abs(a.x - x) + math.abs(a.z - z) end
 local function round()
   select(WORK_SLOT)
   refuel()
+  -- the kinds changed (the base's selection, what it carries): new grid
+  local spacing, soilAround = treeNeeds()
+  if spacing ~= AREA.spacing then
+    placeSpots()
+    log(("Tree spots now %d apart: %d spots"):format(spacing, #AREA.spots))
+  end
   -- visit the spots nearest first
   local todo = {}
   for _, k in ipairs(AREA.spots) do todo[#todo + 1] = k end
@@ -558,6 +603,17 @@ local function round()
     if not isSoil(AREA.cells[sk]) and dirtSlot() and walkTo({ x = sx, z = sz }) then
       AREA.cells[sk] = fixGround(true) or AREA.cells[sk]
       saveArea()
+    end
+    -- menril: the ground under the spot's 4 side cells must be soil too
+    if soilAround and isSoil(AREA.cells[sk]) then
+      for h = 0, 3 do
+        local nk = key(sx + DIRS[h][1], sz + DIRS[h][3])
+        local nx, nz = unkey(nk)
+        if AREA.cells[nk] and not isSoil(AREA.cells[nk]) and dirtSlot() and walkTo({ x = nx, z = nz }) then
+          AREA.cells[nk] = fixGround(true) or AREA.cells[nk]
+          saveArea()
+        end
+      end
     end
     -- the nearest path cell next to the spot we can reach
     local best, bestLen

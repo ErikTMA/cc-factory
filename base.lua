@@ -131,7 +131,11 @@ local function drawForestry(UI, out, w, row)
   for _, k in ipairs(F.saplings or {}) do sel[k] = true end
   local kinds, stock = {}, UI.stock or {}
   local seen = {}
-  for item in pairs(stock) do if factory.isSaplingItem(item) and not seen[item] then seen[item] = true; kinds[#kinds + 1] = item end end
+  for item in pairs(stock) do
+    if factory.isSaplingItem(item) and not C.tree(item).twoByTwo and not seen[item] then
+      seen[item] = true; kinds[#kinds + 1] = item
+    end
+  end
   for item in pairs(sel) do if not seen[item] then seen[item] = true; kinds[#kinds + 1] = item end end
   table.sort(kinds)
   local auto = not next(sel)
@@ -145,12 +149,14 @@ local function drawForestry(UI, out, w, row)
   if #kinds == 0 then put(out, 1, row, "no saplings in storage", colors.lightGray); row = row + 1 end
   local x = 1
   for _, item in ipairs(kinds) do
-    local label = ("%s %d"):format(shortName(item), stock[item] or 0)
+    local label = ("%s %d /%d"):format(shortName(item), stock[item] or 0, C.tree(item).spacing)
     local bw = #label + 2
     if x + bw - 1 > w then x = 1; row = row + 1 end
     button(UI, out, x, row, bw, label, sel[item] == true, function() factory.toggleSapling(F, item) end)
     x = x + bw + 1
   end
+  row = row + 1
+  put(out, 1, row, "(kind count /spacing; mixed kinds use the widest spacing)", colors.gray)
   row = row + 2
   button(UI, out, 1, row, 16, "BONE MEAL " .. (F.boneMeal and "ON" or "OFF"), F.boneMeal == true,
     function() factory.toggleBoneMeal(F) end)

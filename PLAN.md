@@ -38,6 +38,20 @@ over rednet. Friends-only server: base-ID pinning, no signing.
   ingot (iron/gold/copper -> minecraft ingots). ATM10 KubeJS keeps these.
 - Observer needs nether quartz: a raw input the base cannot make.
 
+## Tree facts (jars, 2026-11-21)
+
+- Vanilla 1.21.1 configured features (trunk placer, foliage radius): oak /
+  birch / small jungle / spruce straight 1x1, radius 2 (spruce 2-3); acacia
+  forking trunk; cherry radius 4, branches 2-4 sideways; mangrove
+  upwards-branching (+roots); dark oak 2x2. Leaves are replaceable by tree
+  growth, so crowns may overlap; spacing follows how far LOGS reach.
+- Integrated Dynamics 1.39.0 `tree_menril`: TrunkPlacerMenril returns no tree
+  unless the ground under the sapling's N/E/S/W cells is grass/dirt
+  (TreeFeature.isGrassOrDirt), and places a log on each side for the first
+  `trunk_height_wider` (3) blocks (plus-shaped base).
+- Spacing table: oreconf.TREES (3 / menril 4 / acacia, cherry, mangrove 5 /
+  unknown 4); the grid starts one cell in from the pen's min-x/min-z corner.
+
 ## Fuel facts (jars, 2026-11-21)
 
 - CC 1.120.2 `FurnaceRefuelHandler`: turtle fuel per item = burn ticks * 5 / 100

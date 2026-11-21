@@ -101,7 +101,13 @@ then says the block is connected. A modem that isn't lit does nothing.
 - First start: it walks the pen once and remembers it. On the way it fells the
   trees already inside, clears grass, flowers and mushrooms, fills holes and
   water with dirt, and swaps stone under tree spots for dirt. Then it plants
-  every 3rd cell. It keeps its dirt (never unloads it); tree spots it had no
+  a grid of tree spots counted from the pen's corner, one cell in from the
+  fence (a path runs along it). The spacing depends on the tree: 3 for oak,
+  birch, spruce and jungle; 4 for menril (its base is wider, and it only grows
+  with dirt under its 4 side cells, which the forester lays); 5 for acacia,
+  cherry and mangrove (their branches reach sideways); 4 for other modded
+  saplings. Mixed kinds share the widest spacing; dark oak (needs 2x2) isn't
+  planted. It keeps its dirt (never unloads it); tree spots it had no
   dirt for are fixed in a later round once you give it more. Other solid blocks
   inside the pen count as walls. Run `forester rescan` after changing the
   fence.
