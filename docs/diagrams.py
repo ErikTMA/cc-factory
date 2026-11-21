@@ -229,8 +229,8 @@ def surveyor_top():
         (COL["wall"], "wall"), (COL["modem"], "wired modem"), (COL["chest"], "home chest"),
         (COL["accent"], "its route (over the wall)"),
     ], note=[
-        "Place a plain advanced turtle in front of the base computer and run: surveyor <facing>",
-        "(the way it looks, from F3). Give it coal and a few cobblestone (one marker per home).",
+        "Place a plain advanced turtle next to the base computer with coal, a few cobblestone",
+        "(one marker per home) and a compass, and install it: it starts surveying by itself.",
         "It climbs walls next to cables but never digs: cables buried in walls are not found.",
         "Every free spot beside a home chest with a modem next to it becomes a home (role: off).",
     ])

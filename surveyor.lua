@@ -1,10 +1,11 @@
 -- surveyor: maps the base's wired network and registers the home spots.
 --
--- For the early game: a plain advanced turtle, no upgrades needed (a compass
--- is used if it has one). Place it NEXT TO THE BASE COMPUTER (where it stands
--- becomes (0,0,0) for every home) and run `surveyor <facing>`, where <facing>
--- is the way it looks (F3: "Facing: north"). Give it some coal, and a few
--- cheap items as markers (one per home), e.g. cobblestone.
+-- For the early game: a plain advanced turtle. Place it NEXT TO THE BASE
+-- COMPUTER (where it stands becomes (0,0,0) for every home) with some coal, a
+-- few cheap items as markers (one per home, e.g. cobblestone) and a COMPASS in
+-- its inventory: it fits the compass itself to know which way it faces and
+-- starts on its own (`bootstrap ... surveyor` installs it). Without a compass,
+-- run `surveyor <facing>` with the way it looks (F3: "Facing: north").
 --
 -- 1. It explores the open air around the computer and the cables and modems
 --    it can see, climbing walls next to them (never digging): a turtle only
@@ -312,15 +313,36 @@ end
 local args = { ... }
 S = readTable(CFG.stateFile)
 MAP = readTable(CFG.mapFile)
-if args[1] and args[1] ~= "resume" then S, MAP = nil, nil end -- a new survey
+if args[1] and args[1] ~= "resume" then S, MAP = nil, nil end -- a new survey ("survey", or a facing)
 
+-- A compass in the inventory: fit it (a plain turtle has both upgrade slots
+-- free), so the turtle knows which way it faces.
+local function fitCompass()
+  if nav.compass() then return true end
+  for i = 1, 16 do
+    local d = turtle.getItemDetail(i)
+    if d and d.name == "minecraft:compass" then
+      turtle.select(i)
+      local ok = turtle.equipLeft() or turtle.equipRight()
+      turtle.select(1)
+      return ok and nav.compass() ~= nil
+    end
+  end
+  return false
+end
+
+fitCompass()
 if S then
   tmove.recover(S, save, applyMove)
   S.heading = nav.compass() or S.heading
-  if S.done then log("Survey done. Run 'surveyor <facing>' on the build spot to survey again."); return end
+  if S.done then log("Survey done. Run 'surveyor survey' next to the base computer to survey again."); return end
 else
   local h = nav.compass() or nav.index(args[1] or "")
-  if not h then error("Tell me which way I face (F3): surveyor north|east|south|west", 0) end
+  if not h then
+    print("I don't know which way I face. Put a compass in my inventory (4 iron + 1 redstone)")
+    print("and reboot, or tell me: surveyor north|east|south|west (F3: Facing)")
+    return
+  end
   S = { pos = { x = 0, y = 0, z = 0 }, heading = h, steps = 0 }
   MAP = {}
   save()

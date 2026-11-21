@@ -998,6 +998,29 @@ do
 end
 
 
+print("scenario: a surveyor with a compass in its inventory starts by itself, any facing")
+do
+  -- the first surveyor goes away; a new one in the same spot, facing EAST,
+  -- compass in its inventory, started only by its own startup (agent)
+  W.set(-2, 0, -2, nil); W.turtles[50] = nil
+  local SV2 = newTurtleEntity(51, -2, 0, -2, 1)
+  SV2.fuel = 4000
+  for _, name in ipairs(manifest.turtle) do SV2.files[name] = repoFile(name) end
+  SV2.files["agent.cfg"] = ser({ role = "surveyor", base = 0 })
+  SV2.inv[1] = { name = "minecraft:cobblestone", count = 8 }
+  SV2.inv[2] = { name = "minecraft:compass", count = 1 }
+  local homesBefore = #F.homes
+  bootTurtle(SV2)
+  local ok = runUntil(function() return SV2.files["surveyor.state"] and SV2.files["surveyor.state"]:find("done") end, 400000)
+  check(ok, "it surveyed without being told its facing")
+  check(SV2.left == "minecraft:compass" or SV2.right == "minecraft:compass", "it fitted the compass itself")
+  check(#F.homes == homesBefore, "found the same homes again, no duplicates (" .. #F.homes .. ")")
+  local again = 0
+  for _, h in ipairs(F.homes) do if h.source == "survey" and (h.chest == "minecraft:chest_3" or h.chest == "minecraft:chest_4") then again = again + 1 end end
+  check(again == 2, "both surveyed homes still there")
+  check(SV2.x == -2 and SV2.y == 0 and SV2.z == -2, "back where it started")
+end
+
 print("scenario: BUILD GPS: the factory builds four GPS host turtles above the base")
 do
   for _, r in ipairs({ { "minecraft:iron_ingot", 64 }, { "minecraft:stone", 64 }, { "minecraft:redstone", 16 },

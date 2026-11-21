@@ -90,18 +90,22 @@ then says the block is connected. A modem that isn't lit does nothing.
 Instead of typing coordinates, let a turtle find the homes:
 
 - Build each home as in steps 2 and 4: chest behind, modem next to the spot.
-- Place a **plain advanced turtle** (no upgrades needed) **in front of the base
-  computer**. Give it some coal and a few cobblestone (one per home), and run:
+- Place a **plain advanced turtle** (no upgrades needed) **next to the base
+  computer** (beside it or on top). Put in its inventory: some **coal**, a few
+  **cobblestone** (one per home) and a **compass** (4 iron + 1 redstone; it
+  fits the compass itself so it knows which way it faces). Then right-click it
+  and run:
 
   ```
   wget run https://raw.githubusercontent.com/ErikTMA/cc-factory/main/bootstrap.lua surveyor
-  surveyor north
   ```
 
-  (`north` = the way it faces, from F3). It follows the cables (climbing walls,
-  never digging), drops a cobblestone into each home chest so the base knows
-  which chest it is, and registers the homes. It also finds the installer disk
-  drive, which tells the base where the build spot is.
+  It installs, restarts and starts surveying by itself. It follows the cables
+  (climbing walls, never digging), drops a cobblestone into each home chest so
+  the base knows which chest it is, and registers the homes. It also finds the
+  installer disk drive, which tells the base where the build spot is. (No
+  compass? Then run `surveyor north`, with the way it faces from F3.) To survey
+  again later: `surveyor survey`.
 - On the monitor's **FACTORY** tab, **tap a home** to set its role: miner,
   forester or off.
 
