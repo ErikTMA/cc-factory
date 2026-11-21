@@ -31,6 +31,7 @@ local link = require("link")
 local nav = require("nav")
 
 local CFG = {
+  reserve = 20,      -- fuel kept on top of what the way home needs
   reach = 32,        -- never further than this from where it started (x and z) ...
   height = 16,       -- ... and up/down
   maxSearch = 20000, -- cells one path search may visit before it gives up
@@ -44,7 +45,14 @@ local DIRS = nav.DIRS
 local S   -- { pos = {x,y,z}, heading, pending, done, homes }
 local MAP -- [key] = block name, or false for open air
 
-local function log(...) print(...) end
+-- Everything it says also goes to surveyor.log (readable after the fact).
+local function log(...)
+  print(...)
+  local parts = {}
+  for i = 1, select("#", ...) do parts[#parts + 1] = tostring((select(i, ...))) end
+  local f = fs.open("surveyor.log", "a")
+  if f then f.write(table.concat(parts, " ") .. "\n"); f.close() end
+end
 
 local function writeTable(path, t)
   local f = fs.open(path, "w")
@@ -124,6 +132,8 @@ local function fuel()
   return f == "unlimited" and math.huge or f
 end
 
+local lastFail -- why the last step failed: "fuel" or "blocked"
+
 -- One step into a cell we know is open; never digs. False if it stays blocked
 -- (a mob, a player, a turtle): the caller plans around it.
 local function stepTo(how)
@@ -132,7 +142,7 @@ local function stepTo(how)
   elseif how == "down" then fn, attack, kind = turtle.down, turtle.attackDown, "down"
   else turnTo(how); fn, attack, kind = turtle.forward, turtle.attack, "fwd" end
   if fuel() < CFG.minFuel then refuel(1000) end
-  if fuel() < 1 then log("Out of fuel: put coal or charcoal in me"); return false end
+  if fuel() < 1 then log("Out of fuel: put coal or charcoal in me"); lastFail = "out of fuel"; return false end
   for _ = 1, 10 do
     if tmove.move(S, save, kind, fn, applyMove) then
       S.steps = (S.steps or 0) + 1
@@ -141,6 +151,7 @@ local function stepTo(how)
     attack()
     sleep(0.5)
   end
+  lastFail = "something stays in the way"
   return false
 end
 
@@ -207,14 +218,59 @@ local function follow(moves)
   return true
 end
 
+-- Go to a known open cell. Returns true, or false and why not.
 local function goTo(x, y, z)
   local target = key(x, y, z)
   for _ = 1, 5 do
     local moves = pathTo(function(k) return k == target end, blocked)
-    if not moves then return false end
+    if not moves then return false, "no known way there" end
+    lastFail = nil
     if follow(moves) then return true end
+    if lastFail == "out of fuel" then return false, lastFail end
   end
-  return false
+  return false, lastFail or "blocked"
+end
+
+-- --------------------------------------------------------------- fuel --
+-- Steps from every known open cell back to the start (through known open
+-- cells): the real way home, not the straight line.
+local function stepsHome()
+  local origin = key(0, 0, 0)
+  local dist, queue, head = { [origin] = 0 }, { origin }, 1
+  while queue[head] do
+    local cur = queue[head]
+    head = head + 1
+    if head % 2000 == 0 then os.queueEvent("surveyor_yield"); os.pullEvent("surveyor_yield") end
+    local x, y, z = unkey(cur)
+    for _, n in ipairs(SIX) do
+      local nk = key(x + n[1], y + n[2], z + n[3])
+      if dist[nk] == nil and MAP[nk] == false and not blocked[nk] then
+        dist[nk] = dist[cur] + 1
+        queue[#queue + 1] = nk
+      end
+    end
+  end
+  return dist
+end
+
+local homeSpots -- (below)
+
+-- Fuel the rest of the job needs from here: home, plus a round trip from the
+-- start to every home spot still to mark (an upper bound), plus a reserve.
+local function fuelToFinish(dist)
+  local here = dist[key(S.pos.x, S.pos.y, S.pos.z)]
+    or 2 * (math.abs(S.pos.x) + math.abs(S.pos.y) + math.abs(S.pos.z))
+  local spots = 0
+  for _, sp in ipairs(homeSpots()) do
+    if not (S.homes or {})[key(sp.x, sp.y, sp.z)] then spots = spots + 2 * (dist[key(sp.x, sp.y, sp.z)] or 0) end
+  end
+  return here + spots + CFG.reserve
+end
+
+-- True when it has (or can burn its way to) `need` fuel.
+local function haveFuel(need)
+  if fuel() < need then refuel(need + 500) end
+  return fuel() >= need
 end
 
 -- --------------------------------------------------------------- explore --
@@ -313,13 +369,16 @@ local function explore()
   while (S.steps or 0) < CFG.maxSteps do
     local targets = unseenSides()
     if next(targets) == nil then break end
-    if fuel() < CFG.minFuel and not refuel(1000) and fuel() < math.abs(S.pos.x) + math.abs(S.pos.y) + math.abs(S.pos.z) + 20 then
-      log("Low on fuel: stopping the survey here")
-      break
-    end
     local moves = planToSee(targets)
     if not moves then
       for k in pairs(targets) do given[k] = true end -- no way to any of them
+      break
+    end
+    -- there, back the same way, and then everything still to do
+    local need = 2 * #moves + fuelToFinish(stepsHome())
+    if not haveFuel(need) then
+      log(("Fuel %d: only enough to finish from here, so I stop exploring (give me more coal for a bigger survey)")
+        :format(fuel()))
       break
     end
     local before = S.steps or 0
@@ -337,7 +396,7 @@ end
 
 -- ----------------------------------------------------------------- homes --
 -- Free spots next to home chests that have a modem next to them.
-local function homeSpots()
+homeSpots = function()
   local spots = {}
   for k, name in pairs(MAP) do
     if name and isHomeChest(name) then
@@ -376,8 +435,23 @@ local function registerHomes()
   S.homes = S.homes or {}
   for _, sp in ipairs(spots) do
     local id = key(sp.x, sp.y, sp.z)
+    local reachable = true
     if not S.homes[id] then
-      if goTo(sp.x, sp.y, sp.z) then
+      local dist = stepsHome()
+      local way = pathTo(function(k) return k == id end, blocked)
+      local need = way and (#way + (dist[id] or 0) + CFG.reserve)
+      if not way then
+        log("No known way to the home spot at " .. id .. "; skipped")
+        reachable = false
+      elseif not haveFuel(need) then
+        log(("Not enough fuel to reach the home at %s and get back (%d needed); skipped"):format(id, need))
+        reachable = false
+      end
+    end
+    if not S.homes[id] and reachable then
+      local arrived, why = goTo(sp.x, sp.y, sp.z)
+      if not arrived then log("Could not get to the home spot at " .. id .. ": " .. tostring(why)) end
+      if arrived then
         turnTo((sp.facing + 2) % 4) -- face the chest
         local slot = markerSlot()
         local home = { x = sp.x, y = sp.y, z = sp.z, facing = nav.NAMES[sp.facing] }
@@ -409,10 +483,25 @@ local function registerHomes()
 end
 
 -- ------------------------------------------------------------------ main --
+-- surveyor [resume]          carry on (what startup runs)
+-- surveyor survey | <facing>  a new survey from here (next to the base computer)
+-- surveyor survey here        a new survey even though the last one did not end
+--                             back at its start (you carried it back yourself)
+-- surveyor home               go back to where the survey started
 local args = { ... }
 S = readTable(CFG.stateFile)
 MAP = readTable(CFG.mapFile)
-if args[1] and args[1] ~= "resume" then S, MAP = nil, nil end -- a new survey ("survey", or a facing)
+local away = S and (S.pos.x ~= 0 or S.pos.y ~= 0 or S.pos.z ~= 0)
+if args[1] and args[1] ~= "resume" and args[1] ~= "home" then -- a new survey ("survey", or a facing)
+  if S and (away or not S.done) and args[2] ~= "here" then
+    print(("My last survey isn't finished: I'm %d,%d,%d from where it started."):format(S.pos.x, S.pos.y, S.pos.z))
+    print("'surveyor home' takes me back there. If you put me next to the base computer")
+    print("yourself, run 'surveyor survey here' to start a new survey from this spot.")
+    return
+  end
+  S, MAP = nil, nil
+  if fs.exists("surveyor.log") then fs.delete("surveyor.log") end
+end
 
 -- A compass in the inventory: fit it (a plain turtle has both upgrade slots
 -- free), so the turtle knows which way it faces.
@@ -431,9 +520,34 @@ local function fitCompass()
 end
 
 fitCompass()
+-- Back to the start. Marks the survey done there; otherwise it stays
+-- "stranded" and tries again on the next start.
+local function returnHome()
+  local ok, why = goTo(0, 0, 0)
+  if not ok then
+    S.stranded = true
+    save()
+    log(("Could not get back to where I started (I'm at %d,%d,%d from it): %s.")
+      :format(S.pos.x, S.pos.y, S.pos.z, tostring(why)))
+    log("Fix that (fuel, something in the way) and reboot me, or carry me back and run 'surveyor survey here'.")
+    return false
+  end
+  S.stranded = nil
+  S.done = true
+  save()
+  return true
+end
+
 if S then
   tmove.recover(S, save, applyMove)
   S.heading = nav.compass() or S.heading
+  MAP = MAP or {}
+  if S.stranded or (args[1] == "home" and away) then
+    log("Going back to where the survey started...")
+    refuel(1000)
+    if returnHome() then log("Back where I started.") end
+    return
+  end
   if S.done then log("Survey done. Run 'surveyor survey' next to the base computer to survey again."); return end
 else
   local h = nav.compass() or nav.index(args[1] or "")
@@ -482,7 +596,4 @@ if moves and follow(moves) then
   reported = link.talk("surveyed", { homes = S.homes, drives = drives }, false) ~= nil
 end
 if not reported then log("Could not report the survey to the base (no modem reached)") end
-if not goTo(0, 0, 0) then log("Could not get back to where I started") end
-S.done = true
-save()
-log("Survey done.")
+if returnHome() then log("Survey done.") end

@@ -72,7 +72,7 @@ local function newFS(files, mounts)
       local c = t[r]
       return { readAll = function() return c end, close = function() end }
     end
-    local buf = {}
+    local buf = { mode == "a" and t[r] or nil }
     return { write = function(s) buf[#buf + 1] = s end, close = function() t[r] = table.concat(buf) end }
   end
   function fs.delete(p)
@@ -1171,29 +1171,44 @@ do
   check(files["agent.cfg"] == nil and files["oreminer.lua"] == nil, "nothing copied onto the base")
 end
 
-print("scenario: surveyor on TOP of the computer, no fuel but coal; modem behind the computer a")
-print("          level down, cable over a 4-high wall to a home, a branch running out of range")
-do
-  -- (all at x ~ 40, away from everything else)
-  W.set(40, 0, 40, "computercraft:computer_advanced")
-  W.set(39, 0, 40, "computercraft:monitor_advanced")
-  W.set(40, 0, 41, "computercraft:wired_modem_full")        -- behind the computer
-  for z = 42, 46 do W.set(40, 0, z, "computercraft:cable") end
-  for x = 36, 44 do for y = 0, 3 do W.set(x, y, 47, "minecraft:cobblestone") end end
-  for y = 1, 4 do W.set(40, y, 46, "computercraft:cable") end -- up the near side
-  W.set(40, 4, 47, "computercraft:cable")                    -- over the top
-  for y = 4, 0, -1 do W.set(40, y, 48, "computercraft:cable") end -- down the far side
-  for z = 49, 50 do W.set(40, 0, z, "computercraft:cable") end
-  W.set(40, 0, 51, "computercraft:wired_modem_full")
-  newInv("minecraft:chest_77", 40, 0, 53)                    -- home spot (40,0,52)
-  for z = 42, 100 do W.set(41, 0, z, "computercraft:cable") end -- runs far out of range
-  local T = newTurtleEntity(60, 40, 1, 40, 0)
+-- The layout from the real base: computer at (ox,0,oz) with a monitor next to
+-- it, the modem BEHIND it, a cable over a 4-high wall to a home (chest at
+-- oz+13, home spot oz+12 facing north), a branch running out of range.
+local function topLayout(ox, oz, chest)
+  W.set(ox, 0, oz, "computercraft:computer_advanced")
+  W.set(ox - 1, 0, oz, "computercraft:monitor_advanced")
+  W.set(ox, 0, oz + 1, "computercraft:wired_modem_full")
+  for z = oz + 2, oz + 6 do W.set(ox, 0, z, "computercraft:cable") end
+  for x = ox - 4, ox + 4 do for y = 0, 3 do W.set(x, y, oz + 7, "minecraft:cobblestone") end end
+  for y = 1, 4 do W.set(ox, y, oz + 6, "computercraft:cable") end
+  W.set(ox, 4, oz + 7, "computercraft:cable")
+  for y = 4, 0, -1 do W.set(ox, y, oz + 8, "computercraft:cable") end
+  for z = oz + 9, oz + 10 do W.set(ox, 0, z, "computercraft:cable") end
+  W.set(ox, 0, oz + 11, "computercraft:wired_modem_full")
+  newInv(chest, ox, 0, oz + 13)
+  for z = oz + 2, oz + 60 do W.set(ox + 1, 0, z, "computercraft:cable") end
+end
+
+local function surveyorOnTop(id, ox, oz, coal)
+  local T = newTurtleEntity(id, ox, 1, oz, 0)
   T.fuel = 0
   for _, name in ipairs(manifest.turtle) do T.files[name] = repoFile(name) end
   T.files["agent.cfg"] = ser({ role = "surveyor", base = 0 })
   T.inv[1] = { name = "minecraft:cobblestone", count = 8 }
   T.inv[2] = { name = "minecraft:compass", count = 1 }
-  T.inv[3] = { name = "minecraft:coal", count = 16 }
+  if coal > 0 then T.inv[3] = { name = "minecraft:coal", count = coal } end
+  return T
+end
+
+local function homeAt(chest)
+  for _, h in ipairs(F.homes) do if h.chest == chest then return h end end
+end
+
+print("scenario: surveyor on TOP of the computer, no fuel but coal; modem behind the computer a")
+print("          level down, cable over a 4-high wall to a home, a branch running out of range")
+do
+  topLayout(40, 40, "minecraft:chest_77")
+  local T = surveyorOnTop(60, 40, 40, 16)
   local minY, maxY, maxZ = 1, 1, 40
   local homesBefore = #F.homes
   bootTurtle(T)
@@ -1206,12 +1221,51 @@ do
   check(minY <= 0, "it climbed down off the computer: lowest y " .. minY)
   check(maxY >= 5, "it climbed over the wall: highest y " .. maxY)
   check(maxZ <= 40 + 33, "stayed within range of where it started: furthest z " .. maxZ)
-  local home
-  for _, h in ipairs(F.homes) do if h.chest == "minecraft:chest_77" then home = h end end
+  local home = homeAt("minecraft:chest_77")
   check(home ~= nil and home.facing == "north", "registered the home behind the wall, facing away from its chest")
   check(#F.homes == homesBefore + 1, "one new home")
   check(T.x == 40 and T.y == 1 and T.z == 40, ("back on the computer (%d,%d,%d)"):format(T.x, T.y, T.z))
   check(W.get(40, 3, 47) == "minecraft:cobblestone" and W.get(40, 0, 41) == "computercraft:wired_modem_full", "nothing dug")
+  check((T.files["surveyor.log"] or ""):find("Survey done"), "it keeps a log: surveyor.log")
+end
+
+print("scenario: the same with only 4 coal: it stops exploring in time, marks the home, gets back")
+do
+  topLayout(140, 40, "minecraft:chest_78")
+  local T = surveyorOnTop(62, 140, 40, 4)
+  local lowest = math.huge
+  bootTurtle(T)
+  local ok = runUntil(function()
+    lowest = math.min(lowest, T.fuel)
+    return T.files["surveyor.state"] and T.files["surveyor.state"]:find("done")
+  end, 400000)
+  check(ok, "the survey finished")
+  check(T.x == 140 and T.y == 1 and T.z == 40, ("back on the computer (%d,%d,%d)"):format(T.x, T.y, T.z))
+  check(homeAt("minecraft:chest_78") ~= nil, "registered the home")
+  check(lowest > 0, "never ran dry: lowest fuel " .. lowest)
+  check((T.files["surveyor.log"] or ""):find("stop exploring"), "said it stopped exploring for fuel")
+end
+
+print("scenario: stranded away from its start: 'surveyor survey' refuses, 'surveyor home' brings it back")
+do
+  W.set(200, 0, 40, "computercraft:computer_advanced")
+  local T = newTurtleEntity(63, 203, 1, 40, 1) -- 3 east of its start, facing east
+  T.fuel = 100
+  for _, name in ipairs(manifest.turtle) do T.files[name] = repoFile(name) end
+  T.files["agent.cfg"] = ser({ role = "surveyor", base = 0 })
+  T.inv[2] = { name = "minecraft:compass", count = 1 }
+  T.files["surveyor.state"] = ser({ pos = { x = 3, y = 0, z = 0 }, heading = 1, steps = 50, stranded = true, homes = {} })
+  T.files["surveyor.map"] = ser({ ["0,0,0"] = false, ["1,0,0"] = false, ["2,0,0"] = false, ["3,0,0"] = false })
+  local env = turtleEnv(T)
+  local co = coroutine.create(function() env.shell.run("surveyor", "survey") end)
+  scheduler.cos[#scheduler.cos + 1] = { T = T, co = co }
+  runUntil(function() return coroutine.status(co) == "dead" end, 2000)
+  check(T.x == 203 and (T.files["surveyor.state"] or ""):find("stranded"), "'surveyor survey' refused: map and state kept")
+  co = coroutine.create(function() env.shell.run("surveyor", "home") end)
+  scheduler.cos[#scheduler.cos + 1] = { T = T, co = co }
+  runUntil(function() return coroutine.status(co) == "dead" end, 20000)
+  check(T.x == 200 and T.y == 1 and T.z == 40, ("'surveyor home' took it back (%d,%d,%d)"):format(T.x, T.y, T.z))
+  check((T.files["surveyor.state"] or ""):find("done") and not T.files["surveyor.state"]:find("stranded"), "and marked the survey done")
 end
 
 print("scenario: a surveyor with no fuel and nothing to burn says so and waits")
