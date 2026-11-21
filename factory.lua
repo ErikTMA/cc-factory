@@ -689,6 +689,27 @@ local function handleAssembler(F, from, msg)
     if dm.state == "coming" then return { type = "collect", id = dm.id } end
     return { type = "ok" } -- (no new builds while one is being taken apart)
   end
+  -- it fits a pickaxe itself (to pick up dismantled turtles): deliver one
+  -- when it has none and a free side, and isn't busy
+  if msg.state == "equipped" then
+    clearAssembler(F, from) -- (anything left over)
+    return { type = "ok" }
+  end
+  -- (builds first: only while no order waits, which may need that pickaxe)
+  if msg.state == "idle" and msg.pickaxe == false and not F.craft and not activeOrder(F) then
+    if msg.freeSide then
+      if (usableStock(F)["minecraft:diamond_pickaxe"] or 0) > 0 then
+        local ok = stage(F, from, { ["minecraft:diamond_pickaxe"] = 1 })
+        if ok then
+          F.note = "The assembler fits a diamond pickaxe (to pick up dismantled turtles)"
+          return { type = "equip" }
+        end
+      end
+    elseif not F.warnedPickaxe then
+      F.warnedPickaxe = true
+      F.note = "Assembler: no free upgrade side for a pickaxe (DISMANTLE needs one)"
+    end
+  end
   -- a craft job in flight
   local c = F.craft
   if c and c.assembler == from then

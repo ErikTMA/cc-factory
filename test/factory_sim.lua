@@ -536,6 +536,8 @@ local function turtleApi(T)
   function api.dropDown(n) return drop("down", n) end
   function api.getFuelLevel() return T.fuel end
   function api.getFuelLimit() return 20000 end
+  function api.getEquippedLeft() return T.left and { name = T.left, count = 1 } or nil end
+  function api.getEquippedRight() return T.right and { name = T.right, count = 1 } or nil end
   function api.select(i) T.sel = i; return true end
   function api.getItemCount(i) return T.inv[i] and T.inv[i].count or 0 end
   function api.getItemDetail(i) local s = T.inv[i]; return s and { name = s.name, count = s.count } or nil end
@@ -830,7 +832,8 @@ for _, p in ipairs(stockParts) do W.inv["minecraft:barrel_0"].insert(p[1], p[2])
 scheduler.nextId = 2
 local A = newTurtleEntity(1, 0, 0, 0, 0)
 A.left = "minecraft:crafting_table" -- and no wireless modem: it talks over the wired one
-A.right = "minecraft:diamond_pickaxe" -- to pick up turtles taken apart on the build spot
+-- (no pickaxe yet: the base delivers one from storage and it fits it itself)
+W.inv["minecraft:barrel_0"].insert("minecraft:diamond_pickaxe", 1)
 for _, name in ipairs(manifest.turtle) do A.files[name] = repoFile(name) end
 A.files["agent.cfg"] = ser({ role = "assembler", base = 0 })
 
@@ -890,6 +893,8 @@ local aLeft = 0
 for _ in pairs(A.inv) do aLeft = aLeft + 1 end
 check(aLeft == 0, "assembler inventory empty")
 check(W.get(0, 0, -1) == nil, "build spot free again")
+local fitted = runUntil(function() return A.right == "minecraft:diamond_pickaxe" or A.left == "minecraft:diamond_pickaxe" end, 20000)
+check(fitted, "the assembler fitted a pickaxe from storage itself, after the build")
 
 print("scenario: every monitor tab renders with live data")
 do

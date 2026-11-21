@@ -3,8 +3,9 @@
 -- The turtle: an advanced turtle with a crafting table, touching a wired
 -- modem on the base's network that is ENABLED (right-click it with the
 -- assembler in place: the base then reaches the assembler's inventory). Its
--- other upgrade: a DIAMOND PICKAXE, to pick up turtles that are taken apart
--- on the build spot (or a wireless modem, without that).
+-- other side: leave it empty and it fits a DIAMOND PICKAXE from storage
+-- itself (to pick up turtles taken apart on the build spot), or put a
+-- wireless modem there (then it can't).
 -- Layout:
 --   the wired modem behind it, under it or on top of it
 --   build spot directly IN FRONT of it, kept empty
@@ -38,10 +39,42 @@ local function inventory()
   return inv
 end
 
+-- Its upgrades (CC 1.120.2: turtle.getEquippedLeft/Right): does it have a
+-- pickaxe (to pick up dismantled turtles), and a free side to fit one?
+local function equipped(side)
+  local d = (side == "left" and turtle.getEquippedLeft or turtle.getEquippedRight)()
+  return d and d.name
+end
+local function hasPickaxe()
+  return tostring(equipped("left")):find("pickaxe") ~= nil or tostring(equipped("right")):find("pickaxe") ~= nil
+end
+local function freeSide()
+  if not equipped("left") then return "left" end
+  if not equipped("right") then return "right" end
+end
+
 local function talk(state, extra)
   extra = extra or {}
   extra.inv = inventory()
+  extra.pickaxe, extra.freeSide = hasPickaxe(), freeSide() ~= nil
   return link.talk(state, extra)
+end
+
+-- The base delivered a pickaxe: fit it on the free side.
+local function equipPickaxe()
+  local side = freeSide()
+  if not side then return false, "no free upgrade side for the pickaxe" end
+  for i = 1, 16 do
+    local d = turtle.getItemDetail(i)
+    if d and d.name:find("pickaxe") then
+      turtle.select(i)
+      local ok = (side == "left" and turtle.equipLeft or turtle.equipRight)()
+      turtle.select(1)
+      if ok and hasPickaxe() then return true end
+      return false, "could not fit the pickaxe"
+    end
+  end
+  return false, "no pickaxe was delivered"
 end
 
 local function nonGridEmpty()
@@ -271,6 +304,10 @@ while true do
     elseif r.type == "place" then
       ok, why = placeTurtle()
       state, extra = "placed", { order = r.order }
+    elseif r.type == "equip" then
+      ok, why = equipPickaxe()
+      state, extra = "equipped", {}
+      if ok then log("Fitted a pickaxe (to pick up dismantled turtles)") end
     elseif r.type == "collect" then
       ok, why = collect(r)
       state, extra = "collected", { dismantle = r.id }
