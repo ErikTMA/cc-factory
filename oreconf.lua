@@ -1,6 +1,6 @@
--- Shared by the turtle (oreminer.lua) and the base computer (base.lua).
--- Copy this file onto both.
-return {
+-- Shared by the base and every turtle: protocol, ore presets, items, and how
+-- turtles are built.
+local C = {
   -- rednet protocol name
   PROTOCOL = "oreminer",
 
@@ -14,10 +14,62 @@ return {
   },
 
   -- The turtle keeps a wireless modem in its inventory and swaps it with the
-  -- Geo Scanner only while it is home, to talk to the base.
+  -- Geo Scanner or compass only while it is home, to talk to the base.
   MODEM_ITEMS = {
     ["computercraft:wireless_modem_normal"] = true,
     ["computercraft:wireless_modem_advanced"] = true,
   },
   SCANNER_ITEM = "advancedperipherals:geo_scanner",
 }
+
+-- ------------------------------------------------------------- building --
+-- Crafting grid cells in a turtle's inventory (slots 1-3, 5-7, 9-11).
+C.GRID_CELLS = { 1, 2, 3, 5, 6, 7, 9, 10, 11 }
+
+local GOLD, REDSTONE, PANE = "minecraft:gold_ingot", "minecraft:redstone", "minecraft:glass_pane"
+local COMPUTER, TURTLE = "computercraft:computer_advanced", "computercraft:turtle_advanced"
+
+-- What each kind of turtle is made of. "@sapling" is replaced by the base's
+-- configured sapling. Loadout is handed to the new turtle in this order, so a
+-- forester's saplings land in slot 1.
+C.ROLES = {
+  miner = {
+    upgrades = { "minecraft:diamond_pickaxe", C.SCANNER_ITEM },
+    loadout = { { "computercraft:wireless_modem_normal", 1 }, { "minecraft:coal", 32 } },
+  },
+  forester = {
+    upgrades = { "minecraft:diamond_pickaxe", "minecraft:compass" },
+    loadout = { { "@sapling", 16 }, { "computercraft:wireless_modem_normal", 1 }, { "minecraft:coal", 16 } },
+  },
+}
+
+-- The assembler's crafting steps for a role. Each step: `grid` = items the base
+-- delivers, by cell; `keep` = the previous result already in its cell;
+-- `select` = the cell the result lands in.
+function C.buildSteps(role)
+  local up = C.ROLES[role].upgrades
+  return {
+    { grid = { [1] = GOLD, [2] = GOLD, [3] = GOLD, [5] = GOLD, [6] = REDSTONE, [7] = GOLD,
+               [9] = GOLD, [10] = PANE, [11] = GOLD },
+      select = 6, result = COMPUTER },
+    { grid = { [1] = GOLD, [2] = GOLD, [3] = GOLD, [5] = GOLD, [7] = GOLD,
+               [9] = GOLD, [10] = "minecraft:chest", [11] = GOLD },
+      keep = { [6] = COMPUTER }, select = 2, result = TURTLE },
+    { grid = { [1] = up[1], [3] = up[2] }, keep = { [2] = TURTLE }, select = 2, result = TURTLE },
+  }
+end
+
+-- Every item (and count) the base needs in storage to build one turtle.
+function C.parts(role, sapling)
+  local need = {}
+  for _, step in ipairs(C.buildSteps(role)) do
+    for _, item in pairs(step.grid) do need[item] = (need[item] or 0) + 1 end
+  end
+  for _, l in ipairs(C.ROLES[role].loadout) do
+    local item = l[1] == "@sapling" and sapling or l[1]
+    need[item] = (need[item] or 0) + l[2]
+  end
+  return need
+end
+
+return C

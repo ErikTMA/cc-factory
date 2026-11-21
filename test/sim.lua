@@ -3,9 +3,11 @@
 local PROGRAM = arg[1] or "../oreminer.lua"
 local DIR = PROGRAM:match("^(.*)/[^/]*$") or "."
 local function readAll(path) return assert(io.open(path)):read("*a") end
-local BASE_SRC = readAll(os.getenv("BASE") or (DIR .. "/base.lua"))
+local BASE_SRC = readAll(DIR .. "/base.lua")
+local FACTORY_SRC = readAll(os.getenv("FACTORY") or (DIR .. "/factory.lua"))
+MODULES_EXTRA = { factory = FACTORY_SRC }
 local MODULES = { oreconf = readAll(DIR .. "/oreconf.lua"), tmove = readAll(DIR .. "/tmove.lua"),
-                  link = readAll(DIR .. "/link.lua") }
+                  link = readAll(DIR .. "/link.lua"), nav = readAll(DIR .. "/nav.lua") }
 
 -- yield to the scheduler when running as one of several coroutines
 local function yieldIfCo()
@@ -182,7 +184,8 @@ local function makeEnv(T, api, scanner, files, bus, id)
                           epoch = function() return (bus and bus.clock or 0) * 1000 end },
                         { __index = os })
   env.require = function(name)
-    return assert(load(assert(MODULES[name], name), name, "t", env))()
+    local src = MODULES[name] or MODULES_EXTRA[name]
+    return assert(load(assert(src, name), name, "t", env))()
   end
   env.colors = setmetatable({}, { __index = function(_, k) return k end })
   env.rednet = {
@@ -230,9 +233,29 @@ end
 
 local src = assert(io.open(PROGRAM)):read("*a")
 
+-- The base's dispatcher (factory.lua) with fake storage and the bus clock,
+-- wrapped in the small API the scenarios use.
 local function loadBase(files, bus)
   local env = makeEnv(nil, nil, nil, files, bus, nil)
-  return assert(load(BASE_SRC, "base", "t", env))("--lib")
+  local factory = assert(load(FACTORY_SRC, "factory", "t", env))()
+  local UI = assert(load(BASE_SRC, "base", "t", env))("--lib")
+  local Base = setmetatable({}, { __index = factory })
+  function Base.new()
+    local cfg = {}
+    for k, v in pairs(factory.DEFAULT_CONFIG) do cfg[k] = v end
+    cfg.job = { lanes = 3, length = 64 }
+    local stock = {}
+    local F = factory.new(cfg, {
+      now = function() return bus.clock end,
+      storage = { kind = "fake", list = function() return stock end, drainInputs = function() return 0 end,
+                  supply = function() return nil end, store = function() return 0 end, send = function() return 0 end },
+      writeInstall = function() end,
+    })
+    return F
+  end
+  function Base.handleMessage(F, from, msg) return factory.handle(F, from, msg) end
+  function Base.draw(F, out) local ui = { F = F, tab = "TURTLES", buttons = {} }; UI.draw(ui, out) end
+  return Base
 end
 
 local function runProgram(env, ...)
@@ -451,7 +474,7 @@ do
   local W = newWorld(21, 0, { span = 70, ymin = -40, ymax = 6 })
   local homes = { { x = 0, z = 0, h = 0 }, { x = 3, z = 0, h = 0 }, { x = 6, z = 0, h = 0 } }
   local B, fleet, maxBusy, screen = runFleet(W, homes, function(Base, B)
-    B.sel.lanes, B.sel.length = 2, 32
+    B.cfg.job = { lanes = 2, length = 32 }
     Base.selectOre(B, "iron"); B.sel.y = -20; B.sel.qty = 3 -- 32
     Base.start(B); Base.start(B)
     Base.selectOre(B, "diamond"); B.sel.y = -20; B.sel.qty = 1 -- 8
@@ -479,7 +502,7 @@ do
   local joined = table.concat({ table.unpack and table.unpack(screen) or unpack(screen) }, "\n")
   local text = ""
   for i = 1, 40 do text = text .. (screen[i] or "") .. "\n" end
-  check(text:find("iron: 64 mined") ~= nil, "monitor shows iron total")
+  check(text:find("iron%s+64 mined") ~= nil, "monitor shows iron total")
   check(text:find("T1") and text:find("T2") and text:find("T3"), "monitor lists all three turtles")
 end
 

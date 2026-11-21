@@ -26,6 +26,7 @@
 
 local tmove = require("tmove")
 local link = require("link")
+local nav = require("nav")
 
 local CFG = {
   trees = 6,
@@ -42,7 +43,6 @@ local CFG = {
 -- CC puts dug items into the selected slot first, so the turtle works with slot
 -- 3 selected and only selects slot 1 or 2 to place from them.
 local SAPLING_SLOT, BONEMEAL_SLOT, WORK_SLOT = 1, 2, 3
-local HEADINGS = { north = 0, east = 1, south = 2, west = 3 }
 
 -- Persisted: { sapling, trees, wait, lane (absolute heading of the lane),
 --   face (0 out along the lane, 1 right, 2 back home, 3 left),
@@ -67,11 +67,7 @@ local function load()
 end
 
 -- Absolute heading from the compass upgrade, or nil without one.
-local function compassHeading()
-  local c = peripheral.find("compass")
-  if not c then return nil end
-  return HEADINGS[tostring(c.getFacing()):lower()]
-end
+local compassHeading = nav.compass
 
 -- ------------------------------------------------------------- blocks --
 local function hasTag(b, tag)

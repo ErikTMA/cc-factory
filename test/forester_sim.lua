@@ -5,7 +5,7 @@ local PROGRAM = arg[1] or "../forester.lua"
 local SRC = assert(io.open(PROGRAM)):read("*a")
 local DIR = PROGRAM:match("^(.*)/[^/]*$") or "."
 local MODULES = {}
-for _, m in ipairs({ "tmove", "link", "oreconf" }) do
+for _, m in ipairs({ "tmove", "link", "oreconf", "nav" }) do
   MODULES[m] = assert(io.open(DIR .. "/" .. m .. ".lua")):read("*a")
 end
 
