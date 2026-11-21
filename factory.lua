@@ -773,8 +773,9 @@ function M.deliverFuel(F, from, need)
   local S = F.deps.storage
   local name = S.findTurtle and S.findTurtle(from)
   if not name then
-    F.note = ("%s wants fuel but isn't on the network (enable the modem next to it)"):format(label(F, from))
-    return { type = "nofuel", reason = "not on the network: right-click the modem next to me" }
+    F.note = ("%s wants fuel but isn't on the network: its modem is off"):format(label(F, from))
+    return { type = "nofuel", reason = "my modem is off: right-click it; if only I touch it, it switches "
+      .. "off whenever I leave, so put a barrel or chest against it too" }
   end
   local stock = S.list()
   local given = 0

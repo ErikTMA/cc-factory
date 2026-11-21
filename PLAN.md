@@ -55,6 +55,13 @@ over rednet. Friends-only server: base-ID pinning, no signing.
   computer/turtle block entity, and `TurtleBlockEntity implements
   BasicContainer`, so a turtle on the wired network (`turtle_N`, `getID()`)
   takes items pushed from a barrel.
+- `WiredModemFullBlockEntity` (1.120.2): on a neighbour change it re-attaches
+  peripherals only while it is ON (`isPeripheralOn`), then sets ON = "any
+  peripheral attached". So a full modem whose only neighbour is a turtle turns
+  OFF when the turtle leaves and stays off when it returns; one that also
+  touches a chest/barrel stays on and re-attaches the returning turtle by
+  itself. A home's turtle modem needs a second neighbour (the home chest, or
+  a barrel) for fuel on request; talking (rednet) works either way.
 
 ## Assembly procedure (base stages, assembler crafts)
 
@@ -178,8 +185,6 @@ Each tested fix was proven by mutation (scenario fails without it).
 - Rednet message size of a full code update (~55 KB in one message).
 - Orientation of a turtle placed by the assembler (code measures it anyway).
 - Base event loop under real tick costs (not simulated).
-- A turtle arriving next to an already-enabled full modem gets shared as
-  `turtle_N` without right-clicking again (fuel on request depends on it).
 - `pushItems` from a remote barrel into a turtle next to the base computer
   with no modem (assumed NOT to work; fuel on request asks for a modem).
 

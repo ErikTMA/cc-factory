@@ -79,7 +79,11 @@ then says the block is connected. A modem that isn't lit does nothing.
 - **Fuel on request:** a turtle low on fuel asks the base, and the base pushes
   charcoal (then coal, then tiny) from storage straight into it. That only works
   while the turtle touches a **wired modem that is enabled** (right-click it
-  while the turtle is there: the chat says the turtle is connected). Miners
+  while the turtle is there: the chat says the turtle is connected). A modem
+  switches itself **off** when the last block it connects goes away, and a
+  turtle leaving counts: so the turtle's modem must touch something else too,
+  like its home chest or a barrel (which just becomes extra storage); then it
+  stays on and reconnects the turtle every time it comes home. Miners
   ask at home, foresters after a round, the surveyor makes a trip to the
   nearest modem it knows.
 
