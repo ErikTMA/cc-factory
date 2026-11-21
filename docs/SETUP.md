@@ -33,7 +33,6 @@ then says the block is connected. A modem that isn't lit does nothing.
   |---|---|
   | barrel | storage |
   | chest (plain) | a turtle's home chest: emptied into storage every 10 s |
-  | trapped chest | the assembler's supply chest |
   | furnace / blast furnace | smelting |
   | disk drive with a floppy | the installer disk |
 
@@ -145,11 +144,13 @@ Use the chat fallback for those (step 8).
 
 ![Assembler and build spot, seen from the side](img/assembler-side.svg)
 
-- An advanced turtle with a **crafting table** and a **wireless modem**,
-  facing the **build spot** (keep it empty). A **trapped chest** goes on top of
-  the assembler and a **disk drive with a floppy** goes **under the build
-  spot**: never next to the assembler. Install it with
-  `bootstrap.lua assembler`.
+- An advanced turtle with a **crafting table**, facing the **build spot** (keep
+  it empty), touching a **wired modem** on the base's network (behind it, under
+  it or on top). **Right-click that modem with the assembler in place**: the
+  base then pushes the parts straight into the assembler and takes the results
+  back out, so no chest is needed. A wireless modem is optional. A **disk
+  drive with a floppy** goes **under the build spot**: never next to the
+  assembler. Install it with `bootstrap.lua assembler`.
 - Set a fleet target in `factory.cfg`, e.g. `fleet = { miner = 3 }`, and give
   each new turtle a home (step 5, or `homes` in `factory.cfg`).
 - The base then crafts every part from storage, the assembler builds the

@@ -1,7 +1,7 @@
 -- End-to-end harness: the whole factory with the real code everywhere.
 --
 -- Base: factory.lua + storage.lua + dist.lua over a fake peripheral network
--- (barrels, a turtle home chest, the trapped supply chest, the installer disk
+-- (barrels, a turtle home chest, the assembler on a wired modem, the installer disk
 -- drive). Assembler: assembler.lua on a crafty turtle that crafts the way CC
 -- does (only the 3x3 window may hold items). New turtles boot like CC: from the
 -- disk under the build spot if it has a startup file, else their own
@@ -207,6 +207,25 @@ local function baseNetwork()
       local n = math.min(limit or s.count, s.count)
       local moved = to.insert(s.name, n, toSlot)
       I.take(slot, moved)
+      return moved
+    elseif method == "pullItems" then
+      -- from an inventory or a networked turtle, by slot, into this one
+      local fromName, slot, limit, toSlot = a[1], a[2], a[3], a[4]
+      local FT = netTurtle(fromName)
+      if FT then
+        local st = FT.inv[slot]
+        if not st then return 0 end
+        local moved = I.insert(st.name, math.min(limit or st.count, st.count), toSlot)
+        st.count = st.count - moved
+        if st.count <= 0 then FT.inv[slot] = nil end
+        return moved
+      end
+      local from = W.inv[fromName]
+      if not from then error("pullItems: no inventory " .. tostring(fromName)) end
+      local st = from.slots[slot]
+      if not st then return 0 end
+      local moved = I.insert(st.name, math.min(limit or st.count, st.count), toSlot)
+      from.take(slot, moved)
       return moved
     end
     error("unknown method " .. method)
@@ -732,10 +751,10 @@ for x = -12, 24 do for z = -30, 12 do
     W.set(x, y, z, b)
   end
 end end
--- assembler at (0,0,0) facing north; build spot (0,0,-1); drive under it;
--- supply trapped chest above the assembler
+-- assembler at (0,0,0) facing north on a wired modem (0,-1,0): the base fills
+-- and empties it over the network; build spot (0,0,-1); drive under it
 W.set(0, -1, -1, "computercraft:disk_drive")
-newInv("minecraft:trapped_chest_0", 0, 1, 0)
+W.set(0, -1, 0, "computercraft:wired_modem_full")
 -- storage barrels (no position needed: only reached over the network)
 newInv("minecraft:barrel_0"); newInv("minecraft:barrel_1")
 -- the miner home slot: 4 east of the build spot, facing north, chest behind it
@@ -753,7 +772,7 @@ for _, p in ipairs(stockParts) do W.inv["minecraft:barrel_0"].insert(p[1], p[2])
 -- the assembler turtle, installed by hand (as you would do the very first one)
 scheduler.nextId = 2
 local A = newTurtleEntity(1, 0, 0, 0, 0)
-A.left, A.right = "minecraft:crafting_table", "computercraft:wireless_modem_normal"
+A.left = "minecraft:crafting_table" -- and no wireless modem: it talks over the wired one
 for _, name in ipairs(manifest.turtle) do A.files[name] = repoFile(name) end
 A.files["agent.cfg"] = ser({ role = "assembler", base = 0 })
 
@@ -809,9 +828,6 @@ check((stock()["minecraft:raw_iron"] or 0) >= 6, "raw iron drained into storage:
 check(W.inv["minecraft:chest_0"].count("minecraft:raw_iron") == 0, "home chest emptied by the base")
 check(stock()["minecraft:gold_ingot"] == 40 - 14, "14 gold used: " .. tostring(stock()["minecraft:gold_ingot"]))
 check(stock()["advancedperipherals:geo_scanner"] == nil, "geo scanner used")
-local supplyLeft = 0
-for _ in pairs(W.inv["minecraft:trapped_chest_0"].slots) do supplyLeft = supplyLeft + 1 end
-check(supplyLeft == 0, "supply chest empty after the build")
 local aLeft = 0
 for _ in pairs(A.inv) do aLeft = aLeft + 1 end
 check(aLeft == 0, "assembler inventory empty")
@@ -1142,8 +1158,8 @@ end
 print("scenario: the monitor shows what is on the network; a queued build can be removed")
 do
   local d = storage.devices(net)
-  check(#d.storage == 2 and #d.supply == 1 and #d.furnace == 3 and #d.drive == 1 and #d.input >= 3,
-    ("devices: barrels %d supply %d furnaces %d drives %d home chests %d"):format(#d.storage, #d.supply, #d.furnace, #d.drive, #d.input))
+  check(#d.storage == 2 and #d.furnace == 3 and #d.drive == 1 and #d.input >= 3,
+    ("devices: barrels %d furnaces %d drives %d home chests %d"):format(#d.storage, #d.furnace, #d.drive, #d.input))
   local UIlib = assert(load(baseFiles["base.lua"], "base", "t", baseEnv))("--lib")
   local screen = {}
   local mon = { getSize = function() return 70, 60 end, clear = function() end,
@@ -1157,7 +1173,7 @@ do
   check(text:find("NETWORK") and text:find("barrels 2") and text:find("furnaces 3"), "FACTORY tab lists the network")
   check(not text:find("No storage"), "no warning when there are barrels")
   check(text:find("assembler %d") and text:find("surveyor%s+%d"), "FLEET lists assemblers and surveyors")
-  ui.devices = { storage = {}, input = { "minecraft:chest_9" }, supply = {}, furnace = {}, drive = {}, bridge = {}, other = {} }
+  ui.devices = { storage = {}, input = { "minecraft:chest_9" }, furnace = {}, drive = {}, bridge = {}, other = {} }
   screen = {}
   UIlib.draw(ui, mon)
   text = ""

@@ -385,15 +385,42 @@ function M.orderTurtle(F, role, manual)
   return o
 end
 
--- Empty the supply chest into storage, then deliver `items` ({[item]=n}).
-local function stage(F, items)
+-- The assembler's inventory. The base fills it and empties it over the wired
+-- network (the assembler must touch an enabled wired modem): items go straight
+-- in, the assembler sorts them into its crafting grid, and whatever it should
+-- not keep is pulled back into storage by slot. It reports its slots
+-- ({[slot] = item}) with every status (a turtle can't be listed remotely).
+local NOT_ON_NET = "the assembler isn't on the network: right-click the wired modem it touches"
+
+-- Pull every reported slot of the assembler back into storage, except `keep`
+-- ({[slot] = true}).
+local function clearAssembler(F, from, keep)
   local S = F.deps.storage
-  local supply = S.supply()
-  if not supply then return false, "no supply chest (trapped chest) on the network" end
-  S.store(supply)
-  for item, n in pairs(items) do
+  local name = S.findTurtle and S.findTurtle(from)
+  if not name then return false, NOT_ON_NET end
+  local t = F.turtles[from] or {}
+  local left = {}
+  for slot, item in pairs(t.inv or {}) do
+    if keep and keep[slot] then left[slot] = item else S.takeFrom(name, slot, item) end
+  end
+  t.inv = left -- until its next report
+  return true
+end
+
+-- Deliver `items` ({[item]=n}) into the assembler, after pulling out what it
+-- holds except the `keep` cells.
+local function stage(F, from, items, keep)
+  local ok, why = clearAssembler(F, from, keep)
+  if not ok then return false, why end
+  local S = F.deps.storage
+  local name = S.findTurtle(from)
+  local names = {}
+  for item in pairs(items) do names[#names + 1] = item end
+  table.sort(names)
+  for _, item in ipairs(names) do
+    local n = items[item]
     local accept = item:find("pickaxe") and usableTool or nil
-    local moved = S.send(supply, item, n, accept)
+    local moved = S.send(name, item, n, accept)
     if moved < n then return false, ("only %d of %d %s in storage"):format(moved, n, item) end
   end
   return true
@@ -416,8 +443,7 @@ local function failOrder(F, o, why)
   o.state, o.reason, F.lastFail = "failed", why, now(F)
   F.failStreak = (F.failStreak or 0) + 1
   homes.release(F, "order:" .. o.id) -- free its home slot
-  local supply = F.deps.storage.supply()
-  if supply then F.deps.storage.store(supply) end
+  if o.assembler then clearAssembler(F, o.assembler) end
   F.note = ("Build #%d failed: %s"):format(o.id, why)
 end
 
@@ -464,7 +490,7 @@ local function startCraft(F, from)
     items[item] = (items[item] or 0) + n
     if not select or cell < select then select = cell end
   end
-  local ok, why = stage(F, items)
+  local ok, why = stage(F, from, items)
   if not ok then
     F.note = "Craft " .. job.item .. ": " .. why
     F.craftPauseUntil = now(F) + CRAFT_PAUSE
@@ -480,8 +506,7 @@ end
 
 local function endCraft(F, made)
   local c = F.craft
-  local supply = F.deps.storage.supply()
-  if supply then F.deps.storage.store(supply) end
+  if c and c.assembler then clearAssembler(F, c.assembler) end
   if made and c then F.crafted[c.item] = (F.crafted[c.item] or 0) + made end
   F.craft = nil
 end
@@ -495,8 +520,19 @@ local function handleAssembler(F, from, msg)
   local c = F.craft
   if c and c.assembler == from then
     c.lastSeen = now(F)
-    if msg.state == "crafted" and msg.craft == c.id then
-      endCraft(F, msg.made or (c.sets * 1))
+    if msg.state == "crafting" and msg.craft == c.id then
+      -- a hammer round done: take its dust out (crafting needs every slot
+      -- outside the grid empty), keep the hammer and ore in their cells
+      if msg.round and msg.round ~= c.round then
+        c.round, c.made = msg.round, (c.made or 0) + (msg.made or 0)
+      end
+      local keep = {}
+      for cell in pairs(c.reply.grid) do keep[cell] = true end
+      local ok, why = clearAssembler(F, from, keep)
+      if not ok then F.note = "Craft " .. c.item .. ": " .. why end
+      return { type = "continue", craft = c.id }
+    elseif msg.state == "crafted" and msg.craft == c.id then
+      endCraft(F, (c.made or 0) + (msg.made or 0))
       return { type = "ok" }
     elseif msg.state == "failed" then
       F.note = "Craft " .. c.item .. " failed: " .. tostring(msg.reason)
@@ -512,6 +548,10 @@ local function handleAssembler(F, from, msg)
   if o and o.state == "building" and o.assembler == from then o.lastSeen = now(F) end
   if msg.state == "failed" and o and o.state == "building" and o.assembler == from then
     failOrder(F, o, msg.reason or "assembler failed")
+    return { type = "ok" }
+  end
+  if msg.state == "failed" then -- (a restart, nothing running): empty it
+    clearAssembler(F, from)
     return { type = "ok" }
   end
   if msg.state == "idle" and o and o.state == "building" and o.assembler == from and o.lastReply then
@@ -541,7 +581,7 @@ handleAssemblerStep = function(F, from, msg, o)
                   host = o.role == "gps" and { x = home.x, y = home.y, z = home.z } or nil }
     F.deps.writeInstall(copy(o.install))
     local steps = C.buildSteps(o.role)
-    local ok, why = stage(F, stepItems(steps[1]))
+    local ok, why = stage(F, from, stepItems(steps[1]))
     if not ok then failOrder(F, o, why); return { type = "ok" } end
     F.note = ("Building a %s turtle (#%d)"):format(o.role, o.id)
     return stepReply(o, steps[1], 1)
@@ -551,7 +591,9 @@ handleAssemblerStep = function(F, from, msg, o)
   if msg.state == "crafted" and msg.step == o.step then
     if o.step < #steps then
       o.step = o.step + 1
-      local ok, why = stage(F, stepItems(steps[o.step]))
+      local keep = {}
+      for cell in pairs(steps[o.step].keep or {}) do keep[cell] = true end
+      local ok, why = stage(F, from, stepItems(steps[o.step]), keep)
       if not ok then failOrder(F, o, why); return { type = "abort" } end
       return stepReply(o, steps[o.step], o.step)
     end
@@ -567,7 +609,7 @@ handleAssemblerStep = function(F, from, msg, o)
         list[#list + 1] = { item, l[2] }
       end
     end
-    local ok, why = stage(F, items)
+    local ok, why = stage(F, from, items)
     if not ok then failOrder(F, o, why); return { type = "abort" } end
     o.step = "loadout"
     return { type = "loadout", order = o.id, items = list }
@@ -652,7 +694,8 @@ function M.handle(F, from, msg)
   F.turtles[from] = { id = from, label = msg.label, role = msg.role or prev.role or "miner",
                       state = msg.state, fuel = msg.fuel, mined = msg.mined or 0,
                       job = msg.job, seen = now(F), version = msg.version,
-                      delivered = msg.total or prev.delivered }
+                      delivered = msg.total or prev.delivered,
+                      inv = msg.inv or prev.inv } -- (the assembler's slots)
   local t = F.turtles[from]
   local reply = { type = "ok" }
 

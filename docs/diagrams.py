@@ -116,11 +116,11 @@ def base_top():
         (COL["computer"], "base computer"), (COL["monitor"], "advanced monitor"),
         (COL["modem"], "wired modem"), (COL["cable"], "network cable"),
         (COL["barrel"], "barrels: storage"), (COL["furnace"], "furnaces (optional)"),
-        (COL["chest"], "chests: turtle homes"), (COL["trapped"], "trapped chest: supply"),
+        (COL["chest"], "chests: turtle homes"),
         (COL["turtle"], "turtle (arrow = facing)"), (COL["drive"], "disk drive + floppy"),
     ], note=[
         "Everything with a wired modem joins the network; the base sorts blocks by type:",
-        "barrels = storage, plain chests = turtle homes (drained), trapped chest = assembler supply.",
+        "barrels = storage, plain chests = turtle homes (drained), furnaces smelt.",
         "Right-click each modem once so its red ring lights up (connects the block to the network).",
     ])
     s.block(0, 0, COL["monitor"], "monitor", stroke=COL["computer"], w=3)
@@ -147,24 +147,23 @@ def base_top():
 
 
 def assembler_side():
-    s = Svg(8, 6, "Assembler and build spot, seen from the side", legend=[
-        (COL["turtle"], "assembler (crafting table + modem)"), (COL["trapped"], "supply: trapped chest"),
-        (COL["drive"], "disk drive + floppy"), (COL["modem"], "wired modem"),
+    s = Svg(8, 3, "Assembler and build spot, seen from the side", legend=[
+        (COL["turtle"], "assembler (crafting table)"),
+        (COL["drive"], "disk drive + floppy"), (COL["modem"], "wired modem (enabled)"),
     ], note=[
         "The assembler faces the build spot. Keep the build spot empty: new turtles appear there.",
-        "The disk drive goes UNDER the build spot, never next to the assembler",
-        "(a computer boots from an attached disk). Base, supply chest and drive share the network.",
+        "Its wired modem is enabled (right-click it): the base pushes parts straight into the",
+        "assembler and takes results back. The disk drive goes UNDER the build spot.",
     ])
-    s.ground(5, 0, 8)
-    s.block(2, 3, COL["trapped"], "supply")
-    s.turtle(2, 4, "right", "assembler")
-    s.block(3, 4, COL["air"], "build\nspot", stroke=COL["accent"], dashed=True, text=COL["accent"])
-    s.block(3, 5, COL["drive"], "disk\ndrive", text=COL["text"])
-    s.modem(4, 5, "")
-    s.modem(1, 3, "")
-    s.cable([(1, 3), (0, 3)]); s.cable([(4, 5), (6, 5)])
-    s.label(0, 2.7, "to the base network", COL["muted"], 11)
-    s.label(5.2, 4.75, "to the base network", COL["muted"], 11)
+    s.ground(2, 0, 8)
+    s.modem(1, 1, "")
+    s.turtle(2, 1, "right", "assembler")
+    s.block(3, 1, COL["air"], "build\nspot", stroke=COL["accent"], dashed=True, text=COL["accent"])
+    s.block(3, 2, COL["drive"], "disk\ndrive", text=COL["text"])
+    s.modem(4, 2, "")
+    s.cable([(1, 1), (0, 1)]); s.cable([(4, 2), (6, 2)])
+    s.label(0, 0.7, "to the base network", COL["muted"], 11)
+    s.label(5.2, 1.75, "to the base network", COL["muted"], 11)
     s.render("assembler-side.svg")
 
 

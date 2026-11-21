@@ -58,11 +58,16 @@ over rednet. Friends-only server: base-ID pinning, no signing.
 
 ## Assembly procedure (base stages, assembler crafts)
 
-Supply trapped chest above the assembler; build spot in front of it with the
-installer disk drive under the build spot. Per step the base empties the supply
-chest into storage and pushes exactly that step's parts into supply slots
-1..k, in ascending grid-cell order; the assembler selects each cell and
-`suckUp(1)`s. Grid cells = slots 1,2,3,5,6,7,9,10,11.
+The assembler touches an enabled wired modem (it is `turtle_N` on the
+network); build spot in front of it with the installer disk drive under the
+build spot. Per step the base pulls back what the assembler holds (by slot,
+from the slot list in its status; `pullItems` from a turtle works like
+`pushItems` into one) except the kept cells, then pushes exactly that step's
+parts in; the assembler sorts them into its grid. Hammer rounds: after each
+craft the assembler reports "crafting", the base pulls the dust out (crafting
+needs the non-grid slots empty) and says "continue". (Until 2026-11-21 a
+trapped supply chest above the assembler did this.) Grid cells = slots
+1,2,3,5,6,7,9,10,11.
 
 1. computer: G G G / G R G / G P G, select cell 6, craft -> computer stays in 6
 2. turtle: G G G / G [6] G / G chest G (cell 6 already holds the computer),
@@ -77,7 +82,7 @@ chest into storage and pushes exactly that step's parts into supply slots
 Base computer: wireless modem (turtles) + wired modem network with
 - **barrels** = storage (or an ME/RS bridge, if present, replaces them)
 - **chests** = input: turtle home chests, drained into storage
-- **trapped chest** = assembler supply (above the assembler)
+- **assembler** = a turtle on the network (enabled modem): the base fills and empties it
 - **disk drive** = installer disk, under the build spot (in front of the assembler)
 
 ## Distribution

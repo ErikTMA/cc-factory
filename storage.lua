@@ -6,7 +6,6 @@
 --   chests         input (turtle home chests); drained into storage. Only the
 --                  plain vanilla chest, so players' modded chests on the same
 --                  network are left alone.
---   trapped chest  the assembler's supply chest (vanilla trapped chest)
 --   furnaces       vanilla furnaces and blast furnaces, run by production.lua
 -- If an AE2 ME Bridge or Refined Storage RS Bridge is on the network it becomes
 -- the storage instead of the barrels.
@@ -22,7 +21,8 @@
 --   storeSlot(name, slot)         -> moved   (one slot of an inventory -> storage)
 --   store(fromName)               -> moved   (everything in an inventory -> storage)
 --   drainInputs()                 -> moved   (all input chests -> storage)
---   supply()                      -> name of the supply chest, or nil
+--   takeFrom(name, slot, item)    -> moved   (one slot of a turtle -> storage)
+--   findTurtle(id)                -> network name of the turtle with that ID, or nil
 --   inputs()                      -> names of the input (home) chests
 --   kind                          "barrels" | "me_bridge" | "rs_bridge"
 
@@ -30,7 +30,6 @@ local M = {}
 
 function M.classify(name)
   if name:find("^minecraft:furnace_%d+$") or name:find("^minecraft:blast_furnace_%d+$") then return "furnace" end
-  if name:find("^minecraft:trapped_chest_%d+$") then return "supply" end
   if name:find("^minecraft:chest_%d+$") then return "input" end
   if name:find("barrel") then return "storage" end
   return nil
@@ -47,7 +46,6 @@ end
 
 local function base(api)
   local S = {}
-  function S.supply() return inventories(api, "supply")[1] end
   function S.inputs() return inventories(api, "input") end
   function S.furnaces()
     local out = {}
@@ -130,6 +128,20 @@ local function chests(api)
     return storeOne(fromName, slot, it.count, inventories(api, "storage"))
   end
 
+  -- Pull one slot of an inventory that can't be listed (a turtle) back into
+  -- storage. `item` is unused here (pullItems works by slot).
+  function S.takeFrom(fromName, slot)
+    local moved = 0
+    for _, t in ipairs(inventories(api, "storage")) do
+      local n
+      repeat
+        n = api.call(t, "pullItems", fromName, slot)
+        moved = moved + n
+      until n == 0
+    end
+    return moved
+  end
+
   function S.countWhere(item, accept)
     local n = 0
     for _, inv in ipairs(inventories(api, "storage")) do
@@ -180,6 +192,11 @@ local function bridge(api, name, kind)
     return moved
   end
 
+  -- (a bridge imports by item, not by slot)
+  function S.takeFrom(fromName, slot, item)
+    return tonumber(api.call(name, "importItem", { name = item }, fromName)) or 0
+  end
+
   function S.countWhere(item) return S.count(item) end -- bridges: no item details
 
   function S.craft(item, count)
@@ -190,12 +207,12 @@ local function bridge(api, name, kind)
 end
 
 -- What the base sees on its wired network, grouped by what it uses it for:
--- { storage = {...}, input = {...}, supply = {...}, furnace = {...},
+-- { storage = {...}, input = {...}, furnace = {...},
 --   drive = {...}, bridge = {...}, other = {...} } (peripheral names).
 -- The computer's own sides (left, top...) are not network devices.
 local SIDES = { left = true, right = true, top = true, bottom = true, front = true, back = true }
 function M.devices(api)
-  local d = { storage = {}, input = {}, supply = {}, furnace = {}, drive = {}, bridge = {}, other = {} }
+  local d = { storage = {}, input = {}, furnace = {}, drive = {}, bridge = {}, other = {} }
   for _, n in ipairs(api.getNames()) do
     if not SIDES[n] then
       local class = M.classify(n)

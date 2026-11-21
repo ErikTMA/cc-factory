@@ -106,19 +106,19 @@ them apart by block type, nothing to configure:
 |---|---|
 | **barrels** | storage (or an AE2 **ME Bridge** / RS **RS Bridge** instead) |
 | **chests** | turtle home chests: the base drains them into storage every 10 s |
-| **trapped chest** | the assembler's supply chest |
 | **disk drive** (with a floppy) | the installer disk, under the build spot |
 
 ## Building turtles automatically
 
 ```
-        [trapped chest]          <- supply chest (wired to the base)
-        [  assembler  ] -> [build spot]   (keep empty)
-                           [disk drive]   <- under the build spot, with a floppy
+[modem] [  assembler  ] -> [build spot]   (keep empty)
+   ^                       [disk drive]   <- under the build spot, with a floppy
+   enabled wired modem: the base pushes parts into the assembler and takes results back
 ```
 
-- The assembler faces the build spot. The disk drive must be **under the build
-  spot**, not next to the assembler (a computer boots from an attached disk).
+- The assembler (crafting table upgrade) faces the build spot and touches an
+  enabled wired modem. The disk drive must be **under the build spot**, not
+  next to the assembler (a computer boots from an attached disk).
 - Put the parts in storage. Per turtle: 14 gold ingots, 1 redstone, 1 glass
   pane, 1 chest, 1 diamond pickaxe, a Geo Scanner (miner) or compass
   (forester), 1 wireless modem, coal (and 16 saplings for a forester).

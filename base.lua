@@ -5,9 +5,10 @@
 --   wireless modem            talks to turtles
 --   advanced monitor          touch screen (else the terminal; mouse works)
 --   wired modem network       barrels (storage) or an ME/RS bridge, chests
---                             (turtle home chests, drained into storage), the
---                             trapped supply chest above the assembler, and the
---                             installer disk drive under the build spot
+--                             (turtle home chests, drained into storage),
+--                             furnaces, the assembler (its modem enabled: the
+--                             base fills and empties it) and the installer
+--                             disk drive under the build spot
 -- Settings live in /factory.cfg (written with defaults on first start; edit it
 -- with `edit factory.cfg`, then restart the base).
 --
@@ -115,16 +116,20 @@ local function drawFactory(UI, out, w, row)
     row = row + 1
     put(out, 1, row, "NETWORK", colors.yellow)
     row = row + 1
-    local summary = ("barrels %d  home chests %d  supply %d  furnaces %d  disk drive %d")
-      :format(#d.storage, #d.input, #d.supply, #d.furnace, #d.drive)
+    local turtles = 0
+    for _, n in ipairs(d.other) do if n:find("^turtle_") then turtles = turtles + 1 end end
+    local summary = ("barrels %d  home chests %d  furnaces %d  disk drive %d  turtles %d")
+      :format(#d.storage, #d.input, #d.furnace, #d.drive, turtles)
     put(out, 1, row, summary:sub(1, w), colors.lightGray)
     row = row + 1
     if #d.storage == 0 and #d.bridge == 0 then
       put(out, 1, row, ("No storage! Add barrels with a wired modem (chests are turtle homes)."):sub(1, w), colors.red)
       row = row + 1
     end
-    if #d.other > 0 then
-      put(out, 1, row, ("not used: " .. table.concat(d.other, ", ")):sub(1, w), colors.gray)
+    local unused = {}
+    for _, n in ipairs(d.other) do if not n:find("^turtle_") then unused[#unused + 1] = n end end
+    if #unused > 0 then
+      put(out, 1, row, ("not used: " .. table.concat(unused, ", ")):sub(1, w), colors.gray)
       row = row + 1
     end
   end
@@ -270,12 +275,13 @@ end
 if args[1] == "probe" then
   -- check a storage bridge's export/import argument order on the real thing
   local S = storage.open(peripheral)
-  print("storage: " .. S.kind .. ", supply chest: " .. tostring(S.supply()))
+  local chest = S.inputs()[1]
+  print("storage: " .. S.kind .. ", test chest: " .. tostring(chest))
   local stock = S.list()
   local item = next(stock)
-  if not item or not S.supply() then print("need one item in storage and a supply chest"); return end
-  print("export 1 " .. item .. " -> supply: " .. tostring(S.send(S.supply(), item, 1)))
-  print("import supply -> storage: " .. tostring(S.store(S.supply())))
+  if not item or not chest then print("need one item in storage and a home chest (plain chest)"); return end
+  print("export 1 " .. item .. " -> chest: " .. tostring(S.send(chest, item, 1)))
+  print("import chest -> storage: " .. tostring(S.store(chest)))
   return
 end
 
