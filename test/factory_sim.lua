@@ -225,7 +225,7 @@ local function baseNetwork()
     elseif method == "getItemDetail" then
       local st = I.slots[a[1]]
       return st and { name = st.name, count = st.count, damage = st.damage or 0, enchantments = st.enchantments,
-                      nbt = st.nbt } or nil
+                      nbt = st.nbt, displayName = st.displayName } or nil
     elseif method == "pushItems" then
       local to, slot, limit, toSlot = W.inv[a[1]], a[2], a[3], a[4]
       local s = I.slots[slot]
@@ -1036,9 +1036,13 @@ do
   W.set(10, 0, -2, "computercraft:wired_modem_full")
   local B = W.inv["minecraft:barrel_1"]
   local function freeSlot() for i = 1, B.size do if not B.slots[i] then return i end end end
-  -- the upgraded one first: a careless pick would take it
-  B.slots[freeSlot()] = { name = "computercraft:turtle_advanced", count = 1, nbt = "UPGRADED" } -- someone's mining turtle
-  B.slots[freeSlot()] = { name = "computercraft:turtle_advanced", count = 1 }                   -- plain, fresh
+  -- the upgraded and the labelled one first: a careless pick would take them
+  B.slots[freeSlot()] = { name = "computercraft:turtle_advanced", count = 1, nbt = "UPGRADED",
+                          displayName = "Advanced Mining Turtle" }                               -- someone's mining turtle
+  B.slots[freeSlot()] = { name = "computercraft:turtle_advanced", count = 1, nbt = "LABEL",
+                          displayName = "Bob" }                                                  -- a labelled one
+  B.slots[freeSlot()] = { name = "computercraft:turtle_advanced", count = 1, nbt = "OLD-ID-7",
+                          displayName = "Advanced Turtle" }                                      -- stripped, used before
   B.insert("minecraft:diamond_pickaxe", 1); B.insert("advancedperipherals:geo_scanner", 1); B.insert("minecraft:coal", 32)
   B.insert("minecraft:gold_ingot", 20); B.insert("minecraft:redstone", 2); B.insert("minecraft:glass_pane", 2)
   B.insert("minecraft:chest", 2) -- (enough to build from scratch too)
@@ -1052,13 +1056,15 @@ do
   check(goldBefore >= 20 and (stock()["minecraft:gold_ingot"] or 0) == goldBefore,
     ("no gold used: %d before, %d after"):format(goldBefore, stock()["minecraft:gold_ingot"] or 0))
   check((F.crafted["computercraft:computer_advanced"] or 0) == computersBefore, "no computer crafted")
-  local upgradedLeft = false
-  for _, I in pairs(W.inv) do for _, st in pairs(I.slots) do if st.nbt == "UPGRADED" then upgradedLeft = true end end end
-  check(upgradedLeft, "the upgraded turtle is still in storage")
+  local left = {}
+  for _, I in pairs(W.inv) do for _, st in pairs(I.slots) do if st.nbt then left[st.nbt] = true end end end
+  check(left.UPGRADED and left.LABEL, "the upgraded and the labelled turtle are still in storage")
+  check(not left["OLD-ID-7"], "the stripped, used one (plain name) was the one used")
   -- a fresh computer in storage (and no plain turtle): start at the body step,
   -- with the computer delivered into its cell like the other parts
   local B2 = W.inv["minecraft:barrel_0"]
   B2.insert("computercraft:computer_advanced", 1)
+  for _, st in pairs(B2.slots) do if st.name == "computercraft:computer_advanced" then st.displayName = "Advanced Computer" end end
   local Cf = baseEnv.require("oreconf")
   local first = Cf.buildSteps("miner", factory.startFor(F, "miner"))[1]
   check(factory.startFor(F, "miner") == 2 and first.grid[6] == "computercraft:computer_advanced" and not first.keep,

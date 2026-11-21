@@ -203,9 +203,10 @@ Each tested fix was proven by mutation (scenario fails without it).
   (LuaConverter). Check live what a fresh turtle's entry looks like and that
   `exportItem` with a filter takes that exact stack; then the AE2-style
   shortcut can work with a bridge too (today: barrels only).
-- A freshly crafted plain turtle/computer item has no `nbt` in getItemDetail
-  (the AE2-style shortcut only uses items without it; if fresh items do carry
-  some, the shortcut just never fires).
+- The AE2-style shortcut takes turtles/computers by displayName (CC en_us:
+  "Advanced Turtle"; upgraded "Advanced %s Turtle"; a label replaces it) or
+  the untranslated key. Check live that getItemDetail's displayName on the
+  dedicated server is the translated name (if not, the key matches).
 - `pushItems` from a remote barrel into a turtle next to the base computer
   with no modem (assumed NOT to work; fuel on request asks for a modem).
 

@@ -175,10 +175,12 @@ Use the chat fallback for those (step 8).
   each new turtle a home (step 5, or `homes` in `factory.cfg`).
 - The base then crafts every part from storage, the assembler builds the
   turtle, and it installs itself from the disk, flies home and starts working.
-  Like AE2, it uses what is already made: a fresh **plain advanced turtle**
-  in storage only gets its upgrades fitted, a fresh **advanced computer**
-  skips the computer step. (Only fresh ones: an upgraded turtle or a computer
-  that was in use carries data and is left alone. For now this needs barrel
+  Like AE2, it uses what is already made: a **plain advanced turtle** in
+  storage only gets its upgrades fitted, a plain **advanced computer** skips
+  the computer step. Plain = its name is just "Advanced Turtle" / "Advanced
+  Computer": a turtle you took the upgrades off counts (it is reinstalled),
+  an upgraded one ("Advanced Mining Turtle") or a labelled one doesn't, so
+  label a turtle to keep the factory's hands off it. (For now this needs barrel
   storage: with an ME/RS bridge it isn't verified yet that the base can pick
   the fresh one, so it builds from scratch there.)
   Raw inputs it needs: raw ores, diamonds, redstone, coal, cobblestone, sand,

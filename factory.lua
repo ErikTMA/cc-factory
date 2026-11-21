@@ -344,18 +344,29 @@ end
 -- Turtle upgrades must be undamaged and unenchanted, or crafting them on fails.
 local function usableTool(d) return (d.damage or 0) == 0 and not (d.enchantments and next(d.enchantments)) end
 
--- A computer or turtle item with no extra data (no `nbt`): fresh from the
--- crafting grid. An upgraded turtle or a used computer (its ID) has some.
-local function isComputerItem(item) return item:find("^computercraft:computer_") or item:find("^computercraft:turtle_") end
-local function fresh(d) return d.nbt == nil end
-
--- How the base picks stacks it hands over: usable tools, fresh computers.
-local function acceptFor(item)
-  if item:find("pickaxe") then return usableTool end
-  if isComputerItem(item) then return fresh end
+-- A computer or turtle item that is PLAIN: its name is the plain name (CC
+-- en_us: "Advanced Turtle", "Advanced Computer"...). Upgrades change the name
+-- ("Advanced Mining Turtle") and a label replaces it, so an upgraded or
+-- labelled turtle is never taken; a stripped, unlabelled one is (its old
+-- computer ID doesn't matter: the installer disk overwrites files and role).
+-- The untranslated key counts too, in case the server doesn't translate.
+local PLAIN = {
+  ["computercraft:turtle_advanced"] = "Advanced Turtle", ["computercraft:turtle_normal"] = "Turtle",
+  ["computercraft:computer_advanced"] = "Advanced Computer", ["computercraft:computer_normal"] = "Computer",
+}
+local function plain(item)
+  return function(d)
+    return d.displayName == PLAIN[item] or d.displayName == "block." .. item:gsub(":", ".")
+  end
 end
 
--- Storage contents, counting only usable tools and fresh computers/turtles
+-- How the base picks stacks it hands over: usable tools, plain computers.
+local function acceptFor(item)
+  if item:find("pickaxe") then return usableTool end
+  if PLAIN[item] then return plain(item) end
+end
+
+-- Storage contents, counting only usable tools and plain computers/turtles
 -- (with a bridge, fresh computers/turtles aren't counted yet: see
 -- storage.lua's bridge countWhere).
 local function usableStock(F)
@@ -371,8 +382,8 @@ local function usableStock(F)
 end
 
 -- AE2-style: the build step to start at for `role`, by what is in storage: a
--- fresh plain turtle of its tier skips to the upgrades (3), a fresh computer
--- to the body (2), else from the start (1).
+-- plain turtle of its tier skips to the upgrades (3), a plain computer to the
+-- body (2), else from the start (1).
 local function startFor(F, role, stock)
   stock = stock or usableStock(F)
   local all = C.allBuildSteps(role)
