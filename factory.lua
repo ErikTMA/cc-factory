@@ -361,6 +361,21 @@ function M.installData(F)
   return { role = "miner" }
 end
 
+-- Cancel a queued order, or clear a failed one from the list (monitor tap).
+function M.cancelOrder(F, id)
+  for i, o in ipairs(F.orders) do
+    if o.id == id then
+      if o.state == "building" then F.note = ("Build #%d is in progress"):format(id); return end
+      if o.state == "queued" or o.state == "failed" then
+        table.remove(F.orders, i)
+        homes.release(F, "order:" .. id)
+        F.note = ("Build #%d removed"):format(id)
+      end
+      return
+    end
+  end
+end
+
 function M.orderTurtle(F, role, manual)
   if manual then F.failStreak = 0 end
   local o = { id = F.nextOrderId, role = role, state = "queued", step = 0 }

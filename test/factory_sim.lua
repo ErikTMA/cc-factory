@@ -1072,6 +1072,35 @@ do
   check(factory.chatCommand(F2, "alex", "hello") == nil, "ordinary chat is ignored")
 end
 
+print("scenario: the monitor shows what is on the network; a queued build can be removed")
+do
+  local d = storage.devices(net)
+  check(#d.storage == 2 and #d.supply == 1 and #d.furnace == 3 and #d.drive == 1 and #d.input >= 3,
+    ("devices: barrels %d supply %d furnaces %d drives %d home chests %d"):format(#d.storage, #d.supply, #d.furnace, #d.drive, #d.input))
+  local UIlib = assert(load(baseFiles["base.lua"], "base", "t", baseEnv))("--lib")
+  local screen = {}
+  local mon = { getSize = function() return 70, 60 end, clear = function() end,
+                setCursorPos = function(_, y) screen.y = y end, setTextColor = function() end,
+                setBackgroundColor = function() end,
+                write = function(t) screen[screen.y] = (screen[screen.y] or "") .. t end }
+  local ui = { F = F, tab = "FACTORY", buttons = {}, devices = d }
+  UIlib.draw(ui, mon)
+  local text = ""
+  for i = 1, 60 do text = text .. (screen[i] or "") .. "\n" end
+  check(text:find("NETWORK") and text:find("barrels 2") and text:find("furnaces 3"), "FACTORY tab lists the network")
+  check(not text:find("No storage"), "no warning when there are barrels")
+  ui.devices = { storage = {}, input = { "minecraft:chest_9" }, supply = {}, furnace = {}, drive = {}, bridge = {}, other = {} }
+  screen = {}
+  UIlib.draw(ui, mon)
+  text = ""
+  for i = 1, 60 do text = text .. (screen[i] or "") .. "\n" end
+  check(text:find("No storage"), "warns when there are no barrels")
+  local o = factory.orderTurtle(F, "forester", true)
+  local n = #F.orders
+  factory.cancelOrder(F, o.id)
+  check(#F.orders == n - 1, "a queued build is removed")
+end
+
 print("scenario: the installer leaves turtles that aren't on the build spot alone")
 do
   local T = newTurtleEntity(99, 10, 0, 5, 0) -- somewhere else, sees the disk over the network

@@ -24,7 +24,7 @@
 --   drainInputs()                 -> moved   (all input chests -> storage)
 --   supply()                      -> name of the supply chest, or nil
 --   inputs()                      -> names of the input (home) chests
---   kind                          "chests" | "me_bridge" | "rs_bridge"
+--   kind                          "barrels" | "me_bridge" | "rs_bridge"
 
 local M = {}
 
@@ -69,7 +69,7 @@ end
 -- ---------------------------------------------------------------- chests --
 local function chests(api)
   local S = base(api)
-  S.kind = "chests"
+  S.kind = "barrels"
 
   function S.list()
     local total = {}
@@ -177,6 +177,29 @@ local function bridge(api, name, kind)
   end
 
   return S
+end
+
+-- What the base sees on its wired network, grouped by what it uses it for:
+-- { storage = {...}, input = {...}, supply = {...}, furnace = {...},
+--   drive = {...}, bridge = {...}, other = {...} } (peripheral names).
+-- The computer's own sides (left, top...) are not network devices.
+local SIDES = { left = true, right = true, top = true, bottom = true, front = true, back = true }
+function M.devices(api)
+  local d = { storage = {}, input = {}, supply = {}, furnace = {}, drive = {}, bridge = {}, other = {} }
+  for _, n in ipairs(api.getNames()) do
+    if not SIDES[n] then
+      local class = M.classify(n)
+      if class and not api.hasType(n, "inventory") then class = nil end
+      if not class then
+        if api.hasType(n, "drive") then class = "drive"
+        elseif api.hasType(n, "me_bridge") or api.hasType(n, "rs_bridge") then class = "bridge"
+        else class = "other" end
+      end
+      table.insert(d[class], n)
+    end
+  end
+  for _, list in pairs(d) do table.sort(list) end
+  return d
 end
 
 -- Pick the backend from what is on the network. `api` is CC's peripheral API

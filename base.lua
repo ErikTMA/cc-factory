@@ -109,6 +109,25 @@ local function drawFactory(UI, out, w, row)
     F.deps.dist and F.deps.dist.version or "none"), colors.lightGray)
   row = row + 1
   button(UI, out, w - 9, row - 1, 10, "UPDATE", false, function() UI.wantUpdate = true end)
+  -- what the base sees on its wired network
+  local d = UI.devices
+  if d then
+    row = row + 1
+    put(out, 1, row, "NETWORK", colors.yellow)
+    row = row + 1
+    local summary = ("barrels %d  home chests %d  supply %d  furnaces %d  disk drive %d")
+      :format(#d.storage, #d.input, #d.supply, #d.furnace, #d.drive)
+    put(out, 1, row, summary:sub(1, w), colors.lightGray)
+    row = row + 1
+    if #d.storage == 0 and #d.bridge == 0 then
+      put(out, 1, row, ("No storage! Add barrels with a wired modem (chests are turtle homes)."):sub(1, w), colors.red)
+      row = row + 1
+    end
+    if #d.other > 0 then
+      put(out, 1, row, ("not used: " .. table.concat(d.other, ", ")):sub(1, w), colors.gray)
+      row = row + 1
+    end
+  end
   row = row + 1
   put(out, 1, row, "PRODUCTION", colors.yellow)
   button(UI, out, w - 15, row, 16, "HAMMER " .. (F.hammer and "ON" or "OFF"), F.hammer,
@@ -165,8 +184,13 @@ local function drawFactory(UI, out, w, row)
   row = row + 1
   for i = math.max(1, #F.orders - 3), #F.orders do
     local o = F.orders[i]
-    put(out, 1, row, ("#%d %s: %s%s"):format(o.id, o.role, o.state,
-      o.reason and (" - " .. o.reason) or ""):sub(1, w), o.state == "failed" and colors.red or colors.lightGray)
+    local tap = (o.state == "queued" or o.state == "failed") and "  (tap: remove)" or ""
+    put(out, 1, row, ("#%d %s: %s%s%s"):format(o.id, o.role, o.state,
+      o.reason and (" - " .. o.reason) or "", tap):sub(1, w), o.state == "failed" and colors.red or colors.lightGray)
+    if tap ~= "" then
+      UI.buttons[#UI.buttons + 1] = { x1 = 1, x2 = w, y = row, label = "order " .. o.id,
+                                      action = function() factory.cancelOrder(F, o.id) end }
+    end
     row = row + 1
   end
   return row + 1
@@ -357,6 +381,8 @@ end
 
 local function ticker()
   while true do
+    local okd, devices = pcall(storage.devices, peripheral)
+    if okd then UI.devices = devices end
     local ok, stock = pcall(factory.tick, F)
     if ok then
       UI.stock = stock
