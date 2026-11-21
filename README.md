@@ -189,8 +189,9 @@ rules are about the drops: `raw_iron`, `raw_gold`, `raw_copper`, `diamond`,
 ## The monitor
 
 - **TURTLES**: every turtle (role, state, job, mined, fuel, last seen) and
-  what is being fetched per ore. Tap a turtle, then STOP to call it home, or
-  DISMANTLE to take it apart (parts and the plain turtle back into storage).
+  what is being fetched per ore. Tap a turtle, then STOP to call it home,
+  DISMANTLE to take it apart (parts and the plain turtle back into storage), or
+  FORGET to drop a turtle that will never report again (its home frees up).
 - **GATHERING > MINING**: pick an ore (sets its best Y), Y, quantity, "only
   <ore>" or "all ores", then START. Every press queues one job; idle miners
   take them.

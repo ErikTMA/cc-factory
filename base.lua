@@ -79,6 +79,7 @@ local function drawTurtles(UI, out, w, row)
     function() factory.stop(F) end)
   if F.selected then
     button(UI, out, 18, row, 12, "DISMANTLE", F.dismantle ~= nil, function() factory.dismantle(F) end)
+    button(UI, out, 31, row, 9, "FORGET", false, function() factory.forget(F) end)
   end
   return row + 2
 end

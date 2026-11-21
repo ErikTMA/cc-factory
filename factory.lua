@@ -286,6 +286,25 @@ function M.dismantle(F)
   F.note = ("%s will be taken apart at its next stop at home"):format(label(F, t.id))
 end
 
+-- TURTLES tab: forget the selected turtle (one that will never report again:
+-- picked up, broken, reused elsewhere). Its home is free again, a job it had
+-- goes back to the front of the queue. A turtle that is still around simply
+-- shows up again the next time it reports.
+function M.forget(F)
+  local id = F.selected
+  local t = id and F.turtles[id]
+  if not t then F.note = "Select a turtle first"; return end
+  if t.job and t.job.id and t.state ~= "idle" and t.state ~= "done" then
+    table.insert(F.queue, 1, t.job)
+  end
+  F.turtles[id] = nil
+  homes.release(F, id)
+  F.stopFor[id] = nil
+  if F.dismantle and F.dismantle.id == id then F.dismantle = nil end
+  F.selected = nil
+  F.note = ("Forgot %s"):format(t.label or ("#" .. id))
+end
+
 -- The dismantled turtle is gone: out of the fleet, its home free again.
 local function dismantled(F, id, how)
   F.note = ("%s %s"):format(label(F, id), how)

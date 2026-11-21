@@ -1589,6 +1589,22 @@ do
   check((T.files["surveyor.log"] or ""):find("out of reach"), "reports the buried sides as out of reach")
 end
 
+print("scenario: FORGET a turtle that will never report again: record gone, home free, job back")
+do
+  local h = factory.addHome(F, { x = 40, y = 0, z = 40, facing = "north", role = "miner", source = "cfg" })
+  h.owner = 99
+  local job = { id = 9999, only = "iron", y = 16, quantity = 8 }
+  F.turtles[99] = { id = 99, label = "miner-99", role = "miner", state = "mining", job = job, seen = W.clock }
+  F.stopFor[99] = true
+  F.selected = 99
+  factory.forget(F)
+  check(F.turtles[99] == nil and h.owner == nil and F.stopFor[99] == nil and F.selected == nil,
+    "record gone, its home free, no stop pending")
+  check(F.queue[1] and F.queue[1].id == 9999, "its job is back at the front of the queue")
+  table.remove(F.queue, 1)
+  factory.removeHome(F, h.id)
+end
+
 print("scenario: the home chest is a mailbox: a turtle claims it, the base keeps its supplies")
 print("          in it (selected saplings in equal amounts, bone meal, fuel) and empties the rest")
 do
