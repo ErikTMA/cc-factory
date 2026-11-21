@@ -54,7 +54,12 @@ if role then
   local files = {}
   for _, name in ipairs(manifest.turtle) do files["/" .. name] = raw(name) end
   for path, content in pairs(files) do write(path, content) end
-  local cfg = fs.exists("/agent.cfg") and textutils.unserialize(fs.open("/agent.cfg", "r").readAll()) or {}
+  local cfg = {}
+  if fs.exists("/agent.cfg") then
+    local h = fs.open("/agent.cfg", "r")
+    cfg = textutils.unserialize(h.readAll()) or {}
+    h.close()
+  end
   cfg.role = role
   write("/agent.cfg", textutils.serialize(cfg))
   print(("cc-factory %s installed as %s. Rebooting."):format(ref:sub(1, 12), role))

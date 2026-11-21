@@ -64,6 +64,20 @@ in slot 1 first.
 | Wireless Modem | 8 stone, 1 ender pearl |
 | Advanced Monitor ×4 | 8 gold ingot, 1 glass pane |
 
+## Wired or wireless
+
+Turtles only talk to the base while at home, so they don't need wireless
+modems (ender pearls):
+
+- **Wired:** put a wired modem next to each home spot, cabled to the base's
+  network. Miner: **in front** of the home spot (below is its shaft).
+  Forester: **below** it (in front is its tree lane). Assembler: below it.
+- **Wireless:** a wireless modem in the turtle's inventory; it swaps it in for
+  the Geo Scanner or compass while it talks. If storage has wireless modems,
+  newly built turtles get one; otherwise they rely on the wired modem.
+
+The base talks over every modem attached to it.
+
 ## The base's network
 
 Connect these to the base with **wired modems and cable**. The base tells
