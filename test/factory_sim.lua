@@ -133,6 +133,40 @@ local function newInv(name, x, y, z, size)
   return I
 end
 
+-- ------------------------------------------------------- wired modems --
+-- As strict as CC 1.120.2 (WiredModemFullBlockEntity): a full modem the player
+-- enabled stays on while it shares at least one peripheral; when the last one
+-- goes (a turtle leaving) it switches OFF and does not re-attach anything that
+-- arrives later. W.modemOff[key] records that.
+local SIX6 = { { 1, 0, 0 }, { -1, 0, 0 }, { 0, 1, 0 }, { 0, -1, 0 }, { 0, 0, 1 }, { 0, 0, -1 } }
+W.modemOff = {}
+local function isPeripheralBlock(b)
+  return b and (b:find("^computercraft:computer") or b:find("^computercraft:turtle") or b == "computercraft:disk_drive"
+    or b:find("chest") or b:find("barrel") or b:find("furnace")) and true or false
+end
+local function modemAt(x, y, z) return W.get(x, y, z) == "computercraft:wired_modem_full" end
+-- after a turtle left (x,y,z): modems next to it with nothing left to share go off
+local function turtleLeft(x, y, z)
+  for _, d in ipairs(SIX6) do
+    local mx, my, mz = x + d[1], y + d[2], z + d[3]
+    if modemAt(mx, my, mz) then
+      local any = false
+      for _, e in ipairs(SIX6) do
+        if isPeripheralBlock(W.get(mx + e[1], my + e[2], mz + e[3])) then any = true end
+      end
+      if not any then W.modemOff[mx .. "," .. my .. "," .. mz] = true end
+    end
+  end
+end
+-- is turtle T shared on the network (touching a modem that is on)?
+local function turtleShared(T)
+  for _, d in ipairs(SIX6) do
+    local mx, my, mz = T.x + d[1], T.y + d[2], T.z + d[3]
+    if modemAt(mx, my, mz) and not W.modemOff[mx .. "," .. my .. "," .. mz] then return true end
+  end
+  return false
+end
+
 -- ----------------------------------------------------- peripheral network --
 -- The base's view: every inventory plus the disk drive, by name.
 local DISK = {}
@@ -145,10 +179,7 @@ local function baseNetwork()
   local function netTurtle(name)
     local id = tonumber((name or ""):match("^turtle_(%d+)$"))
     local T = id and W.turtles[id]
-    if not T then return nil end
-    for _, d in ipairs({ { 1, 0, 0 }, { -1, 0, 0 }, { 0, 1, 0 }, { 0, -1, 0 }, { 0, 0, 1 }, { 0, 0, -1 } }) do
-      if W.get(T.x + d[1], T.y + d[2], T.z + d[3]) == "computercraft:wired_modem_full" then return T end
-    end
+    if T and turtleShared(T) then return T end
   end
   local function intoTurtle(T, item, n)
     local moved = 0
@@ -418,6 +449,7 @@ local function turtleApi(T)
   local function move(x, y, z)
     if W.get(x, y, z) or T.fuel < 1 then return false end
     W.set(T.x, T.y, T.z, nil)
+    turtleLeft(T.x, T.y, T.z)
     T.fuel = T.fuel - 1; T.x, T.y, T.z = x, y, z
     W.set(x, y, z, TURTLE_ITEM)
     yield()
@@ -1368,7 +1400,25 @@ do
   check(usedChar == math.min(charBefore, 7) and usedChar + usedCoal == 7,
     ("charcoal first, then coal: %d charcoal + %d coal for 500 asked"):format(usedChar, usedCoal))
   local T2 = asker(71, 310, 300, function(t) t.left = "computercraft:wireless_modem_normal" end)
-  check(T2.fuel == 5 and (T2.files["ask.out"] or ""):find("network"), "off the network: no fuel, and why: " .. tostring(T2.files["ask.out"]))
+  check(T2.fuel == 5 and (T2.files["ask.out"] or ""):find("modem is off"), "off the network: no fuel, and why: " .. tostring(T2.files["ask.out"]))
+end
+
+print("scenario: a modem that only touches a turtle goes off when it leaves; one with a barrel stays on")
+do
+  local function probe(id, x, withBarrel)
+    W.set(x, -1, 400, "computercraft:wired_modem_full")       -- under the turtle's home spot
+    if withBarrel then newInv("minecraft:barrel_" .. id, x + 1, -1, 400) end
+    local T = newTurtleEntity(id, x, 0, 400, 0)
+    T.fuel = 100
+    local api = turtleEnv(T).turtle
+    local before = storage.open(net).findTurtle(id) ~= nil
+    api.forward(); api.back()                                  -- leaves home and comes back
+    return before, storage.open(net).findTurtle(id) ~= nil
+  end
+  local b1, a1 = probe(80, 500, false)
+  check(b1 and not a1, "alone: on the network at first, off after it left and came back")
+  local b2, a2 = probe(81, 510, true)
+  check(b2 and a2, "with a barrel against the modem: still on when it comes back")
 end
 
 print("scenario: TINY FUEL: furnaces get one tiny coal per item (blast: per two); off: coal as before")
