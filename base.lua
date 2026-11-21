@@ -37,7 +37,9 @@ end
 local STATE_COLOR = { idle = colors.lightGray, done = colors.lightGray, resting = colors.lightGray,
                       assigned = colors.yellow, unloading = colors.cyan, new = colors.magenta }
 
-local TABS = { "TURTLES", "JOBS", "FACTORY" }
+-- GATHERING has a sub-tab per way of getting raw materials (farming next)
+local TABS = { "TURTLES", "GATHERING", "FACTORY" }
+local GATHERING = { "MINING", "FORESTRY" }
 
 local function drawTurtles(UI, out, w, row)
   local F = UI.F
@@ -99,8 +101,76 @@ local function drawJobs(UI, out, w, row)
   button(UI, out, 18, row, 14, "only " .. F.sel.ore, F.sel.onlyThis, function() factory.toggleOnly(F) end)
   button(UI, out, 33, row, 10, "all ores", not F.sel.onlyThis, function() factory.toggleOnly(F) end)
   row = row + 2
-  button(UI, out, 1, row, 16, ("START (%d queued)"):format(#F.queue), false, function() factory.start(F) end)
+  local startLabel = ("START (%d queued)"):format(#F.queue)
+  button(UI, out, 1, row, #startLabel + 2, startLabel, false, function() factory.start(F) end)
   return row + 2
+end
+
+local function shortName(item) return (item:gsub("^[%w_]+:", ""):gsub("_sapling$", ""):gsub("_propagule$", "")) end
+
+local function drawForestry(UI, out, w, row)
+  local F = UI.F
+  put(out, 1, row, "FORESTERS", colors.yellow)
+  row = row + 1
+  local n = 0
+  local ids = {}
+  for id, t in pairs(F.turtles) do if t.role == "forester" then ids[#ids + 1] = id end end
+  table.sort(ids)
+  for _, id in ipairs(ids) do
+    local t = F.turtles[id]
+    n = n + 1
+    local chest = t.chest and "" or "  (home chest not known yet: it tells the base when it unloads)"
+    put(out, 1, row, ("%-10s %-8s logs %d%s"):format(t.label or ("#" .. id), t.state or "?", t.delivered or 0, chest):sub(1, w),
+      t.chest and colors.lightGray or colors.orange)
+    row = row + 1
+  end
+  if n == 0 then put(out, 1, row, "none yet", colors.lightGray); row = row + 1 end
+  row = row + 1
+  -- what they plant: tap kinds to select; selected kinds take turns
+  local sel = {}
+  for _, k in ipairs(F.saplings or {}) do sel[k] = true end
+  local kinds, stock = {}, UI.stock or {}
+  local seen = {}
+  for item in pairs(stock) do if factory.isSaplingItem(item) and not seen[item] then seen[item] = true; kinds[#kinds + 1] = item end end
+  for item in pairs(sel) do if not seen[item] then seen[item] = true; kinds[#kinds + 1] = item end end
+  table.sort(kinds)
+  local auto = not next(sel)
+  put(out, 1, row, ("SAPLINGS (tap to select; %s)"):format(auto and "none = auto" or "they take turns"):sub(1, w),
+    colors.yellow)
+  row = row + 1
+  if auto then
+    put(out, 1, row, "auto: the kind storage has most of", colors.gray)
+    row = row + 1
+  end
+  if #kinds == 0 then put(out, 1, row, "no saplings in storage", colors.lightGray); row = row + 1 end
+  local x = 1
+  for _, item in ipairs(kinds) do
+    local label = ("%s %d"):format(shortName(item), stock[item] or 0)
+    local bw = #label + 2
+    if x + bw - 1 > w then x = 1; row = row + 1 end
+    button(UI, out, x, row, bw, label, sel[item] == true, function() factory.toggleSapling(F, item) end)
+    x = x + bw + 1
+  end
+  row = row + 2
+  button(UI, out, 1, row, 16, "BONE MEAL " .. (F.boneMeal and "ON" or "OFF"), F.boneMeal == true,
+    function() factory.toggleBoneMeal(F) end)
+  row = row + 2
+  local mb = F.cfg.mailbox or {}
+  put(out, 1, row, ("Home chest keeps: %d per kind, %d bone meal, %d fuel")
+    :format(mb.saplings or 0, F.boneMeal and (mb.bonemeal or 0) or 0, mb.fuel or 0):sub(1, w), colors.gray)
+  return row + 2
+end
+
+local function drawGathering(UI, out, w, row)
+  UI.sub = UI.sub or GATHERING[1]
+  local x = 1
+  for _, sub in ipairs(GATHERING) do
+    button(UI, out, x, row, #sub + 2, sub, UI.sub == sub, function() UI.sub = sub end)
+    x = x + #sub + 3
+  end
+  row = row + 2
+  if UI.sub == "FORESTRY" then return drawForestry(UI, out, w, row) end
+  return drawJobs(UI, out, w, row)
 end
 
 local function drawFactory(UI, out, w, row)
@@ -234,7 +304,7 @@ function M.draw(UI, out)
   end
   local row = 3
   if UI.tab == "TURTLES" then row = drawTurtles(UI, out, w, row)
-  elseif UI.tab == "JOBS" then row = drawJobs(UI, out, w, row)
+  elseif UI.tab == "GATHERING" then row = drawGathering(UI, out, w, row)
   else row = drawFactory(UI, out, w, row) end
   put(out, 1, h, UI.F.note:sub(1, w), colors.orange)
 end

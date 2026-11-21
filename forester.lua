@@ -25,12 +25,14 @@
 -- the pen is not closed it stops exploring and says so.
 --
 -- Each round it walks to every tree spot: plants empty ones, fells grown trees
--- (sideways branches too) and replants, then goes home, empties wood and drops
--- into the chest (keeping saplings, bone meal and a few logs for fuel) and
--- reports to the base.
+-- (sideways branches too) and replants, then goes home. The home chest is a
+-- mailbox: it first takes what the base put there for it (saplings, bone
+-- meal, fuel), then empties wood and drops into it (keeping saplings, bone
+-- meal, fuel and a few logs) and reports to the base.
 --
--- Slot 1 (top left): the saplings to plant; only that kind is planted, and
--- saplings it picks up go back to slot 1. Slot 2: optional bone meal.
+-- Saplings: it plants every kind it carries, taking turns (round-robin), so a
+-- mix of trees grows; the base says which kinds are selected on the monitor
+-- (others go back into the chest). Slot 2: bone meal.
 --
 -- Run: forester [wait] | forester rescan     (wait: seconds between rounds)
 
@@ -47,14 +49,16 @@ local CFG = {
   fuelLow = 300,       -- refuel from logs below this ...
   fuelTarget = 600,    -- ... up to this
   keepLogs = 16,       -- logs it keeps for fuel when unloading
+  keepSaplings = 64,   -- saplings it keeps of each kind when unloading
+  keepFuel = 64,       -- fuel items (charcoal...) it keeps when unloading
   boneMealTries = 8,   -- bone meal uses per sapling before giving up
   stateFile = "forester.state",
   areaFile = "forester.area",
 }
 
 -- CC puts dug items into the selected slot first, so the turtle works with slot
--- 3 selected and only selects slot 1 or 2 to place from them.
-local SAPLING_SLOT, BONEMEAL_SLOT, WORK_SLOT = 1, 2, 3
+-- 3 selected and only selects a sapling's slot or slot 2 (bone meal) to place.
+local BONEMEAL_SLOT, WORK_SLOT = 2, 3
 local DIRS = nav.DIRS -- [heading] = { dx, dy, dz }; 0 north, 1 east, 2 south, 3 west
 
 -- Persisted state: { sapling, wait, homeHeading, heading, pos = {x, z} (from
@@ -238,10 +242,16 @@ end
 -- ------------------------------------------------------------ inventory --
 local function select(slot) turtle.select(slot) end
 
--- Slot 1 holds our saplings and slot 2 bone meal; everything else is loot,
--- except the wireless modem and compass the base link swaps (link.lua).
+local function isSaplingItem(name) return name:find("sapling") ~= nil or name:find("propagule") ~= nil end
+
+-- the kinds the base selected (nil: any kind it carries)
+local function allowed(name) return not S.allowed or S.allowed[name] == true end
+
+-- Saplings it may plant (any slot) and bone meal in slot 2 are ours;
+-- everything else is loot, except the wireless modem and compass the base
+-- link swaps (link.lua).
 local function reserved(i, d)
-  return (i == SAPLING_SLOT and d.name == S.sapling)
+  return (i ~= BONEMEAL_SLOT and isSaplingItem(d.name) and allowed(d.name))
       or (i == BONEMEAL_SLOT and d.name == "minecraft:bone_meal")
 end
 
@@ -284,10 +294,9 @@ local function isSpotCell(x, z)
   return (x ~= 0 or z ~= 0) and x % CFG.spacing == 0 and z % CFG.spacing == 0
 end
 
--- Move anything that is not ours out of slots 1 and 2 (e.g. logs that landed
--- there while slot 1 was empty), into the first free loot slot.
+-- Move anything that is not bone meal out of slot 2, into a free loot slot.
 local function clearReservedSlots()
-  for _, i in ipairs({ SAPLING_SLOT, BONEMEAL_SLOT }) do
+  for _, i in ipairs({ BONEMEAL_SLOT }) do
     local d = turtle.getItemDetail(i)
     if d and not reserved(i, d) then
       select(i)
@@ -301,16 +310,33 @@ local function clearReservedSlots()
   select(WORK_SLOT)
 end
 
--- Keep slot 1 stocked with our saplings from anywhere in the inventory.
-local function restockSaplings()
+-- Bone meal from anywhere into slot 2.
+local function restock()
   clearReservedSlots()
-  for i = WORK_SLOT, 16 do
+  for i = 1, 16 do
     local d = turtle.getItemDetail(i)
-    if d and d.name == S.sapling then
-      select(i); turtle.transferTo(SAPLING_SLOT)
+    if i ~= BONEMEAL_SLOT and d and d.name == "minecraft:bone_meal" then
+      select(i); turtle.transferTo(BONEMEAL_SLOT)
     end
   end
   select(WORK_SLOT)
+end
+
+-- The slot of the next kind of sapling to plant: the kinds it carries take
+-- turns (round-robin), so no kind is planted only ever.
+local function nextSapling()
+  local kinds, slotOf = {}, {}
+  for i = 1, 16 do
+    local d = turtle.getItemDetail(i)
+    if d and reserved(i, d) and isSaplingItem(d.name) and not slotOf[d.name] then
+      kinds[#kinds + 1] = d.name
+      slotOf[d.name] = i
+    end
+  end
+  if #kinds == 0 then return nil end
+  table.sort(kinds)
+  S.turn = (S.turn or 0) + 1
+  return slotOf[kinds[(S.turn - 1) % #kinds + 1]]
 end
 
 local function refuel()
@@ -342,7 +368,7 @@ local function boneMeal()
     select(BONEMEAL_SLOT); turtle.place(); select(WORK_SLOT)
     local ok, b = turtle.inspect()
     if ok and isLog(b) then fell(true); return end
-    if not (ok and b.name == S.sapling) then return end
+    if not (ok and isSapling(b)) then return end
   end
 end
 
@@ -350,9 +376,10 @@ end
 -- after felling: otherwise one spot would grow, fell and replant in a loop
 -- until all the bone meal is gone.
 local function plant(withBoneMeal)
-  restockSaplings()
-  if turtle.getItemCount(SAPLING_SLOT) == 0 then return false end
-  select(SAPLING_SLOT)
+  restock()
+  local slot = nextSapling()
+  if not slot then return false end
+  select(slot)
   local ok = turtle.place()
   select(WORK_SLOT)
   if ok and withBoneMeal then boneMeal() end
@@ -404,7 +431,7 @@ local function tend()
     turtle.dig()
     turtle.suck()
     plant(true)
-  elseif b.name == S.sapling then
+  elseif isSapling(b) then
     boneMeal()
   end
 end
@@ -477,28 +504,27 @@ local function unload()
   if not (ok and b.name:find("chest")) then
     error("No chest behind me: I'm not where I think home is. Not unloading.", 0)
   end
-  clearReservedSlots()
-  local logsKept, delivered = 0, 0
+  link.takeSupplies()   -- what the base left for us (saplings, bone meal, fuel)
+  restock()
+  -- keep: saplings it may plant (CFG.keepSaplings of each), bone meal in
+  -- slot 2, fuel, a few logs, dirt; the rest goes into the chest
+  local kept, delivered = {}, 0
+  local function keepUpTo(i, d, n)
+    local k = math.min(d.count, math.max(0, n - (kept[d.name] or 0)))
+    kept[d.name] = (kept[d.name] or 0) + k
+    if d.count > k then select(i); turtle.drop(d.count - k) end
+    return d.count - k
+  end
   for i = 1, 16 do
     local d = turtle.getItemDetail(i)
-    if d and not keep(i, d) then
-      select(i)
-      if d.name == S.sapling then
-        turtle.transferTo(SAPLING_SLOT)
-        if turtle.getItemCount(i) > 0 then turtle.drop() end
-      elseif isLog(d) and logsKept < CFG.keepLogs then
-        local keepN = math.min(d.count, CFG.keepLogs - logsKept)
-        logsKept = logsKept + keepN
-        if d.count > keepN then
-          turtle.drop(d.count - keepN)
-          delivered = delivered + d.count - keepN
-        end
-      else
-        if isLog(d) then delivered = delivered + d.count end
-        turtle.drop()
-      end
+    if d and not (link.isKeptItem(d.name) or d.name == DIRT or (i == BONEMEAL_SLOT and d.name == "minecraft:bone_meal")) then
+      if isSaplingItem(d.name) and allowed(d.name) then keepUpTo(i, d, CFG.keepSaplings)
+      elseif isLog(d) then delivered = delivered + keepUpTo(i, d, CFG.keepLogs)
+      elseif C.isFuel(d.name) then keepUpTo(i, d, CFG.keepFuel)
+      else select(i); turtle.drop() end
     end
   end
+  link.claimChest() -- (once) tell the base which chest is ours: it fills it
   select(WORK_SLOT)
   turnTo(S.homeHeading)
   return delivered
@@ -563,7 +589,14 @@ local function round()
     local got, why = link.requestFuel(CFG.fuelTarget - f)
     log(got and ("The base gave me %d fuel"):format(got) or ("Low on fuel, none from the base: " .. tostring(why)))
   end
-  link.talk("resting", { delivered = delivered, total = S.delivered, sapling = S.sapling, needDirt = noSoil })
+  local r = link.talk("resting", { delivered = delivered, total = S.delivered, needDirt = noSoil })
+  -- the kinds selected on the monitor (false: any)
+  if type(r) == "table" and r.plant ~= nil then
+    local set
+    if r.plant then set = {}; for _, n in ipairs(r.plant) do set[n] = true end end
+    S.allowed = set
+    save()
+  end
 end
 
 -- ------------------------------------------------------------------- main --
@@ -581,7 +614,7 @@ if S then
   tmove.recover(S, save, applyMove)
   S.heading = nav.compass() or S.heading
   save()
-  log(("Resuming: %s"):format(S.sapling))
+  log("Resuming")
   if AREA then indexSpots() end
   -- an unfinished measurement: back home over the cells known so far, measure again
   if AREA and AREA.cells then
@@ -590,11 +623,12 @@ if S then
   end
   if not AREA or not AREA.done then AREA = nil end
 else
-  local d = turtle.getItemDetail(SAPLING_SLOT)
-  if not d then error("Put the saplings to plant in slot 1 (top left)", 0) end
   local h = nav.compass()
   if not h then log("No compass upgrade: it cannot re-check its facing after a restart.") end
-  S = { sapling = d.name, homeHeading = h or 0, heading = h or 0, pos = { x = 0, z = 0 }, up = 0 }
+  S = { homeHeading = h or 0, heading = h or 0, pos = { x = 0, z = 0 }, up = 0 }
+  local any = false
+  for i = 1, 16 do local d = turtle.getItemDetail(i); if d and isSaplingItem(d.name) then any = true end end
+  if not any then log("No saplings yet: the base puts them in the home chest (or give me some)") end
 end
 -- forester [wait] ; the agent passes "<trees> <wait>" (trees is not used any more)
 local nums = {}

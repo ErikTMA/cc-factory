@@ -22,7 +22,8 @@ M.QTY = { 8, 16, 32, 64, 128, 256, 0 } -- job sizes on the monitor; 0 = no limit
 
 local PERSIST = { "turtles", "queue", "nextJobId", "nextSector", "totals", "counted",
                   "orders", "nextOrderId", "homes", "nextHomeId", "buildSpot", "gpsWanted", "anchor", "ruleJobs", "lastFail", "failStreak",
-                  "hammer", "tinyFuel", "craft", "nextCraftId", "crafted" }
+                  "hammer", "tinyFuel", "craft", "nextCraftId", "crafted",
+                  "saplings", "boneMeal" }
 
 local CRAFT_PAUSE = 60      -- seconds without craft jobs after one failed
 
@@ -51,6 +52,10 @@ M.DEFAULT_CONFIG = {
     -- { item = "minecraft:raw_iron", min = 256, job = { only = "iron", y = 16, quantity = 64 } },
   },
   forester = { sapling = "minecraft:oak_sapling", trees = 6, wait = 300 },
+  -- what the base keeps in each home chest (the mailbox) for its turtle:
+  -- fuel items for every turtle; per selected sapling kind and bone meal
+  -- (GATHERING > FORESTRY on the monitor) for a forester
+  mailbox = { fuel = 16, saplings = 16, bonemeal = 32 },
   -- furnaces, crafting turtle parts, ore doubling (see production.lua)
   production = production.DEFAULTS,
   -- lanes per job; sectors reuse lanes from 0 after maxLanes (bounds how far
@@ -59,6 +64,12 @@ M.DEFAULT_CONFIG = {
   -- check GitHub every 30 minutes and update the base (and so all turtles)
   autoUpdate = true,
 }
+
+-- The sapling a new forester gets: the first kind selected on the monitor,
+-- else factory.cfg's forester.sapling.
+local function buildSapling(F)
+  return (F.saplings and F.saplings[1]) or F.cfg.forester.sapling
+end
 
 local function copy(t)
   if type(t) ~= "table" then return t end
@@ -347,7 +358,7 @@ end
 function M.missingParts(F, role)
   local missing = {}
   local stock = usableStock(F)
-  for item, n in pairs(C.parts(role, F.cfg.forester.sapling)) do
+  for item, n in pairs(C.parts(role, buildSapling(F))) do
     if (stock[item] or 0) < n then missing[item] = n - (stock[item] or 0) end
   end
   return missing
@@ -449,6 +460,91 @@ end
 
 -- The assembler's side of a build: it reports, we stage and say what's next.
 -- ------------------------------------------------------------- crafting --
+-- ------------------------------------------------------------ mailbox --
+local function isSaplingItem(name) return name:find("sapling") ~= nil or name:find("propagule") ~= nil end
+M.isSaplingItem = isSaplingItem
+
+-- GATHERING > FORESTRY: select/deselect a sapling kind; none selected = auto.
+function M.toggleSapling(F, item)
+  F.saplings = F.saplings or {}
+  for i, n in ipairs(F.saplings) do
+    if n == item then table.remove(F.saplings, i); return end
+  end
+  F.saplings[#F.saplings + 1] = item
+  table.sort(F.saplings)
+end
+
+function M.toggleBoneMeal(F)
+  F.boneMeal = not F.boneMeal
+  F.note = "Bone meal for foresters: " .. (F.boneMeal and "ON" or "OFF")
+end
+
+-- What the base keeps in a home chest for the turtle that lives there:
+-- { [item] = count }, or nil for a chest no turtle has claimed (emptied).
+-- Selected sapling kinds get the same amount each, so they alternate.
+function M.suppliesFor(F, chest, stock)
+  local t
+  for _, tt in pairs(F.turtles) do if tt.chest == chest then t = tt end end
+  if not t then return nil end
+  local mb = F.cfg.mailbox or M.DEFAULT_CONFIG.mailbox
+  local want = {}
+  for _, f in ipairs(C.FUEL_ORDER) do
+    if (stock[f] or 0) > 0 then want[f] = mb.fuel; break end
+  end
+  if t.role == "forester" then
+    local kinds = F.saplings or {}
+    if #kinds == 0 then -- auto: the kind storage has most of
+      local best
+      for item, n in pairs(stock) do
+        if isSaplingItem(item) and n > 0 and (not best or n > stock[best] or (n == stock[best] and item < best)) then
+          best = item
+        end
+      end
+      kinds = { best }
+    end
+    for _, k in ipairs(kinds) do want[k] = mb.saplings end
+    if F.boneMeal then want["minecraft:bone_meal"] = mb.bonemeal end
+  end
+  return want
+end
+
+-- Every 10 s: empty the home chests into storage, except the supplies kept
+-- for their turtles (up to the target), and top the supplies up.
+function M.serviceChests(F)
+  local S = F.deps.storage
+  local stock = S.list()
+  for _, name in ipairs(S.inputs and S.inputs() or {}) do
+    local want = M.suppliesFor(F, name, stock)
+    if not want then
+      S.store(name)
+    else
+      local kept, slots = {}, S.slots(name)
+      local order = {}
+      for slot in pairs(slots) do order[#order + 1] = slot end
+      table.sort(order)
+      for _, slot in ipairs(order) do
+        local it = slots[slot]
+        local n = want[it.name] or 0
+        if (kept[it.name] or 0) + it.count <= n then
+          kept[it.name] = (kept[it.name] or 0) + it.count
+        else
+          S.storeSlot(name, slot)
+        end
+      end
+      local items = {}
+      for item in pairs(want) do items[#items + 1] = item end
+      table.sort(items)
+      for _, item in ipairs(items) do
+        local short = want[item] - (kept[item] or 0)
+        if short > 0 and (stock[item] or 0) > 0 then
+          local moved = S.send(name, item, math.min(short, stock[item]))
+          stock[item] = stock[item] - moved
+        end
+      end
+    end
+  end
+end
+
 function M.toggleTinyFuel(F)
   F.tinyFuel = not F.tinyFuel
   F.note = "Furnaces on tiny coal (crafted from charcoal/coal): " .. (F.tinyFuel and "ON" or "OFF")
@@ -476,7 +572,7 @@ local function startCraft(F, from)
   local cfgp = F.cfg.production or {}
   if cfgp.enabled == false or now(F) < (F.craftPauseUntil or 0) then return nil end
   local stock = usableStock(F)
-  local wanted = production.wantedForFleet(shortRoles(F), F.cfg.forester.sapling)
+  local wanted = production.wantedForFleet(shortRoles(F), buildSapling(F))
   if F.tinyFuel then -- after the turtle parts: they matter more
     for _, w in ipairs(production.wantedTiny(stock, cfgp)) do wanted[#wanted + 1] = w end
   end
@@ -603,7 +699,7 @@ handleAssemblerStep = function(F, from, msg, o)
     local items, list = {}, {}
     local stock = F.deps.storage.list()
     for _, l in ipairs(C.ROLES[o.role].loadout) do
-      local item = l[1] == "@sapling" and F.cfg.forester.sapling or l[1]
+      local item = l[1] == "@sapling" and buildSapling(F) or l[1]
       if not l.optional or (stock[item] or 0) >= l[2] then
         items[item] = (items[item] or 0) + l[2]
         list[#list + 1] = { item, l[2] }
@@ -650,21 +746,32 @@ end
 
 function M.marking(F) return F.mark and now(F) < F.mark.untilTime end
 
+-- The marker trick: on mark1 the base snapshots its home chests (and stops
+-- emptying them); the turtle drops one item into the chest in front of it;
+-- on mark2 the chest that gained something is the one. Returns its name.
+local function markStart(F, from)
+  F.mark = { from = from, untilTime = now(F) + MARK_TIMEOUT, snap = inputCounts(F) }
+end
+local function markFind(F, from)
+  local mark = F.mark
+  F.mark = nil
+  if not mark or mark.from ~= from then return nil end
+  local found
+  for name, c in pairs(inputCounts(F)) do
+    local before = mark.snap[name] or {}
+    for item, n in pairs(c) do
+      if n > (before[item] or 0) then found = name end
+    end
+  end
+  return found
+end
+
 local function handleSurveyor(F, from, msg)
   if msg.state == "mark1" then
-    F.mark = { from = from, untilTime = now(F) + MARK_TIMEOUT, snap = inputCounts(F) }
+    markStart(F, from)
     return { type = "ok" }
   elseif msg.state == "mark2" then
-    local mark = F.mark
-    F.mark = nil
-    if not mark or mark.from ~= from then return { type = "nomark" } end
-    local found
-    for name, c in pairs(inputCounts(F)) do
-      local before = mark.snap[name] or {}
-      for item, n in pairs(c) do
-        if n > (before[item] or 0) then found = name end
-      end
-    end
+    local found = markFind(F, from)
     if not found or not msg.home then
       F.note = "Survey: marker not found in any home chest"
       return { type = "nomark" }
@@ -695,7 +802,8 @@ function M.handle(F, from, msg)
                       state = msg.state, fuel = msg.fuel, mined = msg.mined or 0,
                       job = msg.job, seen = now(F), version = msg.version,
                       delivered = msg.total or prev.delivered,
-                      inv = msg.inv or prev.inv } -- (the assembler's slots)
+                      inv = msg.inv or prev.inv, -- (the assembler's slots)
+                      chest = msg.chest or prev.chest } -- its home chest (mailbox)
   local t = F.turtles[from]
   local reply = { type = "ok" }
 
@@ -713,6 +821,20 @@ function M.handle(F, from, msg)
 
   if msg.wantFuel then
     reply = M.deliverFuel(F, from, msg.wantFuel)
+  elseif (msg.state == "mark1" or msg.state == "mark2") and t.role ~= "surveyor" then
+    -- a turtle tells which chest is its home's (the mailbox)
+    if msg.state == "mark1" then
+      markStart(F, from)
+    else
+      local found = markFind(F, from)
+      if found then
+        t.chest = found
+        F.note = ("%s's home chest: %s"):format(label(F, from), found)
+        reply = { type = "marked", chest = found }
+      else
+        reply = { type = "nomark" }
+      end
+    end
   elseif msg.state == "new" then
     reply = assignHome(F, from, msg)
   elseif msg.state == "registerHome" then
@@ -724,6 +846,9 @@ function M.handle(F, from, msg)
   elseif t.role == "forester" then
     if msg.state == "resting" and msg.delivered then
       F.totals.logs = (F.totals.logs or 0) + msg.delivered
+    end
+    if msg.state == "resting" then
+      reply.plant = (F.saplings and #F.saplings > 0) and F.saplings or false
     end
   else -- miner
     if msg.state == "done" and msg.job and msg.job.id and not F.counted[msg.job.id] then
@@ -835,7 +960,7 @@ end
 
 function M.tick(F)
   local S = F.deps.storage
-  if not M.marking(F) then S.drainInputs() end -- (a survey marker must stay put)
+  if not M.marking(F) then M.serviceChests(F) end -- (a marker must stay put)
   local stock = S.list()
   local cfgp = F.cfg.production or {}
   if cfgp.enabled ~= false and S.furnaces then

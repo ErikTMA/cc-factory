@@ -17,6 +17,8 @@ end
 -- headings in world axes: 0 north(-z), 1 east, 2 south, 3 west
 local DIRS = { [0] = { 0, -1 }, { 1, 0 }, { 0, 1 }, { -1, 0 } }
 local SAP, LOG, LEAF = "minecraft:oak_sapling", "minecraft:oak_log", "minecraft:oak_leaves"
+local BIRCH = "minecraft:birch_sapling"
+local function isSap(v) return v ~= nil and v:find("sapling") ~= nil end
 
 -- A fenced pen: open cells x -4..4, z -9..0; the turtle's home is (0,0,0)
 -- facing north with its chest at (0,0,1) in the fence line. An inner fence at
@@ -56,7 +58,7 @@ local function newWorld(opts)
   end
   function W.growAll()
     local list = {}
-    for key, v in pairs(W.b) do if v == SAP then list[#list + 1] = key end end
+    for key, v in pairs(W.b) do if isSap(v) then list[#list + 1] = key end end
     for _, key in ipairs(list) do
       local x, y, z = key:match("^(-?%d+),(-?%d+),(-?%d+)$")
       W.growAt(tonumber(x), tonumber(y), tonumber(z))
@@ -137,18 +139,35 @@ local function newTurtle(W, fuel)
   function api.inspectDown() return insp(W.get(T.x, T.y - 1, T.z)) end
   function api.attack() return false end
   api.attackUp, api.attackDown = api.attack, api.attack
-  function api.suck() return false end
-  api.suckDown, api.suckUp = api.suck, api.suck
+  -- from the home chest in front: one stack of the first item (by name)
+  function api.suck()
+    if W.get(front()) ~= "minecraft:chest" then return false end
+    local names = {}
+    for name, n in pairs(W.chest) do if n > 0 then names[#names + 1] = name end end
+    if #names == 0 then return false end
+    table.sort(names)
+    local slot
+    for k = 0, 15 do local i = (T.sel - 1 + k) % 16 + 1; if not T.inv[i] then slot = i; break end end
+    if not slot then return false end
+    local n = math.min(64, W.chest[names[1]])
+    W.chest[names[1]] = W.chest[names[1]] - n
+    T.inv[slot] = { name = names[1], count = n }
+    return true
+  end
+  function api.suckDown() return false end
+  api.suckUp = api.suckDown
   function api.place()
     local s = T.inv[T.sel]
     if not s then return false end
     local fx, fy, fz = front()
-    if s.name == SAP then
+    if isSap(s.name) then
       local below = W.get(fx, fy - 1, fz)
       if W.get(fx, fy, fz) or not (below == "minecraft:grass_block" or below == "minecraft:dirt") then return false end
-      W.set(fx, fy, fz, SAP); W.saplingsPlanted = W.saplingsPlanted + 1
+      W.set(fx, fy, fz, s.name); W.saplingsPlanted = W.saplingsPlanted + 1
+      W.planted = W.planted or {}
+      W.planted[s.name] = (W.planted[s.name] or 0) + 1
     elseif s.name == "minecraft:bone_meal" then
-      if W.get(fx, fy, fz) ~= SAP then return false end
+      if not isSap(W.get(fx, fy, fz)) then return false end
       W.growAt(fx, fy, fz)
     else
       return false
@@ -160,7 +179,7 @@ local function newTurtle(W, fuel)
   -- blocks placed under the turtle: into air or a fluid, like in the game
   function api.placeDown()
     local s = T.inv[T.sel]
-    if not s or s.name == SAP or s.name == "minecraft:bone_meal" then return false end
+    if not s or isSap(s.name) or s.name == "minecraft:bone_meal" then return false end
     local below = W.get(T.x, T.y - 1, T.z)
     if below and not below:find("water") and not below:find("lava") then return false end
     W.set(T.x, T.y - 1, T.z, s.name)
@@ -232,7 +251,13 @@ local function makeEnv(T, api, files, onSleep)
     close = function() T.open = false end,
     send = function(_, msg) T.sent = T.sent or {}; T.sent[#T.sent + 1] = msg end,
     broadcast = function(msg) T.sent = T.sent or {}; T.sent[#T.sent + 1] = msg end,
-    receive = function() return nil end,
+    -- an optional base: T.reply(msg) -> reply
+    receive = function()
+      local last = T.sent and T.sent[#T.sent]
+      local r = T.reply and last and T.reply(last)
+      if r then return 0, r end
+      return nil
+    end,
   }
   env.print = os.getenv("VERBOSE") and print or function() end
   env.sleep = onSleep
@@ -280,7 +305,7 @@ end end
 
 local function plantedSpots(W)
   local n = 0
-  for _, p in ipairs(SPOTS) do if W.get(p[1], 0, p[2]) == SAP then n = n + 1 end end
+  for _, p in ipairs(SPOTS) do if isSap(W.get(p[1], 0, p[2])) then n = n + 1 end end
   return n
 end
 
@@ -304,7 +329,9 @@ do
   end end
   check(outside == 0, "nothing planted outside the pen: " .. outside)
   check((W.chest[LOG] or 0) > 40, "logs delivered to the chest: " .. tostring(W.chest[LOG]))
-  check(T.inv[1] and T.inv[1].name == SAP, "slot 1 still holds the saplings")
+  local carried = 0
+  for i = 1, 16 do if T.inv[i] and isSap(T.inv[i].name) then carried = carried + T.inv[i].count end end
+  check(carried > 0, "still carries saplings: " .. carried)
   local area = load("return " .. files["forester.area"])()
   local cells = 0
   for _ in pairs(area.cells) do cells = cells + 1 end
@@ -400,7 +427,9 @@ do
   T.inv[2] = { name = "computercraft:wireless_modem_normal", count = 1 }
   local ok, err = run(makeEnv(T, api, {}, sleeper(W, 3)), "10")
   check(tostring(err):find("END OF TEST") ~= nil, "ran (" .. tostring(err) .. ")")
-  check(T.sent and #T.sent == 3, "one status per round (3 rounds): " .. tostring(T.sent and #T.sent))
+  local rounds = 0
+  for _, m in ipairs(T.sent or {}) do if m.state == "resting" then rounds = rounds + 1 end end
+  check(rounds == 3, "one round status per round (3 rounds): " .. rounds)
   local last = T.sent and T.sent[#T.sent] or {}
   check(last.type == "status" and last.state == "resting" and (last.delivered or 0) > 0,
     "status carries delivered logs: " .. tostring(last.delivered))
@@ -451,12 +480,41 @@ do
   check(W.get(3, -1, -3) == "minecraft:dirt" and W.get(3, 0, -3) == SAP, "round 2: dirt laid and the spot planted")
 end
 
-print("scenario: refuses to start without saplings in slot 1")
+print("scenario: starts without saplings and takes them from its home chest (the mailbox)")
 do
   local W = newWorld()
-  local T, api = newTurtle(W, 200)
-  local ok, err = run(makeEnv(T, api, {}, function() end))
-  check(not ok and tostring(err):find("slot 1"), "clear error: " .. tostring(err))
+  W.chest[SAP] = 64
+  local T, api = newTurtle(W, 3000)
+  local ok, err = run(makeEnv(T, api, {}, sleeper(W, 3)), "10")
+  check(tostring(err):find("END OF TEST") ~= nil, "ran (" .. tostring(err) .. ")")
+  check(plantedSpots(W) == #SPOTS, ("round 1 took the saplings, round 2 planted every spot: %d/%d"):format(plantedSpots(W), #SPOTS))
+end
+
+print("scenario: two kinds of saplings: it plants them in turn")
+do
+  local W = newWorld()
+  local T, api = newTurtle(W, 3000)
+  T.inv[1] = { name = SAP, count = 32 }
+  T.inv[4] = { name = BIRCH, count = 32 }
+  local ok, err = run(makeEnv(T, api, {}, sleeper(W, 2)), "10")
+  local oak, birch = (W.planted or {})[SAP] or 0, (W.planted or {})[BIRCH] or 0
+  check(oak > 0 and birch > 0 and math.abs(oak - birch) <= 1, ("both kinds, alternating: %d oak, %d birch"):format(oak, birch))
+end
+
+print("scenario: the base selected birch only: oak goes back into the chest, birch is planted")
+do
+  local W = newWorld()
+  local T, api = newTurtle(W, 3000)
+  T.inv[1] = { name = SAP, count = 32 }
+  T.inv[4] = { name = BIRCH, count = 32 }
+  T.inv[5] = { name = "computercraft:wireless_modem_normal", count = 1 }
+  T.reply = function(msg) if msg.state == "resting" then return { type = "ok", plant = { BIRCH } } end end
+  local ok, err = run(makeEnv(T, api, {}, sleeper(W, 3)), "10")
+  local oakLeft = 0
+  for i = 1, 16 do if T.inv[i] and T.inv[i].name == SAP then oakLeft = oakLeft + T.inv[i].count end end
+  check(oakLeft == 0 and (W.chest[SAP] or 0) > 0, "oak saplings went into the chest: " .. tostring(W.chest[SAP]))
+  local before = (W.planted or {})[SAP] or 0
+  check(((W.planted or {})[BIRCH] or 0) > 0, "birch planted")
 end
 
 print(failures == 0 and "ALL PASSED" or (failures .. " FAILURE(S)"))

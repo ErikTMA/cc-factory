@@ -53,7 +53,7 @@ then says the block is connected. A modem that isn't lit does nothing.
   ```
 
   It asks for its Y once (F3), then waits for jobs. Send it one from the
-  monitor's **JOBS** tab.
+  monitor's **GATHERING > MINING** tab.
 
 ## 3. Storage, furnaces, stock rules
 
@@ -94,8 +94,10 @@ then says the block is connected. A modem that isn't lit does nothing.
 - A forester is an advanced turtle with a **diamond pickaxe** and a
   **compass**.
 - Fence off a pen. Put the forester inside, facing in, with its chest
-  directly behind it (in the fence line) and its wired modem **under** it.
-  Saplings go in **slot 1** (top left), coal anywhere, and a stack of **dirt**.
+  directly behind it (in the fence line), a wired modem **under the chest**
+  (right-click it) and one **under the forester** (no right-click needed);
+  the two modems connect to each other. Give it coal and a stack of **dirt**;
+  saplings can go anywhere in it, or let the base deliver them (below).
 - First start: it walks the pen once and remembers it. On the way it fells the
   trees already inside, clears grass, flowers and mushrooms, fills holes and
   water with dirt, and swaps stone under tree spots for dirt. Then it plants
@@ -103,6 +105,14 @@ then says the block is connected. A modem that isn't lit does nothing.
   dirt for are fixed in a later round once you give it more. Other solid blocks
   inside the pen count as walls. Run `forester rescan` after changing the
   fence.
+- **The home chest is a mailbox.** Once the forester has unloaded there, the
+  base knows the chest is its home and keeps **saplings, bone meal and fuel**
+  in it; the forester takes them when it comes home, then drops its wood. On
+  the monitor, **GATHERING > FORESTRY**: tap the sapling kinds to plant
+  (several: the base puts the same amount of each in the chest and the
+  forester plants them **in turn**, so you get a mix; none selected: the kind
+  storage has most of), and switch **BONE MEAL** on or off. Miners' home
+  chests get fuel the same way. Amounts: `mailbox` in `factory.cfg`.
 
 ## 5. The surveyor: let the base find the homes
 

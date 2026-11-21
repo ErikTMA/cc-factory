@@ -174,6 +174,7 @@ function L.talk(state, extra, updates)
   local reply = L.withModem(function()
     local msg = { type = "status", state = state, label = os.getComputerLabel(),
                   role = cfg.role, buildOrder = cfg.order, version = L.version(),
+                  chest = cfg.chest, -- its home chest (mailbox), once known
                   fuel = turtle.getFuelLevel(),
                   equipment = equipment() }
     for k, v in pairs(extra or {}) do msg[k] = v end
@@ -202,6 +203,47 @@ function L.talk(state, extra, updates)
     os.reboot()
   end
   return reply
+end
+
+-- ------------------------------------------------------------ mailbox --
+-- The home chest is a mailbox: the base keeps supplies in it for the turtle
+-- (fuel; saplings and bone meal for a forester) and empties everything else.
+-- Both functions expect the turtle to FACE its home chest.
+
+-- Take what is in the chest (the caller drops back what it doesn't keep).
+function L.takeSupplies(maxStacks)
+  for _ = 1, maxStacks or 8 do
+    local free = false
+    for i = 1, 16 do if turtle.getItemCount(i) == 0 then free = true; break end end
+    if not free or not turtle.suck() then break end
+  end
+end
+
+-- Once: tell the base which of its network chests is this home's, so it knows
+-- where to put the supplies. It watches its chests while one item is dropped
+-- in, and sees where it landed (the base empties that item again).
+function L.claimChest()
+  local cfg = L.config()
+  if cfg.chest then return true end
+  local slot
+  for i = 1, 16 do
+    local d = turtle.getItemDetail(i)
+    if d and not L.isKeptItem(d.name) then slot = i end
+  end
+  if not slot then return false end -- nothing to drop yet: next time
+  local r1 = L.talk("mark1", {}, false)
+  if not (r1 and r1.type == "ok") then return false end
+  turtle.select(slot)
+  turtle.drop(1)
+  turtle.select(1)
+  local r2 = L.talk("mark2", {}, false)
+  if r2 and r2.type == "marked" and r2.chest then
+    cfg = L.config()
+    cfg.chest = r2.chest
+    L.saveConfig(cfg)
+    return true
+  end
+  return false
 end
 
 -- Burn fuel items (oreconf.FUEL) from the inventory up to `target`.

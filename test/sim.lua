@@ -124,16 +124,39 @@ local function newTurtle(W, startHeading, fuel, start)
     if s.count <= 0 then T.inv[T.sel] = nil end
     return true
   end
-  function api.drop()
+  function api.drop(n)
     local s = T.inv[T.sel]; if not s then return false end
+    n = math.min(n or s.count, s.count)
     local fx, fy, fz = front()
     if W.get(fx, fy, fz) == "minecraft:chest" then
-      W.chest[s.name] = (W.chest[s.name] or 0) + s.count
+      W.chest[s.name] = (W.chest[s.name] or 0) + n
       local ck = fx .. "," .. fz
       W.chests[ck] = W.chests[ck] or {}
-      W.chests[ck][s.name] = (W.chests[ck][s.name] or 0) + s.count
+      W.chests[ck][s.name] = (W.chests[ck][s.name] or 0) + n
     end
-    T.inv[T.sel] = nil; return true
+    s.count = s.count - n
+    if s.count <= 0 then T.inv[T.sel] = nil end
+    return true
+  end
+  -- take one stack from the chest in front (first item by name), into the
+  -- selected slot or the next free one
+  function api.suck()
+    local fx, fy, fz = front()
+    if W.get(fx, fy, fz) ~= "minecraft:chest" then return false end
+    local c = W.chests[fx .. "," .. fz] or {}
+    local names = {}
+    for name, n in pairs(c) do if n > 0 then names[#names + 1] = name end end
+    if #names == 0 then return false end
+    table.sort(names)
+    local item = names[1]
+    local slot
+    for k = 0, 15 do local i = (T.sel - 1 + k) % 16 + 1; if not T.inv[i] then slot = i; break end end
+    if not slot then return false end
+    local n = math.min(64, c[item])
+    c[item] = c[item] - n
+    W.chest[item] = (W.chest[item] or 0) - n
+    T.inv[slot] = { name = item, count = n }
+    return true
   end
   function api.dropUp() T.inv[T.sel] = nil; return true end
   local function equip(side)

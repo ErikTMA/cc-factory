@@ -200,7 +200,7 @@ def forester_pen():
         (COL["turtle"], "forester (facing in)"),
     ], note=[
         "Any shape works as long as it is closed and all of it is connected. Dirt or grass floor.",
-        "Tree spots: every 3rd cell counted from the forester's home. Saplings go in its slot 1.",
+        "Tree spots: every 3rd cell counted from the forester's home. Saplings come via the chest.",
         "Put its wired modem UNDER the home spot (in front of it is the pen). Changed the fence? 'forester rescan'.",
     ])
     hx, hy = 2, 10  # home cell (column, row); pen interior cols 1..9, rows 1..10

@@ -39,7 +39,7 @@ jars; see [PLAN.md](PLAN.md).
 | Role | Turtle | Notes |
 |---|---|---|
 | miner | Advanced Turtle + Diamond Pickaxe + **Geo Scanner** | wireless modem + coal in its inventory, chest behind its home spot |
-| forester | Advanced Turtle + Diamond Pickaxe + **Compass** | saplings in slot 1, coal; home spot inside a **fenced pen**, chest behind it (see below) |
+| forester | Advanced Turtle + Diamond Pickaxe + **Compass** | coal (saplings come from the base); home spot inside a **fenced pen**, chest behind it (see below) |
 | assembler | Advanced Turtle + **Crafting Table** + **Wireless Modem** | builds the others (see below) |
 
 Upgrades are crafted next to the turtle in a crafting grid (pickaxe left of
@@ -53,8 +53,8 @@ wget run https://raw.githubusercontent.com/ErikTMA/cc-factory/main/bootstrap.lua
 ```
 
 (or `forester` / `assembler`). It pins itself to the first base that answers.
-A miner set up by hand asks for its Y once (F3); a forester needs its saplings
-in slot 1 first.
+A miner set up by hand asks for its Y once (F3); a forester gets its saplings
+from the base through its home chest (or give it some).
 
 ### Recipes (verified against the pack)
 
@@ -190,8 +190,12 @@ rules are about the drops: `raw_iron`, `raw_gold`, `raw_copper`, `diamond`,
 
 - **TURTLES**: every turtle (role, state, job, mined, fuel, last seen) and
   what is being fetched per ore. Tap a turtle, then STOP to call it home.
-- **JOBS**: pick an ore (sets its best Y), Y, quantity, "only <ore>" or "all
-  ores", then START. Every press queues one job; idle miners take them.
+- **GATHERING > MINING**: pick an ore (sets its best Y), Y, quantity, "only
+  <ore>" or "all ores", then START. Every press queues one job; idle miners
+  take them.
+- **GATHERING > FORESTRY**: the foresters, which sapling kinds they plant
+  (selected kinds take turns; none = auto) and bone meal on/off. The base
+  keeps those, and fuel, in each home chest (the mailbox).
 - **FACTORY**: storage kind, code version, UPDATE, stock rules, fleet and
   builds.
 

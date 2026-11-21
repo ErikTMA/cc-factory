@@ -869,8 +869,9 @@ print("scenario: every monitor tab renders with live data")
 do
   local UIlib = assert(load(baseFiles["base.lua"], "base", "t", baseEnv))("--lib")
   local UI = { F = F, buttons = {}, stock = F.deps.storage.list() }
-  for _, tab in ipairs({ "TURTLES", "JOBS", "FACTORY" }) do
-    UI.tab = tab
+  for _, tab in ipairs({ "TURTLES", "GATHERING/MINING", "GATHERING/FORESTRY", "FACTORY" }) do
+    UI.tab, UI.sub = tab:match("^([^/]+)/?(.*)$")
+    if UI.sub == "" then UI.sub = nil end
     local screen = {}
     local mon = { getSize = function() return 57, 30 end, clear = function() end,
                   setCursorPos = function(_, y) screen.y = y end, setTextColor = function() end,
@@ -880,7 +881,10 @@ do
     local text = ""
     for i = 1, 30 do text = text .. (screen[i] or "") .. "\n" end
     check(ok, tab .. " tab draws (" .. tostring(err) .. ")")
+    if os.getenv("DUMP") then print(text) end
     if tab == "TURTLES" then check(text:find("miner%-2") and text:find("assembler"), "lists the miner and the assembler") end
+    if tab == "GATHERING/MINING" then check(text:find("MINING") and text:find("START") and text:find("FORESTRY"), "MINING sub-tab: the job buttons") end
+    if tab == "GATHERING/FORESTRY" then check(text:find("SAPLINGS") and text:find("BONE MEAL"), "FORESTRY sub-tab: sapling choice and bone meal") end
     if tab == "FACTORY" then
       check(text:find("raw_iron") ~= nil, "shows the stock rule")
       check(text:find("miner%s+1 / 1") ~= nil, "shows the fleet target met")
@@ -1433,6 +1437,48 @@ do
   check(homeAt("minecraft:chest_90") == nil, "the home behind a fully buried cable is not guessed")
   check(T.x == ox and T.y == 1 and T.z == oz, "back on the computer")
   check((T.files["surveyor.log"] or ""):find("out of reach"), "reports the buried sides as out of reach")
+end
+
+print("scenario: the home chest is a mailbox: a turtle claims it, the base keeps its supplies")
+print("          in it (selected saplings in equal amounts, bone meal, fuel) and empties the rest")
+do
+  local barrel = W.inv["minecraft:barrel_0"]
+  for _, p in ipairs({ { "minecraft:charcoal", 64 }, { "minecraft:oak_sapling", 64 }, { "minecraft:birch_sapling", 64 },
+                       { "minecraft:bone_meal", 64 }, { "minecraft:spruce_sapling", 200 } }) do barrel.insert(p[1], p[2]) end
+  local chest = newInv("minecraft:chest_95", 800, 0, 800)
+  local other = newInv("minecraft:chest_96", 810, 0, 800)
+  -- a forester claims chest_95 with the marker trick
+  local r1 = factory.handle(F, 95, { type = "status", state = "mark1", role = "forester", label = "f-95" })
+  chest.insert("minecraft:cobblestone", 1)
+  local r2 = factory.handle(F, 95, { type = "status", state = "mark2", role = "forester", label = "f-95" })
+  check(r1.type == "ok" and r2.type == "marked" and r2.chest == "minecraft:chest_95" and F.turtles[95].chest == "minecraft:chest_95",
+    "claimed: " .. tostring(r2.chest))
+  factory.handle(F, 95, { type = "status", state = "resting", role = "forester", label = "f-95" }) -- (keeps it)
+  check(F.turtles[95].chest == "minecraft:chest_95", "the claim survives its next status")
+  -- its haul, plus too many oak saplings from its own trees
+  chest.insert("minecraft:oak_log", 40); chest.insert("minecraft:oak_sapling", 100)
+  other.insert("minecraft:oak_log", 5) -- nobody's chest: just emptied
+  F.saplings = {}
+  factory.toggleSapling(F, "minecraft:oak_sapling"); factory.toggleSapling(F, "minecraft:birch_sapling")
+  F.boneMeal = false; factory.toggleBoneMeal(F)
+  factory.serviceChests(F)
+  local function has(I, item) return I.count(item) end
+  check(has(chest, "minecraft:oak_log") == 0 and has(chest, "minecraft:cobblestone") == 0, "its haul went to storage")
+  check(has(chest, "minecraft:oak_sapling") == 16 and has(chest, "minecraft:birch_sapling") == 16,
+    ("selected kinds, 16 each: oak %d, birch %d"):format(has(chest, "minecraft:oak_sapling"), has(chest, "minecraft:birch_sapling")))
+  check(has(chest, "minecraft:spruce_sapling") == 0, "not the unselected spruce")
+  check(has(chest, "minecraft:bone_meal") == 32 and has(chest, "minecraft:charcoal") == 16, "bone meal 32 and charcoal 16")
+  check(has(other, "minecraft:oak_log") == 0, "an unclaimed chest is just emptied")
+  -- auto (nothing selected): the kind storage has most of
+  F.saplings = {}
+  factory.serviceChests(F)
+  check(has(chest, "minecraft:spruce_sapling") == 16 and has(chest, "minecraft:oak_sapling") == 0,
+    "auto: spruce (most in storage), the others back to storage")
+  -- a miner's chest gets fuel only
+  local mc = newInv("minecraft:chest_97", 820, 0, 800)
+  F.turtles[97] = { id = 97, role = "miner", chest = "minecraft:chest_97", seen = W.clock }
+  factory.serviceChests(F)
+  check(has(mc, "minecraft:charcoal") == 16 and has(mc, "minecraft:bone_meal") == 0, "a miner's mailbox: 16 charcoal, nothing else")
 end
 
 print("scenario: a modem that only touches a turtle goes off when it leaves; one with a barrel stays on")
