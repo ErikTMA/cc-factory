@@ -18,7 +18,13 @@ end
 local DIRS = { [0] = { 0, -1 }, { 1, 0 }, { 0, 1 }, { -1, 0 } }
 local SAP, LOG, LEAF = "minecraft:oak_sapling", "minecraft:oak_log", "minecraft:oak_leaves"
 
-local function newWorld()
+-- A fenced pen: open cells x -4..4, z -9..0; the turtle's home is (0,0,0)
+-- facing north with its chest at (0,0,1) in the fence line. An inner fence at
+-- z = -5 runs from x = -4 to 2, so the north half is only reachable through
+-- the gap at x = 3..4. opts.gap opens the outer fence.
+local FENCE = "minecraft:oak_fence"
+local function newWorld(opts)
+  opts = opts or {}
   local W = { b = {}, chest = {}, saplingsPlanted = 0 }
   local function k(x, y, z) return x .. "," .. y .. "," .. z end
   function W.get(x, y, z) return W.b[k(x, y, z)] end
@@ -27,7 +33,13 @@ local function newWorld()
     W.set(x, -1, z, "minecraft:grass_block")
     W.set(x, -2, z, "minecraft:dirt")
   end end
+  for z = -10, 1 do W.set(-5, 0, z, FENCE); W.set(5, 0, z, FENCE) end
+  for x = -5, 5 do W.set(x, 0, -10, FENCE); W.set(x, 0, 1, FENCE) end
+  for x = -4, 2 do W.set(x, 0, -5, FENCE) end
+  if opts.gap then W.set(5, 0, -3, nil) end
   W.set(0, 0, 1, "minecraft:chest")
+  W.set(2, 0, -2, "minecraft:poppy") -- a flower in the way
+  function W.fences() return W.count(FENCE) end
   -- grow every sapling into a 5-high oak with a leaf crown; every third tree
   -- also gets a sideways branch log (acacia-style)
   W.trees = 0
@@ -94,6 +106,8 @@ local function newTurtle(W, fuel)
     local tags = {}
     if b:find("_log$") then tags["minecraft:logs"] = true end
     if b:find("leaves") then tags["minecraft:leaves"] = true end
+    if b:find("sapling") then tags["minecraft:saplings"] = true end
+    if b == "minecraft:poppy" then tags["minecraft:small_flowers"] = true end
     return true, { name = b, tags = tags }
   end
   local api = {}
@@ -238,43 +252,87 @@ local function sleeper(W, rounds)
   end
 end
 
-print("scenario: plant, grow, fell, replant over 3 rounds")
+-- tree spots: every 3rd cell from home inside the pen
+local SPOTS = {}
+for _, x in ipairs({ -3, 0, 3 }) do for _, z in ipairs({ -9, -6, -3, 0 }) do
+  if not (x == 0 and z == 0) then SPOTS[#SPOTS + 1] = { x, z } end
+end end
+
+local function plantedSpots(W)
+  local n = 0
+  for _, p in ipairs(SPOTS) do if W.get(p[1], 0, p[2]) == SAP then n = n + 1 end end
+  return n
+end
+
+print("scenario: measures the pen, plants every spot (around an inner fence), fells, replants")
 do
   local W = newWorld()
-  local T, api = newTurtle(W, 200)
+  local fences = W.fences()
+  local T, api = newTurtle(W, 2000)
   T.inv[1] = { name = SAP, count = 64 }
   local files = {}
-  local ok, err = run(makeEnv(T, api, files, sleeper(W, 3)), "4", "10")
+  local ok, err = run(makeEnv(T, api, files, sleeper(W, 3)), "10")
   check(tostring(err):find("END OF TEST") ~= nil, "ran three rounds (" .. tostring(err) .. ")")
-  check(T.x == 0 and T.y == 0 and T.z == 0 and T.h == 0, ("home, facing out (%d,%d,%d h%d)"):format(T.x, T.y, T.z, T.h))
-  -- after round 3 the trees grown during the 2nd sleep are felled and replanted
+  check(T.x == 0 and T.y == 0 and T.z == 0 and T.h == 0, ("home, facing into the pen (%d,%d,%d h%d)"):format(T.x, T.y, T.z, T.h))
+  check(W.fences() == fences, "no fence touched (" .. W.fences() .. " of " .. fences .. ")")
   check(W.count(LOG) == 0, "no logs left standing (branches included): " .. W.count(LOG))
-  local spots = 0
-  for k = 1, 4 do for _, x in ipairs({ -1, 1 }) do
-    if W.get(x, 0, -3 * k) == SAP then spots = spots + 1 end
+  check(plantedSpots(W) == #SPOTS, ("all %d spots replanted: %d"):format(#SPOTS, plantedSpots(W)))
+  check(W.get(3, 0, -9) == SAP and W.get(-3, 0, -9) == SAP, "spots behind the inner fence reached")
+  local outside = 0
+  for x = -12, 12 do for z = -40, 6 do
+    if W.get(x, 0, z) == SAP and (x < -4 or x > 4 or z < -9 or z > 0) then outside = outside + 1 end
   end end
-  check(spots == 8, "all 8 spots replanted with saplings: " .. spots)
+  check(outside == 0, "nothing planted outside the pen: " .. outside)
   check((W.chest[LOG] or 0) > 40, "logs delivered to the chest: " .. tostring(W.chest[LOG]))
   check(T.inv[1] and T.inv[1].name == SAP, "slot 1 still holds the saplings")
-  local logsKept = 0
-  for i = 3, 16 do if T.inv[i] and T.inv[i].name == LOG then logsKept = logsKept + T.inv[i].count end end
-  check(logsKept <= 16, "keeps at most 16 logs for fuel: " .. logsKept)
-  check(T.fuel > 0, "kept itself fuelled from logs: " .. T.fuel)
-  local others = 0
-  for x = -12, 12 do for z = -40, 6 do
-    local b = W.get(x, 0, z)
-    if b == SAP and not (math.abs(x) == 1 and z < 0 and z % 3 == 0 and z >= -12) then others = others + 1 end
-  end end
-  check(others == 0, "planted only on the spots: " .. others)
+  local area = load("return " .. files["forester.area"])()
+  local cells = 0
+  for _ in pairs(area.cells) do cells = cells + 1 end
+  check(area.done and cells == 9 * 10 - 7, "cached the pen: " .. cells .. " open cells")
+end
+
+print("scenario: second start uses the cached pen")
+do
+  local W = newWorld()
+  local T, api = newTurtle(W, 2000)
+  T.inv[1] = { name = SAP, count = 64 }
+  local files = {}
+  local lines = {}
+  local env = makeEnv(T, api, files, function() error("END OF TEST") end)
+  env.print = function(...) lines[#lines + 1] = table.concat({ ... }, " ") end
+  run(env, "10")
+  local measured = 0
+  for _, l in ipairs(lines) do if l:find("Measuring the pen") then measured = measured + 1 end end
+  env = makeEnv(T, api, files, function() error("END OF TEST") end)
+  env.print = function(...) lines[#lines + 1] = table.concat({ ... }, " ") end
+  run(env)
+  local again = 0
+  for _, l in ipairs(lines) do if l:find("Measuring the pen") then again = again + 1 end end
+  check(measured == 1 and again == 1, "measured once over two starts: " .. again)
+  env = makeEnv(T, api, files, function() error("END OF TEST") end)
+  env.print = function(...) lines[#lines + 1] = table.concat({ ... }, " ") end
+  run(env, "rescan")
+  local rescan = 0
+  for _, l in ipairs(lines) do if l:find("Measuring the pen") then rescan = rescan + 1 end end
+  check(rescan == 2, "'forester rescan' measures again")
+end
+
+print("scenario: a gap in the fence: it says the pen is not closed")
+do
+  local W = newWorld({ gap = true })
+  local T, api = newTurtle(W, 100000)
+  T.inv[1] = { name = SAP, count = 64 }
+  local ok, err = run(makeEnv(T, api, {}, function() error("END OF TEST") end), "10")
+  check(not ok and tostring(err):find("not closed"), "clear error: " .. tostring(err))
 end
 
 print("scenario: bone meal in slot 2 grows trees straight away")
 do
   local W = newWorld()
-  local T, api = newTurtle(W, 1000) -- full tank: logs go to the chest, not into fuel
-  T.inv[1] = { name = SAP, count = 16 }
+  local T, api = newTurtle(W, 3000) -- full tank: logs go to the chest, not into fuel
+  T.inv[1] = { name = SAP, count = 64 }
   T.inv[2] = { name = "minecraft:bone_meal", count = 64 }
-  local ok, err = run(makeEnv(T, api, {}, function() error("END OF TEST") end), "3", "10")
+  local ok, err = run(makeEnv(T, api, {}, function() error("END OF TEST") end), "10")
   check(tostring(err):find("END OF TEST") ~= nil, "one round (" .. tostring(err) .. ")")
   check((W.chest[LOG] or 0) > 20, "logs from bone-mealed trees in round 1: " .. tostring(W.chest[LOG]))
 end
@@ -282,45 +340,45 @@ end
 print("scenario: restart in the middle of felling a tree")
 do
   local W = newWorld()
-  W.set(-1, 0, -3, SAP) -- one tree waiting at the first spot
+  W.set(-3, 0, -3, SAP) -- a grown tree on a spot when it starts
   W.growAll()
-  local T, api = newTurtle(W, 200)
-  T.inv[1] = { name = SAP, count = 16 }
+  local T, api = newTurtle(W, 2000)
+  T.inv[1] = { name = SAP, count = 64 }
   local files = {}
   T.onMove = function() if T.y == 3 then T.onMove = nil; error("SERVER RESTART") end end
-  local ok, err = run(makeEnv(T, api, files, function() error("END OF TEST") end), "2", "10")
+  local ok, err = run(makeEnv(T, api, files, function() error("END OF TEST") end), "10")
   check(tostring(err):find("SERVER RESTART") ~= nil, "interrupted up in the tree")
   ok, err = run(makeEnv(T, api, files, function() error("END OF TEST") end))
   check(tostring(err):find("END OF TEST") ~= nil, "resumed and finished the round (" .. tostring(err) .. ")")
   check(T.x == 0 and T.y == 0 and T.z == 0, ("home after resume (%d,%d,%d)"):format(T.x, T.y, T.z))
-  check(W.get(-1, 0, -3) == SAP, "spot replanted after resume")
+  check(W.get(-3, 0, -3) == SAP and plantedSpots(W) == #SPOTS, "all spots planted after resume")
 end
 
 print("scenario: restart right after a turn, before it was saved")
-for _, nth in ipairs({ 5, 23, 61 }) do
+for _, nth in ipairs({ 5, 61, 230 }) do
   local W = newWorld()
-  local T, api = newTurtle(W, 200)
-  T.inv[1] = { name = SAP, count = 16 }
+  local T, api = newTurtle(W, 3000)
+  T.inv[1] = { name = SAP, count = 64 }
   local files = {}
   local first = true
   local function sl() if first then first = false; W.growAll(); return end; error("END OF TEST") end
   local n = 0
   T.onTurn = function() n = n + 1; if n == nth then T.onTurn = nil; error("SERVER RESTART") end end
-  local ok, err = run(makeEnv(T, api, files, sl), "3", "10")
+  local ok, err = run(makeEnv(T, api, files, sl), "10")
   check(tostring(err):find("SERVER RESTART") ~= nil, "turn " .. nth .. ": interrupted")
-  first = false
   ok, err = run(makeEnv(T, api, files, sl))
   check(tostring(err):find("END OF TEST") ~= nil, "turn " .. nth .. ": resumed (" .. tostring(err) .. ")")
-  check(T.x == 0 and T.y == 0 and T.z == 0 and T.h == 0, ("turn %d: home facing out (%d,%d,%d h%d)"):format(nth, T.x, T.y, T.z, T.h))
+  check(T.x == 0 and T.y == 0 and T.z == 0 and T.h == 0, ("turn %d: home facing in (%d,%d,%d h%d)"):format(nth, T.x, T.y, T.z, T.h))
+  check(plantedSpots(W) == #SPOTS, "turn " .. nth .. ": all spots planted")
 end
 
 print("scenario: reports each round to the base through a swapped-in modem")
 do
   local W = newWorld()
-  local T, api = newTurtle(W, 1000)
+  local T, api = newTurtle(W, 3000)
   T.inv[1] = { name = SAP, count = 64 }
   T.inv[2] = { name = "computercraft:wireless_modem_normal", count = 1 }
-  local ok, err = run(makeEnv(T, api, {}, sleeper(W, 3)), "3", "10")
+  local ok, err = run(makeEnv(T, api, {}, sleeper(W, 3)), "10")
   check(tostring(err):find("END OF TEST") ~= nil, "ran (" .. tostring(err) .. ")")
   check(T.sent and #T.sent == 3, "one status per round (3 rounds): " .. tostring(T.sent and #T.sent))
   local last = T.sent and T.sent[#T.sent] or {}

@@ -1,73 +1,88 @@
--- forester: tree farm turtle (CC: Tweaked + Advanced Peripherals).
+-- forester: tree farm turtle inside a fence (CC: Tweaked + Advanced Peripherals).
 --
 -- The turtle: an advanced turtle with a diamond pickaxe (it breaks wood fine)
--- and a compass (craft the turtle with a plain Compass). The compass lets it
--- know which way it faces after a server restart. Needs tmove.lua next to it.
+-- and a compass (craft the turtle with a plain Compass), so it always knows
+-- which way it faces, even after a server restart. Needs tmove.lua, nav.lua,
+-- link.lua next to it.
 --
--- Layout (seen from above, turtle T facing up, chest C behind it):
+-- Layout: a fenced pen (fence, wall, gate or any solid block as the border)
+-- with dirt or grass as the floor. The turtle stands inside it, on its home
+-- spot, with its chest directly BEHIND it (the chest can sit in the fence line).
 --
---     S . S        S = sapling spot (dirt or grass underneath), every 3 blocks
---     . . .        . = air; the middle column is the lane the turtle walks
---     . . .
---     S . S
---     . T .
---       C
+--   F F F F F F F F
+--   F S . . S . . F       S = tree spot (every 3rd cell, measured from home)
+--   F . . . . . . F       . = path the turtle walks on
+--   F . . . . . . F
+--   F S . . S . . F
+--   F . . . . . . F
+--   F T . . . . . F       T = turtle at home, facing into the pen
+--   F C F F F F F F       C = its chest
 --
--- Slot 1 (top left): the saplings to plant. Only that kind is planted; saplings
--- picked up from fallen leaves go back into slot 1.
--- Slot 2: optional bone meal, used on fresh saplings.
+-- First start: it walks every open cell of the pen once (never crossing the
+-- border; grass and flowers get cleared, trees already in there felled) and
+-- caches the pen in forester.area. After that it only uses the cache;
+-- `forester rescan` measures the pen again (e.g. after moving the fence). If
+-- the pen is not closed it stops exploring and says so.
 --
--- Run: forester [trees] [wait]
---   trees  spots per side of the lane (default 6, i.e. 12 trees)
---   wait   seconds between rounds (default 300)
--- Each round it walks the lane, plants empty spots, fells grown trees and
--- replants, then empties wood and drops into the chest, keeping saplings, bone
--- meal and a few logs for fuel. startup.lua resumes it after a restart.
+-- Each round it walks to every tree spot: plants empty ones, fells grown trees
+-- (sideways branches too) and replants, then goes home, empties wood and drops
+-- into the chest (keeping saplings, bone meal and a few logs for fuel) and
+-- reports to the base.
+--
+-- Slot 1 (top left): the saplings to plant; only that kind is planted, and
+-- saplings it picks up go back to slot 1. Slot 2: optional bone meal.
+--
+-- Run: forester [wait] | forester rescan     (wait: seconds between rounds)
 
 local tmove = require("tmove")
 local link = require("link")
 local nav = require("nav")
 
 local CFG = {
-  trees = 6,
-  spacing = 3,         -- blocks between spots along the lane
+  spacing = 3,         -- tree spots every `spacing` cells, counted from home
   wait = 300,
   maxHeight = 40,      -- never climb higher than this when felling
+  maxArea = 1024,      -- more open cells than this: the pen is not closed
   fuelLow = 300,       -- refuel from logs below this ...
   fuelTarget = 600,    -- ... up to this
   keepLogs = 16,       -- logs it keeps for fuel when unloading
   boneMealTries = 8,   -- bone meal uses per sapling before giving up
   stateFile = "forester.state",
+  areaFile = "forester.area",
 }
 
 -- CC puts dug items into the selected slot first, so the turtle works with slot
 -- 3 selected and only selects slot 1 or 2 to place from them.
 local SAPLING_SLOT, BONEMEAL_SLOT, WORK_SLOT = 1, 2, 3
+local DIRS = nav.DIRS -- [heading] = { dx, dy, dz }; 0 north, 1 east, 2 south, 3 west
 
--- Persisted: { sapling, trees, wait, lane (absolute heading of the lane),
---   face (0 out along the lane, 1 right, 2 back home, 3 left),
---   pos (blocks out along the lane), up (blocks up a trunk),
---   inTree (face we entered a tree spot with, or nil), pending (tmove) }
+-- Persisted state: { sapling, wait, homeHeading, heading, pos = {x, z} (from
+-- home, world axes), up (blocks up a trunk), delivered, pending (tmove) }
 local S
+-- The pen: { done, cells = { ["x,z"] = groundBlockName }, spots = { "x,z", ... } }
+local AREA
 
 local function log(...) print(...) end
 
-local function save()
-  local f = fs.open(CFG.stateFile, "w")
-  f.write(textutils.serialize(S))
+local function writeTable(path, t)
+  local f = fs.open(path, "w")
+  f.write(textutils.serialize(t))
   f.close()
 end
 
-local function load()
-  if not fs.exists(CFG.stateFile) then return nil end
-  local f = fs.open(CFG.stateFile, "r")
-  local s = textutils.unserialize(f.readAll())
+local function readTable(path)
+  if not fs.exists(path) then return nil end
+  local f = fs.open(path, "r")
+  local t = textutils.unserialize(f.readAll())
   f.close()
-  return s
+  return t
 end
 
--- Absolute heading from the compass upgrade, or nil without one.
-local compassHeading = nav.compass
+local function save() writeTable(CFG.stateFile, S) end
+local function saveArea() writeTable(CFG.areaFile, AREA) end
+
+local function key(x, z) return x .. "," .. z end
+local function unkey(k) local x, z = k:match("^(-?%d+),(-?%d+)$"); return tonumber(x), tonumber(z) end
 
 -- ------------------------------------------------------------- blocks --
 local function hasTag(b, tag)
@@ -86,14 +101,35 @@ local function isLeaves(b)
   return b and (hasTag(b, "minecraft:leaves") or b.name:find("leaves")) and true or false
 end
 
-local function isSaplingBlock(b) return b and b.name == S.sapling end
+local function isSapling(b)
+  return b and (hasTag(b, "minecraft:saplings") or b.name:find("sapling")) and true or false
+end
+
+-- grass, ferns, flowers, snow layers...: in the way, harmless to remove
+local function isPlant(b)
+  if not b then return false end
+  if hasTag(b, "minecraft:replaceable") or hasTag(b, "minecraft:flowers")
+     or hasTag(b, "minecraft:small_flowers") then return true end
+  local n = b.name
+  return (n:find("grass") and not n:find("grass_block")) or n:find("fern") or n:find("flower")
+      or n:find("bush") or n:find("tulip") or n:find("poppy") or n:find("dandelion") or false
+end
+
+-- may be removed when it is in a path or a spot (everything else is a border)
+local function isClearable(b) return isLeaves(b) or isPlant(b) or isSapling(b) end
+
+-- trees grow on these
+local function isSoil(name)
+  return name and (name:find("dirt") or name:find("grass_block") or name:find("podzol")
+    or name:find("mycelium") or name:find("moss_block") or name:find("mud")) and true or false
+end
 
 -- ------------------------------------------------------------- movement --
-local function turnTo(f)
-  local d = (f - S.face) % 4
+local function turnTo(h)
+  local d = (h - S.heading) % 4
   if d == 1 then turtle.turnRight() elseif d == 2 then turtle.turnRight(); turtle.turnRight()
   elseif d == 3 then turtle.turnLeft() end
-  S.face = f
+  S.heading = h
   save()
 end
 
@@ -101,43 +137,90 @@ end
 local function applyMove(st, kind)
   if kind == "up" then st.up = st.up + 1
   elseif kind == "down" then st.up = st.up - 1
-  elseif kind == "back" then st.inTree = nil -- only used to back out of a tree spot
-  elseif st.face == 0 then st.pos = st.pos + 1
-  elseif st.face == 2 then st.pos = st.pos - 1
-  elseif st.inTree == nil then st.inTree = st.face -- stepped sideways into a spot
-  else st.inTree = nil end                          -- stepped back out to the lane
+  else
+    local d = DIRS[st.heading]
+    local sign = kind == "back" and -1 or 1
+    st.pos.x, st.pos.z = st.pos.x + sign * d[1], st.pos.z + sign * d[3]
+  end
 end
 
 local function move(kind, fn) return tmove.move(S, save, kind, fn, applyMove) end
 
-local function force(kind, fn, detect, dig, attack)
+-- Forward one cell, clearing plants/leaves/logs in the way; false at a border.
+local function step()
   for _ = 1, 20 do
-    if move(kind, fn) then return true end
-    if detect() then dig() else attack() end
+    if move("fwd", turtle.forward) then
+      turtle.suckDown() -- saplings and apples lying around
+      return true
+    end
+    local ok, b = turtle.inspect()
+    if ok then
+      if not (isClearable(b) or isLog(b)) then return false end
+      turtle.dig()
+    else
+      turtle.attack() -- a mob
+      sleep(0.2)
+    end
   end
   return false
 end
 
-local function forceForward() return force("fwd", turtle.forward, turtle.detect, turtle.dig, turtle.attack) end
-local function forceUp() return force("up", turtle.up, turtle.detectUp, turtle.digUp, turtle.attackUp) end
-local function forceDown() return force("down", turtle.down, turtle.detectDown, turtle.digDown, turtle.attackDown) end
-
--- Move along the lane (face 0 = outwards, 2 = home) one block.
-local function laneStep(dir)
-  turnTo(dir)
-  if not forceForward() then error("Lane is blocked", 0) end
-  turtle.suckDown() -- pick up saplings and apples lying on the lane
+local function forceUp()
+  for _ = 1, 20 do
+    if move("up", turtle.up) then return true end
+    if turtle.detectUp() then turtle.digUp() else turtle.attackUp() end
+  end
+  return false
 end
 
--- Leave a tree spot back to the lane, facing the spot again.
-local function leaveSpot()
-  local side = S.inTree
-  turnTo(side)
-  if not move("back", turtle.back) then
-    turnTo((side + 2) % 4)
-    forceForward()
-    turnTo(side)
+local function forceDown()
+  for _ = 1, 20 do
+    if move("down", turtle.down) then return true end
+    if turtle.detectDown() then turtle.digDown() else turtle.attackDown() end
   end
+  return false
+end
+
+-- ---------------------------------------------------------------- paths --
+local isSpot = {}
+local function indexSpots()
+  isSpot = {}
+  for _, k in ipairs(AREA.spots or {}) do isSpot[k] = true end
+end
+
+-- Directions from `from` to `to` over the pen's path cells (not tree spots),
+-- breadth first; `from` and `to` themselves may be spots.
+local function path(from, to)
+  local start, goal = key(from.x, from.z), key(to.x, to.z)
+  if start == goal then return {} end
+  local prev, queue, head = { [start] = false }, { start }, 1
+  while queue[head] do
+    local cur = queue[head]
+    head = head + 1
+    local cx, cz = unkey(cur)
+    for h = 0, 3 do
+      local nk = key(cx + DIRS[h][1], cz + DIRS[h][3])
+      if prev[nk] == nil and AREA.cells[nk] and (not isSpot[nk] or nk == goal) then
+        prev[nk] = { cur, h }
+        if nk == goal then
+          local dirs, k = {}, nk
+          while prev[k] do table.insert(dirs, 1, prev[k][2]); k = prev[k][1] end
+          return dirs
+        end
+        queue[#queue + 1] = nk
+      end
+    end
+  end
+end
+
+local function walkTo(target)
+  local dirs = path(S.pos, target)
+  if not dirs then return false end
+  for _, h in ipairs(dirs) do
+    turnTo(h)
+    if not step() then return false end
+  end
+  return true
 end
 
 -- ------------------------------------------------------------ inventory --
@@ -185,7 +268,7 @@ local function refuel()
   if turtle.getFuelLevel() == "unlimited" or turtle.getFuelLevel() >= CFG.fuelLow then return end
   for i = 1, 16 do
     local d = turtle.getItemDetail(i)
-    if d and isLog(d) and not reserved(i, d) then
+    if d and (isLog(d) or d.name == "minecraft:coal" or d.name == "minecraft:charcoal") and not reserved(i, d) then
       select(i)
       while turtle.getFuelLevel() < CFG.fuelTarget and turtle.getItemCount(i) > 0 do
         if not turtle.refuel(1) then break end
@@ -200,6 +283,7 @@ local function haveBoneMeal()
   return bm and bm.name == "minecraft:bone_meal"
 end
 
+-- ------------------------------------------------------ planting/felling --
 local fell -- forward declaration
 
 -- Use bone meal on the sapling in front until it grows; fell it if it did.
@@ -208,8 +292,8 @@ local function boneMeal()
     if not haveBoneMeal() then break end
     select(BONEMEAL_SLOT); turtle.place(); select(WORK_SLOT)
     local ok, b = turtle.inspect()
-    if ok and isLog(b) then fell(); return end
-    if not (ok and isSaplingBlock(b)) then return end
+    if ok and isLog(b) then fell(true); return end
+    if not (ok and b.name == S.sapling) then return end
   end
 end
 
@@ -226,7 +310,6 @@ local function plant(withBoneMeal)
   return ok
 end
 
--- --------------------------------------------------------------- felling --
 local function digLogsAround()
   -- branches (acacia, cherry, ...) that grow out sideways next to the trunk
   for _ = 1, 4 do
@@ -236,10 +319,12 @@ local function digLogsAround()
   end
 end
 
--- Facing a log: fell the tree, come back to the lane, replant.
-fell = function()
+-- Facing a log from a path cell: step into the trunk, fell it upwards, come
+-- back down and out, facing the cell again; replant if asked.
+fell = function(replant)
+  local facing = S.heading
   turtle.dig()
-  if not forceForward() then return end
+  if not move("fwd", turtle.forward) then return end
   while S.up < CFG.maxHeight do
     local ok, b = turtle.inspectUp()
     if not (ok and isLog(b)) then break end
@@ -251,30 +336,100 @@ fell = function()
     if not forceDown() then error("Cannot get back down", 0) end
   end
   turtle.suck(); turtle.suckDown()
-  leaveSpot()
+  turnTo(facing)
+  if not move("back", turtle.back) then
+    turnTo((facing + 2) % 4); step(); turnTo(facing)
+  end
   turtle.suck()
-  plant(false)
+  if replant then plant(false) end
 end
 
--- Look after the spot in front of us.
+-- Look after the tree spot in front of us.
 local function tend()
   local ok, b = turtle.inspect()
   if not ok then
     plant(true)
   elseif isLog(b) then
-    fell()
-  elseif isLeaves(b) then
+    fell(true)
+  elseif isLeaves(b) or isPlant(b) then
     turtle.dig()
     turtle.suck()
     plant(true)
-  elseif isSaplingBlock(b) then
+  elseif b.name == S.sapling then
     boneMeal()
   end
 end
 
--- -------------------------------------------------------------- the round --
+-- ----------------------------------------------------------- exploration --
+-- Walk every open cell of the pen once (depth first, back-tracking), caching
+-- each cell and the block under it. Trees inside are felled, plants cleared.
+local function explore()
+  log("Measuring the pen...")
+  local ok0, ground0 = turtle.inspectDown()
+  AREA = { done = false, cells = { [key(0, 0)] = ok0 and ground0.name or "air" }, spots = {} }
+  saveArea()
+  local border = {}
+  local count = 1
+  local stack = { { x = 0, z = 0, next = 0 } }
+  while #stack > 0 do
+    local top = stack[#stack]
+    if top.next < 4 then
+      local h = top.next
+      top.next = h + 1
+      local nx, nz = top.x + DIRS[h][1], top.z + DIRS[h][3]
+      local nk = key(nx, nz)
+      if not AREA.cells[nk] and not border[nk] then
+        turnTo(h)
+        local ok, b = turtle.inspect()
+        if ok and isLog(b) then fell(false); ok, b = turtle.inspect() end
+        if ok and isClearable(b) then turtle.dig(); ok, b = turtle.inspect() end
+        if ok then
+          border[nk] = true
+        elseif move("fwd", turtle.forward) then
+          local okd, ground = turtle.inspectDown()
+          AREA.cells[nk] = okd and ground.name or "air"
+          count = count + 1
+          if count > CFG.maxArea then
+            error(("The pen is not closed: more than %d open cells. Close the fence and run 'forester rescan'.")
+              :format(CFG.maxArea), 0)
+          end
+          saveArea() -- every cell at once: a restart must find its way back home
+          stack[#stack + 1] = { x = nx, z = nz, next = 0, back = (h + 2) % 4 }
+        else
+          border[nk] = true
+        end
+      end
+    else
+      stack[#stack] = nil
+      if top.back then
+        turnTo(top.back)
+        if not move("fwd", turtle.forward) then error("Could not step back while measuring the pen", 0) end
+      end
+    end
+  end
+  -- tree spots: every `spacing` cells from home, on soil, next to a path cell
+  local spots = {}
+  for k, ground in pairs(AREA.cells) do
+    local x, z = unkey(k)
+    if (x ~= 0 or z ~= 0) and x % CFG.spacing == 0 and z % CFG.spacing == 0 and isSoil(ground) then
+      spots[#spots + 1] = k
+    end
+  end
+  table.sort(spots)
+  AREA.spots = spots
+  AREA.done = true
+  saveArea()
+  indexSpots()
+  log(("Pen: %d cells, %d tree spots."):format(count, #spots))
+end
+
+-- ------------------------------------------------------------- the round --
 local function unload()
-  turnTo(2) -- chest is behind the home spot
+  turnTo((S.homeHeading + 2) % 4) -- chest is behind the home spot
+  local ok, b = turtle.inspect()
+  if not (ok and b.name:find("chest")) then
+    error("No chest behind me: I'm not where I think home is. Not unloading.", 0)
+  end
   clearReservedSlots()
   local logsKept, delivered = 0, 0
   for i = 1, 16 do
@@ -298,7 +453,7 @@ local function unload()
     end
   end
   select(WORK_SLOT)
-  turnTo(0)
+  turnTo(S.homeHeading)
   return delivered
 end
 
@@ -306,52 +461,93 @@ local function goHome()
   while S.up > 0 do
     if not forceDown() then error("Cannot get back down", 0) end
   end
-  if S.inTree then leaveSpot() end
-  while S.pos > 0 do laneStep(2) end
+  if not walkTo({ x = 0, z = 0 }) then error("Cannot find my way home through the pen", 0) end
 end
+
+local function dist(a, x, z) return math.abs(a.x - x) + math.abs(a.z - z) end
 
 local function round()
   select(WORK_SLOT)
   refuel()
-  for _ = 1, S.trees do
-    for _ = 1, CFG.spacing do laneStep(0) end
-    turnTo(3); tend()
-    turnTo(1); tend()
+  -- visit the spots nearest first
+  local todo = {}
+  for _, k in ipairs(AREA.spots) do todo[#todo + 1] = k end
+  while #todo > 0 do
+    local bi, bd = 1, math.huge
+    for i, k in ipairs(todo) do
+      local x, z = unkey(k)
+      local d = dist(S.pos, x, z)
+      if d < bd then bi, bd = i, d end
+    end
+    local sx, sz = unkey(table.remove(todo, bi))
+    -- the nearest path cell next to the spot we can reach
+    local best, bestLen
+    for h = 0, 3 do
+      local ax, az = sx - DIRS[h][1], sz - DIRS[h][3]
+      local ak = key(ax, az)
+      if AREA.cells[ak] and not isSpot[ak] then
+        local p = path(S.pos, { x = ax, z = az })
+        if p and (not bestLen or #p < bestLen) then best, bestLen = { x = ax, z = az, h = h }, #p end
+      end
+    end
+    if best and walkTo(best) then
+      turnTo(best.h)
+      tend()
+    end
   end
   goHome()
   refuel()
   local delivered = unload()
   S.delivered = (S.delivered or 0) + delivered
   save()
-  -- tell the base (if it has a wireless modem); code updates apply here
+  -- tell the base (if it can); code updates apply here
   link.talk("resting", { delivered = delivered, total = S.delivered, sapling = S.sapling })
 end
 
 -- ------------------------------------------------------------------- main --
 local args = { ... }
 link.restoreUpgrade() -- compass back in, if a restart caught it mid-talk
-S = load()
+S = readTable(CFG.stateFile)
+AREA = readTable(CFG.areaFile)
+
+-- older installs ran in lane mode: start over in the pen
+if S and not S.pos.x then S = nil end
+
 if S then
   -- settle a move that was in flight when it stopped, and re-read the facing:
   -- a turn may have happened without being saved
   tmove.recover(S, save, applyMove)
-  local h = compassHeading()
-  if h then S.face = (h - S.lane) % 4; save() end
-  log(("Resuming: %s, %d spots per side"):format(S.sapling, S.trees))
-  goHome()
-  turnTo(0)
+  S.heading = nav.compass() or S.heading
+  save()
+  log(("Resuming: %s"):format(S.sapling))
+  if AREA then indexSpots() end
+  -- an unfinished measurement: back home over the cells known so far, measure again
+  if AREA and AREA.cells then
+    while S.up > 0 do forceDown() end
+    if not walkTo({ x = 0, z = 0 }) then error("Cannot find my way home", 0) end
+  end
+  if not AREA or not AREA.done then AREA = nil end
 else
   local d = turtle.getItemDetail(SAPLING_SLOT)
   if not d then error("Put the saplings to plant in slot 1 (top left)", 0) end
-  local h = compassHeading()
+  local h = nav.compass()
   if not h then log("No compass upgrade: it cannot re-check its facing after a restart.") end
-  S = { sapling = d.name, trees = tonumber(args[1]) or CFG.trees,
-        wait = tonumber(args[2]) or CFG.wait, lane = h or 0, pos = 0, face = 0, up = 0 }
-  save()
-  log(("Planting %s, %d spots per side, a round every %ds"):format(S.sapling, S.trees, S.wait))
+  S = { sapling = d.name, homeHeading = h or 0, heading = h or 0, pos = { x = 0, z = 0 }, up = 0 }
 end
+-- forester [wait] ; the agent passes "<trees> <wait>" (trees is not used any more)
+local nums = {}
+for _, a in ipairs(args) do if tonumber(a) then nums[#nums + 1] = tonumber(a) end end
+S.wait = nums[#nums] or S.wait or CFG.wait
+save()
+
 if turtle.getFuelLevel() ~= "unlimited" and turtle.getFuelLevel() == 0 then
   error("No fuel: put coal or logs in it", 0)
+end
+
+if args[1] == "rescan" or not AREA then
+  refuel()
+  explore()
+  turnTo(S.homeHeading)
 end
 
 local rounds = 0

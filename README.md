@@ -35,7 +35,7 @@ jars; see [PLAN.md](PLAN.md).
 | Role | Turtle | Notes |
 |---|---|---|
 | miner | Advanced Turtle + Diamond Pickaxe + **Geo Scanner** | wireless modem + coal in its inventory, chest behind its home spot |
-| forester | Advanced Turtle + Diamond Pickaxe + **Compass** | saplings in slot 1, wireless modem + coal, chest behind, a lane of dirt/grass spots (see `forester.lua`) |
+| forester | Advanced Turtle + Diamond Pickaxe + **Compass** | saplings in slot 1, coal; home spot inside a **fenced pen**, chest behind it (see below) |
 | assembler | Advanced Turtle + **Crafting Table** + **Wireless Modem** | builds the others (see below) |
 
 Upgrades are crafted next to the turtle in a crafting grid (pickaxe left of
@@ -63,6 +63,21 @@ in slot 1 first.
 | Wired Modem / full block | 8 stone + 1 redstone; then craft it alone |
 | Wireless Modem | 8 stone, 1 ender pearl |
 | Advanced Monitor ×4 | 8 gold ingot, 1 glass pane |
+
+## Forester pens
+
+Fence off an area with dirt or grass as the floor (fence, wall, gate or any
+solid block as the border). Put the forester's home spot inside the pen,
+facing in, with its chest directly behind it — the chest can be part of the
+fence line.
+
+On its first start the forester walks every open cell of the pen once,
+clearing grass and flowers and felling any trees already in there, and caches
+the pen (`forester.area`). It plants a tree on every 3rd cell (counted from
+home) and walks the cells between as paths, so inner fences and odd shapes are
+fine as long as everything is connected. If the fence has a gap it stops at
+1024 cells and says the pen is not closed. After changing the fence run
+`forester rescan`.
 
 ## Wired or wireless
 
