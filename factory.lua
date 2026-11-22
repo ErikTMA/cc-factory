@@ -178,7 +178,9 @@ end
 
 -- ------------------------------------------------------------------ chat --
 -- `$build` on the build spot ties the world to the home frame; `$home [role]`
--- registers the block the player stands on, facing the way they look.
+-- registers the block at the player's HEAD (a player is 2 high: standing
+-- next to a home's chest and modem, the head is where the turtle goes),
+-- facing the way they look.
 -- `pos` = { x, y, z, yaw } of the player in world coordinates (or nil).
 local function facingOf(yaw)
   -- Minecraft yaw: 0 = south, 90 = west, 180 = north, 270 = east
@@ -191,7 +193,7 @@ function M.chatCommand(F, user, text, pos)
   if not cmd then return nil end
   cmd = cmd:lower()
   if cmd == "help" then
-    return "$build (stand on the build spot), $home [miner|forester] (stand on a home spot, look the way the turtle should face), $homes, $removehome <id>"
+    return "$build (stand on the build spot), $home [miner|forester] (head where the turtle goes, look the way it should face), $homes, $removehome <id>"
   elseif cmd == "homes" then
     local parts = {}
     for _, h in ipairs(F.homes) do parts[#parts + 1] = ("#%d %s %d,%d,%d"):format(h.id, h.role, h.x, h.y, h.z) end
@@ -211,10 +213,11 @@ function M.chatCommand(F, user, text, pos)
     if not F.anchor then return "stand on the build spot and type $build first" end
     local role = arg ~= "" and arg or nil
     if role and role ~= "miner" and role ~= "forester" and role ~= "off" then return "role must be miner, forester or off" end
-    local h = homes.add(F, { x = wx - F.anchor.wx, y = wy - F.anchor.wy, z = wz - F.anchor.wz,
+    local hy = wy + 1 -- the head block
+    local h = homes.add(F, { x = wx - F.anchor.wx, y = hy - F.anchor.wy, z = wz - F.anchor.wz,
                              facing = facingOf(pos.yaw or 0), role = role, source = "chat" })
     F.note = ("%s added home %d via chat"):format(user, h.id)
-    return ("home %d at %d %d %d facing %s: %s"):format(h.id, wx, wy, wz, h.facing, h.role)
+    return ("home %d at %d %d %d (your head) facing %s: %s"):format(h.id, wx, hy, wz, h.facing, h.role)
   end
   return "unknown command; $help"
 end

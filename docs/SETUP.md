@@ -226,9 +226,10 @@ If the surveyor can't reach your cables and you have no GPS yet: put a **Chat
 Box** and a **Player Detector** (Advanced Peripherals) next to the base.
 
 - Stand **on the build spot** and type `$build` in chat.
-- Stand **on a home spot**, look the way the turtle should face, and type
-  `$home miner` (or `$home forester`, or just `$home` and pick the role on the
-  monitor).
+- Stand so your **head** is where the turtle should sit (next to its chest
+  and modem; the home is the block at your head, one above your feet), look
+  the way the turtle should face, and type `$home miner` (or `$home
+  forester`, or just `$home` and pick the role on the monitor).
 - `$homes` lists the homes, `$removehome <id>` removes one, `$help` shows all.
 
 ## When something doesn't work

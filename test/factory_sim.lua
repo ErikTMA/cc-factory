@@ -1355,10 +1355,12 @@ do
   check(r1:find("build spot set at 100 70 200"), "$build: " .. r1)
   local r2 = factory.chatCommand(F2, "alex", "$home miner", { x = 104.5, y = 71.0, z = 197.9, yaw = 180 })
   local h = F2.homes[1]
-  check(h and h.x == 4 and h.y == 1 and h.z == -3 and h.facing == "north" and h.role == "miner" and h.source == "chat",
-    "home from the player's block and look direction: " .. r2)
+  -- the turtle goes where the player's HEAD is (next to the chest and modem; a
+  -- player is 2 high and can't stand any higher there): feet Y 71 -> home Y 2
+  check(h and h.x == 4 and h.y == 2 and h.z == -3 and h.facing == "north" and h.role == "miner" and h.source == "chat",
+    ("home at the player's head block and look direction: y %s: %s"):format(tostring(h and h.y), r2))
   check(factory.chatCommand(F2, "alex", "$home miner", nil):find("can't see"), "no detector: says so")
-  check(factory.chatCommand(F2, "alex", "$homes"):find("#1 miner 4,1,%-3"), "$homes lists it")
+  check(factory.chatCommand(F2, "alex", "$homes"):find("#1 miner 4,2,%-3"), "$homes lists it")
   check(F2.cfg.build.y == 70, "the build spot's Y comes from $build")
   check(factory.chatCommand(F2, "alex", "hello") == nil, "ordinary chat is ignored")
 end
