@@ -21,11 +21,24 @@ L.REPLY_TIMEOUT = 10
 
 local CFG_FILE, VERSION_FILE = "agent.cfg", "version"
 
--- Items that may sit in the upgrade slot that the modem borrows.
-local SWAPPABLE = { [C.SCANNER_ITEM] = true, ["minecraft:compass"] = true }
+-- The toolbelt. A turtle has one upgrade slot besides its pickaxe; it keeps
+-- its tools in its inventory (never unloaded) and swaps the one it needs in:
+-- HOME tools live in that slot (the compass, the Geo Scanner), VISITING ones
+-- are swapped in for a moment (the wireless modem to talk, the Environment
+-- Detector to look for items) and the home tool goes back.
+local HOME_ITEMS = { [C.SCANNER_ITEM] = true, ["minecraft:compass"] = true }
+local VISITING_ITEMS = { [C.DETECTOR_ITEM] = true }
+for name in pairs(C.MODEM_ITEMS) do VISITING_ITEMS[name] = true end
+-- (kept, never unloaded: every tool but the modems, kept as MODEM_ITEMS)
+local SWAPPABLE = { [C.SCANNER_ITEM] = true, ["minecraft:compass"] = true, [C.DETECTOR_ITEM] = true }
 -- Geo Scanner type is "geo_scanner" in AP 0.8 (1.21) and "geoScanner" before.
 local SCANNER_TYPES = { "geo_scanner", "geoScanner" }
-local SWAPPABLE_TYPE = { geo_scanner = true, geoScanner = true, compass = true }
+-- what may be in the swap slot (everything but the pickaxe side)
+local SWAPPABLE_TYPE = { geo_scanner = true, geoScanner = true, compass = true,
+                         environment_detector = true, modem = true }
+-- a tool's item, by the peripheral type it gives
+local TOOL_ITEM = { geo_scanner = { [C.SCANNER_ITEM] = true }, compass = { ["minecraft:compass"] = true },
+                    environment_detector = { [C.DETECTOR_ITEM] = true }, modem = C.MODEM_ITEMS }
 
 local EQUIP = { left = turtle.equipLeft, right = turtle.equipRight }
 
@@ -98,34 +111,53 @@ function L.hasModem()
       or L.findItem(function(n) return C.MODEM_ITEMS[n] end) ~= nil
 end
 
--- Put the borrowed upgrade back if the modem is in its place (e.g. after a
--- restart in the middle of a talk). Returns true when nothing is left to fix.
+-- Put the home tool back if a visiting one is in its place (e.g. after a
+-- restart in the middle of a talk or a look around). Returns true when
+-- nothing is left to fix.
 function L.restoreUpgrade()
-  local side = L.equippedSide("modem")
-  local slot = L.findItem(function(n) return SWAPPABLE[n] end)
+  local side
+  for _, s in ipairs({ "left", "right" }) do
+    local t = peripheral.getType(s)
+    if t == "modem" or t == "environment_detector" then side = s end
+  end
+  local slot = L.findItem(function(n) return HOME_ITEMS[n] end)
   if side and slot then
     turtle.select(slot); EQUIP[side](); turtle.select(1)
   end
   return not (side and slot)
 end
 
--- Run fn() with a wireless modem equipped and rednet open; nil if no modem.
-function L.withModem(fn)
-  local side = L.equippedSide("modem") or adjacentModem()
-  local swapped = false
-  if not side then
-    local slot = L.findItem(function(n) return C.MODEM_ITEMS[n] end)
-    side = swappableSide()
-    if not slot or not side then return nil end
-    turtle.select(slot); EQUIP[side](); turtle.select(1)
-    swapped = true
-  end
-  rednet.open(side)
-  local ok, result = pcall(fn)
-  rednet.close(side)
-  if swapped then L.restoreUpgrade() end
+-- Run fn(peripheral, side) with the tool of peripheral type `ptype` equipped:
+-- the one already on, or swapped in from the inventory for the call (the
+-- tool that was there goes back after, also when fn fails). nil if the
+-- turtle has no such tool.
+function L.withTool(ptype, fn)
+  local side = L.equippedSide(ptype)
+  if side then return fn(peripheral.wrap(side), side) end
+  local items = TOOL_ITEM[ptype] or {}
+  local slot = L.findItem(function(n) return items[n] end)
+  side = swappableSide()
+  if not slot or not side then return nil end
+  turtle.select(slot); EQUIP[side](); turtle.select(1) -- (what was there is in `slot` now)
+  local ok, result = pcall(fn, peripheral.wrap(side), side)
+  turtle.select(slot); EQUIP[side](); turtle.select(1)
   if not ok then error(result, 0) end
   return result
+end
+
+-- Run fn() with a wireless modem equipped and rednet open; nil if no modem.
+-- (A modem block next to the turtle does as well: its home's.)
+function L.withModem(fn)
+  local function talking(side)
+    rednet.open(side)
+    local ok, result = pcall(fn)
+    rednet.close(side)
+    if not ok then error(result, 0) end
+    return result
+  end
+  local adjacent = adjacentModem()
+  if adjacent and not L.equippedSide("modem") then return talking(adjacent) end
+  return L.withTool("modem", function(_, side) return talking(side) end)
 end
 
 -- --------------------------------------------------------------- updates --

@@ -20,6 +20,7 @@ local C = {
     ["computercraft:wireless_modem_advanced"] = true,
   },
   SCANNER_ITEM = "advancedperipherals:geo_scanner",
+  DETECTOR_ITEM = "advancedperipherals:environment_detector", -- scanEntities: items lying around
 }
 
 -- ----------------------------------------------------------------- fuel --

@@ -209,6 +209,12 @@ local function makeEnv(T, api, scanner, files, bus, id)
     find = function(t)
       if t == "geo_scanner" and T and (PTYPE[T.left or ""] == t or PTYPE[T.right or ""] == t) then return scanner end
     end,
+    -- what is equipped on that side, as CC wraps it
+    wrap = function(side)
+      local t = PTYPE[T and T[side] or ""]
+      if t == "geo_scanner" then return scanner end
+      if t then return {} end
+    end,
   }
   env.os = setmetatable({ getComputerLabel = function() return T and T.label end,
                           epoch = function() return (bus and bus.clock or 0) * 1000 end },

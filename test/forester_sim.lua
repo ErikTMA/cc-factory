@@ -363,12 +363,47 @@ local function makeEnv(T, api, files, onSleep)
   env.turtle = api
   env.require = function(name) return assert(load(assert(MODULES[name], name), name, "t", env))() end
   local compass = { getFacing = function() return ({ [0] = "north", "east", "south", "west" })[T.h] end }
-  local PTYPE = { ["minecraft:compass"] = "compass", ["computercraft:wireless_modem_normal"] = "modem" }
+  local PTYPE = { ["minecraft:compass"] = "compass", ["computercraft:wireless_modem_normal"] = "modem",
+                  ["advancedperipherals:geo_scanner"] = "geo_scanner",
+                  ["advancedperipherals:environment_detector"] = "environment_detector" }
+  -- like AP 0.8.2a: scanBlocks lists every block but air in the cube, tags as a list
+  local scanner = { scanBlocks = function(r)
+    T.scans = (T.scans or 0) + 1
+    local out = {}
+    for dx = -r, r do for dy = -r, r do for dz = -r, r do
+      local b = T.W.get(T.x + dx, T.y + dy, T.z + dz)
+      if b then
+        local tags = {}
+        if b:find("_log$") then tags[#tags + 1] = "minecraft:logs" end
+        if b:find("_leaves$") then tags[#tags + 1] = "minecraft:leaves" end
+        out[#out + 1] = { name = b, tags = tags, x = dx, y = dy, z = dz }
+      end
+    end end end
+    return out
+  end }
+  -- scanEntities lists every entity in the box; a dropped item is "minecraft:item"
+  local detector = { scanEntities = function(r)
+    T.looks = (T.looks or 0) + 1
+    local out = {}
+    for _, it in ipairs(T.W.items) do
+      if T.W.clock - it.t < 300 and math.abs(it.x - T.x) <= r and math.abs(it.z - T.z) <= r and math.abs(0 - T.y) <= r then
+        out[#out + 1] = { name = "minecraft:item", x = it.x - T.x, y = 0.1 - (T.y + 0.5), z = it.z - T.z }
+      end
+    end
+    return out
+  end }
   T.left, T.right = T.left or "minecraft:diamond_pickaxe", T.right or (not T.noCompass and "minecraft:compass" or nil)
   env.peripheral = {
     getType = function(side) return PTYPE[T[side] or ""] end,
     find = function(t)
       if t == "compass" and (T.left == "minecraft:compass" or T.right == "minecraft:compass") then return compass end
+    end,
+    wrap = function(side)
+      local t = PTYPE[T[side] or ""]
+      if t == "compass" then return compass end
+      if t == "geo_scanner" then return scanner end
+      if t == "environment_detector" then return detector end
+      if t then return {} end
     end,
   }
   local function equip(side)
@@ -379,7 +414,8 @@ local function makeEnv(T, api, files, onSleep)
   end
   api.equipLeft = function() return equip("left") end
   api.equipRight = function() return equip("right") end
-  env.os = setmetatable({ getComputerLabel = function() return "F" end, reboot = function() error("REBOOT") end },
+  env.os = setmetatable({ getComputerLabel = function() return "F" end, reboot = function() error("REBOOT") end,
+                          epoch = function() return (1700000000 + (T.W and T.W.clock or 0)) * 1000 end },
                         { __index = os })
   env.rednet = {
     open = function(side) assert(PTYPE[T[side] or ""] == "modem"); T.open = true end,
@@ -971,6 +1007,79 @@ do
   for _, m in ipairs(T.sent or {}) do if m.wantFuel then pushed = true end end
   check(not pushed, "never the wired-network fuel request")
   check(T.x == 0 and T.z == 0, "at home")
+end
+
+print("scenario: with a Geo Scanner in its toolbelt it fells every log by its scanned position,")
+print("          logs floating in the leaves too; the compass goes back in its slot")
+do
+  local W = newWorld()
+  local T, api = newTurtle(W, 8000)
+  T.inv[1] = { name = SAP, count = 64 }
+  T.inv[6] = { name = "advancedperipherals:geo_scanner", count = 1 }
+  local n = 0
+  local floating = 0
+  local function sl()
+    n = n + 1
+    if n == 1 then
+      local i = 0
+      for key, v in pairs(W.b) do
+        if isSap(v) then
+          local x, y, z = key:match("^(-?%d+),(-?%d+),(-?%d+)$")
+          x, y, z = tonumber(x), tonumber(y), tonumber(z)
+          W.set(x, y, z, nil)
+          i = i + 1
+          if i % 2 == 0 then W.grow2x2(x, y, z) else W.growBent(x, y, z) end
+          -- a log in the canopy touching no other log (big modded trees)
+          W.set(x + 2, y + 5, z + 2, LOG); floating = floating + 1
+        end
+      end
+      return
+    end
+    error("END OF TEST")
+  end
+  local ok, err = run(makeEnv(T, api, {}, sl), "10")
+  check(tostring(err):find("END OF TEST") ~= nil, "two rounds (" .. tostring(err) .. ")")
+  check(W.count(LOG) == 0, ("every log felled, %d floating ones too: %d left"):format(floating, W.count(LOG)))
+  check((T.scans or 0) > 0, "it scanned: " .. tostring(T.scans))
+  local kept = false
+  for i = 1, 16 do if T.inv[i] and T.inv[i].name == "advancedperipherals:geo_scanner" then kept = true end end
+  check(T.right == "minecraft:compass" and kept, "compass back in its slot, scanner in its toolbelt")
+end
+
+print("scenario: with an Environment Detector it finds every item lying in the pen after each tree")
+print("          (preparing too: no blind sweep), wherever it fell; the compass goes back")
+do
+  local ACACIA = "minecraft:acacia_sapling"
+  local W = newWorld()
+  local T, api = newTurtle(W, 8000)
+  T.inv[1] = { name = SAP, count = 64 }
+  T.inv[4] = { name = "computercraft:wireless_modem_normal", count = 1 }
+  T.inv[6] = { name = "advancedperipherals:environment_detector", count = 1 }
+  local B = fakeBase(W, T, { [ACACIA] = 64 }, { [SAP] = true })
+  local n, dropped = 0, 0
+  local function sl()
+    n = n + 1
+    if n == 1 then
+      W.growAll()                    -- the oak spots grow
+      B.plant = { [ACACIA] = true }  -- acacia now: PREPARE clears the old spots
+      return
+    end
+    if n == 2 then
+      -- items far from any route (corners), as if dropped by decaying leaves
+      W.pickedOld = 0
+      for _, c in ipairs({ { 8, -18 }, { -8, -18 }, { 8, -1 }, { -8, -10 } }) do
+        W.drop(c[1], c[2], SAP, 1); W.items[#W.items].old = true; dropped = dropped + 1
+      end
+      return
+    end
+    if n < 4 then return end
+    error("END OF TEST")
+  end
+  local ok, err = run(makeEnv(T, api, {}, sl), "10")
+  check(tostring(err):find("END OF TEST") ~= nil, "rounds ran (" .. tostring(err) .. ")")
+  check((T.looks or 0) > 0, "it looked with the detector: " .. tostring(T.looks))
+  check((W.pickedOld or 0) == dropped, ("every item picked up: %d of %d"):format(W.pickedOld or 0, dropped))
+  check(T.right == "minecraft:compass", "compass back in its slot")
 end
 
 print("scenario: starts without saplings, asks the base and takes them from its home chest")

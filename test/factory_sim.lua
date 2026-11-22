@@ -657,6 +657,12 @@ local function turtleEnv(T)
         end
       end
     end,
+    wrap = function(side)
+      local t = PTYPE[T[side] or ""]
+      if t == "geo_scanner" then return scannerFor(T) end
+      if t == "compass" then return { getFacing = function() return ({ [0] = "north", "east", "south", "west" })[T.h] end } end
+      if t then return {} end
+    end,
     call = function(side, method)
       if side == "front" and method == "turnOn" then
         local x, y, z = front()

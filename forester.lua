@@ -56,9 +56,10 @@ local CFG = {
   keepSaplings = 16,   -- saplings it keeps of each kind when unloading
   keepFuel = 16,       -- fuel items (charcoal...) it keeps when unloading (all kinds)
   minFree = 3,         -- free slots below this during a round: home to unload first
-  sweepDelay = 90,     -- s after a round that felled trees: the next round starts this soon
-  sweepRounds = 2,     -- rounds that sweep around a felled tree (leaves decay for minutes)
-  sweepRadius = 4,     -- cells around a felled trunk its leaves reach (cherry, acacia: 4)
+  sweepDelay = 90,     -- s between rounds while there is something to sweep
+  sweepFor = 480,      -- s a felled tree's ground is swept: leaves decay for minutes (big
+                       -- trees longer), a dropped sapling lies 300 s before it despawns
+  sweepRadius = 6,     -- cells around a felled trunk its leaves reach (big modded trees)
   supply = { fuel = 16, saplings = 16, bonemeal = 32 }, -- what it asks the base for at home
   treeFuel = 2 * 40 + 10, -- fuel one tree may take (climb up and down, maxHeight)
   minRoundFuel = 60,   -- below this (after filling up at home) it waits at home
@@ -150,6 +151,9 @@ local function isClearable(b) return isLeaves(b) or isPlant(b) or isSapling(b) e
 local function isSoil(name)
   return name and ((name:find("dirt") and not name:find("path")) or name:find("grass_block")) and true or false
 end
+
+-- Real time in seconds (survives reboots and server restarts, unlike os.clock).
+local function now() return os.epoch("utc") / 1000 end
 
 -- ------------------------------------------------------------- movement --
 local function turnTo(h)
@@ -563,6 +567,158 @@ chop = function()
   end
 end
 
+-- With a Geo Scanner (swapped in from its toolbelt): every log within its
+-- reach, exactly where it is (branches, logs inside the leaves, bent and 2x2
+-- trunks alike), dug one by one, nearest first. Logs in another spot's
+-- column (a standing neighbour) are that tree's. It moves only over the
+-- pen's cells, up its own column first; then back to this column and down.
+-- False without a scanner (the caller feels its way instead).
+local function scanBlocks(p)
+  for _ = 1, 20 do
+    local blocks, err = p.scanBlocks(8)
+    if blocks then return blocks end
+    if not tostring(err):lower():find("cooldown") then return nil end
+    sleep(0.5)
+  end
+end
+
+-- One step at height toward heading h (digging leaves, logs, plants in
+-- the way); only over the pen, and never into another spot's column (its
+-- tree is that spot's: cutting through its trunk would leave it floating).
+-- True when it moved.
+local TRUNK -- the column of the tree being felled
+local function stepOver(h)
+  if not overPen(h) then return false end
+  local d = DIRS[h]
+  local k = key(S.pos.x + d[1], S.pos.z + d[3])
+  if isSpot[k] and k ~= TRUNK then return false end
+  turnTo(h)
+  for _ = 1, 4 do
+    if move("fwd", turtle.forward) then return true end
+    local ok, b = turtle.inspect()
+    if ok and not (isLog(b) or isLeaves(b) or isClearable(b)) then return false end
+    turtle.dig()
+  end
+  return false
+end
+
+-- To (x, up, z), digging its way (the last step digs what is there).
+local function reach(x, up, z)
+  while S.up < up do
+    local ok, b = turtle.inspectUp()
+    if ok and not (isLog(b) or isLeaves(b) or isClearable(b)) then return false end
+    if not forceUp() then return false end
+  end
+  for _ = 1, 64 do
+    if S.pos.x == x and S.pos.z == z then break end
+    local h
+    if S.pos.x ~= x then h = S.pos.x < x and 1 or 3 else h = S.pos.z < z and 2 or 0 end
+    if not stepOver(h) then
+      -- the other axis first, then this one
+      local h2
+      if h == 1 or h == 3 then
+        if S.pos.z ~= z then h2 = S.pos.z < z and 2 or 0 end
+      elseif S.pos.x ~= x then h2 = S.pos.x < x and 1 or 3 end
+      if not (h2 and stepOver(h2)) then return false end
+    end
+  end
+  while S.up > up do if not forceDown() then return false end end
+  return S.pos.x == x and S.pos.z == z
+end
+
+local function scanFell()
+  local blocks = link.withTool("geo_scanner", scanBlocks)
+  if not blocks then return false end
+  local tx, tz = S.pos.x, S.pos.z
+  TRUNK = key(tx, tz)
+  -- every scanned log over the pen, by position
+  local at = {}
+  for _, b in ipairs(blocks) do
+    if isLog(b) then
+      local x, z = tx + math.floor(b.x + 0.5), tz + math.floor(b.z + 0.5)
+      local up = S.up + math.floor(b.y + 0.5)
+      if up >= 0 and up <= CFG.maxHeight and AREA.cells[key(x, z)] then
+        at[x .. "," .. up .. "," .. z] = { x = x, up = up, z = z }
+      end
+    end
+  end
+  -- which of them are this tree's: pieces of logs touching (diagonals too,
+  -- like branches); a piece with this trunk in it is this tree; one standing
+  -- on another spot's column is that tree's (a 2x2 trunk stands on path
+  -- columns too); a loose one (a log alone in the leaves) is the nearest
+  -- spot's
+  local logs, seen = {}, {}
+  local function nearestSpotIsUs(p)
+    local mine = math.max(math.abs(p.x - tx), math.abs(p.z - tz))
+    for dx = -mine, mine do for dz = -mine, mine do
+      local k = key(p.x + dx, p.z + dz)
+      if isSpot[k] and k ~= TRUNK and math.max(math.abs(dx), math.abs(dz)) < mine then return false end
+    end end
+    return true
+  end
+  for k0, p0 in pairs(at) do
+    if not seen[k0] then
+      local piece, queue, ours, theirs = {}, { p0 }, false, false
+      seen[k0] = true
+      while #queue > 0 do
+        local p = table.remove(queue)
+        piece[#piece + 1] = p
+        local col = key(p.x, p.z)
+        if col == TRUNK then ours = true elseif isSpot[col] then theirs = true end
+        for dx = -1, 1 do for dy = -1, 1 do for dz = -1, 1 do
+          local nk = (p.x + dx) .. "," .. (p.up + dy) .. "," .. (p.z + dz)
+          if at[nk] and not seen[nk] then seen[nk] = true; queue[#queue + 1] = at[nk] end
+        end end end
+      end
+      local take = ours or (not theirs and nearestSpotIsUs(piece[1]))
+      if take then for _, p in ipairs(piece) do logs[#logs + 1] = p end end
+    end
+  end
+  while #logs > 0 do
+    local bi, bd = 1, math.huge
+    for i, l in ipairs(logs) do
+      local d = math.abs(l.x - S.pos.x) + math.abs(l.up - S.up) + math.abs(l.z - S.pos.z)
+      if d < bd then bi, bd = i, d end
+    end
+    local l = table.remove(logs, bi)
+    reach(l.x, l.up, l.z)
+  end
+  -- back over its own column (the trunk is gone: open), then down
+  reach(tx, math.max(S.up, 1), tz)
+  return true
+end
+
+-- With an Environment Detector (swapped in from its toolbelt): every item
+-- lying in the pen within its reach (saplings from decaying leaves: the next
+-- trees), each taken from the path cell next to it. False without one.
+local freeSlots, nextTo, walkToFace -- (below)
+local function lookForItems()
+  if S.up ~= 0 then return false end
+  local found = link.withTool("environment_detector", function(p)
+    for _ = 1, 20 do
+      local list, err = p.scanEntities(8)
+      if list then return list end
+      if not tostring(err):lower():find("cooldown") then return {} end
+      sleep(0.5)
+    end
+    return {}
+  end)
+  if not found then return false end
+  local cells, list = {}, {}
+  for _, e in ipairs(found) do
+    if e.name == "minecraft:item" and (e.y or 0) < 1.5 and (e.y or 0) > -1.5 then
+      local k = key(S.pos.x + math.floor(e.x + 0.5), S.pos.z + math.floor(e.z + 0.5))
+      if AREA.cells[k] and not cells[k] then cells[k] = true; list[#list + 1] = k end
+    end
+  end
+  table.sort(list)
+  for _, k in ipairs(list) do
+    if freeSlots() < 1 then break end
+    walkToFace(k)
+  end
+  return true
+end
+
 -- Facing a log from a path cell: step into the trunk, fell the whole tree,
 -- come back out, facing the cell again; replant if asked.
 fell = function(replant)
@@ -571,9 +727,9 @@ fell = function(replant)
   if not move("fwd", turtle.forward) then return end
   -- its leaves will decay and drop saplings around it: sweep there soon
   S.sweep = S.sweep or {}
-  S.sweep[key(S.pos.x, S.pos.z)] = CFG.sweepRounds
+  S.sweep[key(S.pos.x, S.pos.z)] = now() -- (swept until CFG.sweepFor after this)
   save()
-  chop()
+  if not scanFell() then chop() end
   while S.up > 0 do
     if not forceDown() then error("Cannot get back down", 0) end
   end
@@ -762,14 +918,14 @@ end
 
 local function dist(a, x, z) return math.abs(a.x - x) + math.abs(a.z - z) end
 
-local function freeSlots()
+freeSlots = function()
   local n = 0
   for i = 1, 16 do if turtle.getItemCount(i) == 0 then n = n + 1 end end
   return n
 end
 
 -- The path cell next to `k` it can reach soonest: { x, z, h } facing `k`.
-local function nextTo(k)
+nextTo = function(k)
   local sx, sz = unkey(k)
   local best, bestLen
   for h = 0, 3 do
@@ -781,6 +937,23 @@ local function nextTo(k)
     end
   end
   return best
+end
+
+-- Go next to cell `k`, face it and take what lies there.
+walkToFace = function(k)
+  local best = nextTo(k)
+  if best and walkTo(best) then
+    turnTo(best.h)
+    collect()
+    return true
+  end
+  return false
+end
+
+-- After a tree (or a spot) while felled trees may still be dropping: look
+-- for items around with the Environment Detector.
+local function afterTree()
+  if S.sweep and next(S.sweep) then lookForItems() end
 end
 
 -- PREPARE: a cell whose floor isn't dirt or grass: stand on it and fix it.
@@ -809,6 +982,7 @@ local function clearOld(k)
     local ok, b = turtle.inspect()
     if ok and isLog(b) then fell(false)
     elseif ok and isClearable(b) then turtle.dig() end
+    afterTree()
   end
   AREA.clear[k] = nil
   saveArea()
@@ -821,17 +995,26 @@ local function visitSpot(sk)
   if best and walkTo(best) then
     turnTo(best.h)
     tend()
+    afterTree()
   end
   return true
 end
 
 -- Sweep under the trees felled lately, where their leaves drop saplings
 -- (the next trees: without them it runs out of kinds), apples and sticks:
--- every cell within CFG.sweepRadius of the trunk. It stands on path cells
+-- every cell within CFG.sweepRadius of the trunk, every trip out (prepare
+-- or a round) until CFG.sweepFor after it was felled. It stands on path cells
 -- and takes what lies in the 4 cells around; a cell is checked once. Each
--- felled tree is swept CFG.sweepRounds times.
 local function sweep()
-  if not S.sweep or not next(S.sweep) then return end
+  if not S.sweep then return end
+  -- (with an Environment Detector it looks after every tree instead)
+  if link.findItem(function(n) return n == C.DETECTOR_ITEM end) or link.equippedSide("environment_detector") then return end
+  for t, at in pairs(S.sweep) do
+    -- (older states counted rounds, not the time it was felled)
+    if type(at) ~= "number" or at < 1000 or now() - at > CFG.sweepFor then S.sweep[t] = nil end
+  end
+  save()
+  if not next(S.sweep) then return end
   local r = CFG.sweepRadius
   local want, cells = {}, {}
   for k in pairs(AREA.cells) do
@@ -875,8 +1058,6 @@ local function sweep()
       end
     end
   end
-  for t, n in pairs(S.sweep) do S.sweep[t] = n > 1 and n - 1 or nil end
-  save()
 end
 
 -- (at home) Enough fuel to go out? Else fill up, or wait here (false).
@@ -954,6 +1135,7 @@ end
 -- cleared. Nothing is planted before. Without dirt from the base it waits.
 local function prepare()
   if not fueled() then return end
+  sweep() -- (trees it felled clearing old spots drop saplings too)
   local keys, n = {}, 0
   for k in pairs(AREA.clear or {}) do keys[#keys + 1] = k end
   for k in pairs(cellsNeedingDirt()) do keys[#keys + 1] = k; n = n + 1 end

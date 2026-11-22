@@ -24,6 +24,18 @@ over rednet. Friends-only server: base-ID pinning, no signing.
   (`Advancedperipherals/peripherals.toml`): free up to r 8, 9-16 costs fuel,
   2 s cooldown. The Geo Scanner has only `scanBlocks` and `chunkAnalyze`:
   no `scanEntities` (that setting belongs to another peripheral).
+- Environment Detector (AP 0.8.2a, `EnvironmentDetectorPeripheral`, type
+  `environment_detector`, item `advancedperipherals:environment_detector`,
+  also a turtle upgrade): `scanEntities(r)` lists EVERY entity in the box of
+  r (`ALL_ENTITY_TYPES`, alive, up to 4096), dropped items included, through
+  the generic Entity converter: `name = "minecraft:item"`, x/y/z relative to
+  the turtle, id, uuid (no item stack). Free up to r 8, 16 with cost, 2 s
+  cooldown. A turtle can find every item lying around without walking over it.
+- Iron Furnaces 4.3.2: its block entity is a `WorldlyContainer`; the item
+  capability is `InvWrapper` (whole inventory) for a null side,
+  `SidedInvWrapper` otherwise. CC (`CapabilityUtil.getCapability`) asks with
+  a null side first: slots as vanilla, input 1, fuel 2, output 3, augments
+  4-6, generator fuel 7.
 - Turtle movement (`TurtleMoveCommand.canEnter` + `WorldUtil.isEmptyBlock`,
   CC 1.120.2): it may move into air **or any liquid** (water, lava), or a
   block that `canBeReplaced()`. Liquids never block a turtle: no need to dig
