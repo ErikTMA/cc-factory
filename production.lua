@@ -47,23 +47,29 @@ end
 -- What an idle furnace should smelt next (and how much of it may go, at
 -- most: what is kept back), or nil. avail(item) = stock left after what this
 -- pass already handed out.
+-- Logs beyond the ones kept for planks (keepLogs in all, whatever kinds: a
+-- mixed forest has many kinds, each of them a few): the kind there is most
+-- of, and how many may go. nil when there are none to spare.
+local function spareLogs(cfg, stock, avail)
+  local total, best = 0, nil
+  for _, item in ipairs(sortedKeys(stock)) do
+    local s = R.smelt(item)
+    if s and s.out == "minecraft:charcoal" and avail(item) > 0 then
+      total = total + avail(item)
+      if not best or avail(item) > avail(best) then best = item end
+    end
+  end
+  if best and total > cfg.keepLogs then return best, math.min(avail(best), total - cfg.keepLogs) end
+end
+
 local function pickInput(cfg, hammerOn, stock, avail, blast)
   local items = sortedKeys(stock)
   local hammer = hasHammer(stock)
   -- fuel first: below its charcoal target a furnace makes charcoal before
-  -- anything else (without fuel nothing smelts; turtles run on it too).
-  -- keepLogs are kept in all, whatever kinds (a mixed forest has many kinds,
-  -- each of them a few): the kind there is most of goes in.
+  -- anything else (without fuel nothing smelts; turtles run on it too)
   if not blast and avail("minecraft:charcoal") < cfg.charcoal then
-    local total, best = 0, nil
-    for _, item in ipairs(items) do
-      local s = R.smelt(item)
-      if s and s.out == "minecraft:charcoal" and avail(item) > 0 then
-        total = total + avail(item)
-        if not best or avail(item) > avail(best) then best = item end
-      end
-    end
-    if best and total > cfg.keepLogs then return best, math.min(avail(best), total - cfg.keepLogs) end
+    local log, n = spareLogs(cfg, stock, avail)
+    if log then return log, n end
   end
   for _, item in ipairs(items) do
     local s = R.smelt(item)
@@ -138,6 +144,19 @@ function P.smelt(S, cfg, hammerOn, stock, tinyOn, report)
         report[#report + 1] = ("  output not emptied: %d of %d moved (storage full?)"):format(moved, slots[3].count)
       end
     end
+    -- stuck: something in, no fuel, no charcoal or coal to give it, and
+    -- logs to spare: it goes back, so the furnace makes charcoal (fuelled
+    -- with logs) first; otherwise nothing ever smelts again
+    local noFuel = avail("minecraft:charcoal") <= 0 and avail("minecraft:coal") - (cfg.coalReserve or 0) <= 0
+    if slots[1] and not slots[2] and noFuel and not f.blast and avail("minecraft:charcoal") < cfg.charcoal then
+      local s = R.smelt(slots[1].name)
+      if not (s and s.out == "minecraft:charcoal") and spareLogs(cfg, stock, avail) then
+        local what = slots[1].name
+        S.storeSlot(f.name, 1)
+        if report then report[#report + 1] = ("  stuck without fuel: %s back to storage, logs first"):format(what) end
+        slots[1] = nil
+      end
+    end
     local items = slots[1] and slots[1].count or 0
     if not slots[1] then
       local item, most = pickInput(cfg, hammerOn, stock, avail, f.blast)
@@ -151,12 +170,24 @@ function P.smelt(S, cfg, hammerOn, stock, tinyOn, report)
     end
     if not (tinyOn and items > 0 and tinyFuel(S, f, slots, items, avail, planned))
        and (not slots[2] or slots[2].count < 4) and items > 0 then
+      local fuelled = false
       for _, fuel in ipairs(FUELS) do
         local reserve = fuel == "minecraft:coal" and cfg.coalReserve or 0
         local n = math.min(8, avail(fuel) - reserve)
         if n > 0 and (not slots[2] or slots[2].name == fuel) then
           planned[fuel] = (planned[fuel] or 0) + S.send(f.name, fuel, n, nil, 2)
+          fuelled = true
           break
+        end
+      end
+      -- no charcoal, no coal: spare logs burn (1.5 items each) until there
+      -- is charcoal again
+      if not fuelled and not slots[2] then
+        local log, n = spareLogs(cfg, stock, avail)
+        if log then
+          n = math.min(n, math.ceil(items / 1.5))
+          planned[log] = (planned[log] or 0) + S.send(f.name, log, n, nil, 2)
+          if report then report[#report + 1] = ("  fuelled with %d %s (no charcoal or coal)"):format(n, log) end
         end
       end
     end

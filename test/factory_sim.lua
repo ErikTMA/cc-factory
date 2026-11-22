@@ -1865,6 +1865,40 @@ do
   check(logs <= 60 - 16, "16 logs in all kept: " .. logs .. " smelted")
 end
 
+print("scenario: the live deadlock: both furnaces hold iron dust, no fuel anywhere, 33 logs: the")
+print("          dust goes back, logs go in, and logs fuel them until there is charcoal")
+do
+  local production = baseEnv.require("production")
+  local sent, stored = {}, {}
+  local slots = { furnace_a = { [1] = { name = "alltheores:iron_dust", count = 15 } },
+                  furnace_b = { [1] = { name = "alltheores:iron_dust", count = 3 } } }
+  local fake = {
+    furnaces = function() return { { name = "furnace_a" }, { name = "furnace_b" } } end,
+    slots = function(name) return slots[name] end,
+    storeSlot = function(name, slot)
+      local st = slots[name][slot]
+      if not st then return 0 end
+      stored[#stored + 1] = { name, slot, st.name }
+      slots[name][slot] = nil
+      return st.count
+    end,
+    send = function(to, item, n, _, slot) sent[#sent + 1] = { to, item, n, slot }; return n end,
+  }
+  local stock = { ["alltheores:iron_dust"] = 0, ["minecraft:oak_log"] = 20, ["minecraft:birch_log"] = 13 }
+  local report = {}
+  production.smelt(fake, production.DEFAULTS, false, stock, false, report)
+  local back, logsIn, logFuel = 0, 0, 0
+  for _, x in ipairs(stored) do if x[2] == 1 and x[3] == "alltheores:iron_dust" then back = back + 1 end end
+  for _, x in ipairs(sent) do
+    if x[4] == 1 and x[2]:find("_log$") then logsIn = logsIn + x[3] end
+    if x[4] == 2 and x[2]:find("_log$") then logFuel = logFuel + x[3] end
+  end
+  check(back >= 1, "the stuck dust went back to storage: " .. back .. " furnace(s)\n" .. table.concat(report, "\n"))
+  check(logsIn > 0, "logs went in for charcoal: " .. logsIn)
+  check(logFuel > 0, "and logs as fuel (no charcoal, no coal): " .. logFuel)
+  check(logsIn + logFuel <= 33 - 16, "16 logs still kept: " .. (logsIn + logFuel) .. " used")
+end
+
 print("scenario: no cobblestone, only coal (it was carried there and dropped its things): it marks")
 print("          the home chest with a piece of coal")
 do
