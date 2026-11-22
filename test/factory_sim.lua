@@ -1772,6 +1772,33 @@ do
   check((T.files["surveyor.state"] or ""):find("done") and not T.files["surveyor.state"]:find("stranded"), "and marked the survey done")
 end
 
+print("scenario: a new turtle's home is a pocket under a cable (like the live miner): it can't go")
+print("          straight down; it goes down a neighbouring column and walks in sideways")
+do
+  local ox, oy, oz = 500, 10, 500              -- the build spot
+  for x = ox - 2, ox + 8 do for z = oz - 2, oz + 8 do W.set(x, oy - 4, z, "minecraft:stone") end end -- floor
+  local tx, tz = ox + 3, oz + 2                -- home: (3,-3,2) from the build spot
+  -- a roof over the home and its straight neighbours (at -1 and -2), open only diagonally
+  for _, c in ipairs({ { 0, 0 }, { -1, 0 }, { 1, 0 }, { 0, 1 }, { 0, -1 }, { 1, 1 }, { -1, 1 }, { 1, -1 } }) do
+    W.set(tx + c[1], oy - 1, tz + c[2], c[1] == 0 and c[2] == 0 and "computercraft:cable" or "minecraft:dirt")
+    W.set(tx + c[1], oy - 2, tz + c[2], "minecraft:dirt")
+  end
+  -- the way in: down at (-1,-1) from the home, then x+1, then z+1 (the rest of row tz-1 stays shut)
+  local T = newTurtleEntity(95, ox, oy, oz, 0)
+  T.fuel = 500
+  T.right = "minecraft:compass"
+  for _, name in ipairs(manifest.turtle) do T.files[name] = repoFile(name) end
+  T.files["agent.cfg"] = ser({ role = "miner", base = 0, needsHome = true,
+                               slot = { x = 3, y = -3, z = 2, facing = "south" }, homeY = 10 })
+  T.files["fly.lua"] = 'require("travel").toHomeSlot()'
+  local env = turtleEnv(T)
+  local co = coroutine.create(function() env.shell.run("fly") end)
+  scheduler.cos[#scheduler.cos + 1] = { T = T, co = co }
+  runUntil(function() return coroutine.status(co) == "dead" end, 20000)
+  check(T.x == tx and T.y == oy - 3 and T.z == tz, ("reached the home pocket (%d,%d,%d)"):format(T.x - ox, T.y - oy, T.z - oz))
+  check(W.get(tx, oy - 1, tz) == "computercraft:cable" and W.get(tx - 1, oy - 1, tz) == "minecraft:dirt", "never dug")
+end
+
 print("scenario: a surveyor with no fuel and nothing to burn says so and waits")
 do
   W.set(60, 0, 60, "computercraft:computer_advanced")

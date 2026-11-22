@@ -73,14 +73,76 @@ local function refuel()
   turtle.select(1)
 end
 
+-- One move that may simply not be possible (something solid): a few tries
+-- (a mob may be in the way), then false. Never digs.
+local function tryStep(kind)
+  local move = ({ fwd = turtle.forward, up = turtle.up, down = turtle.down })[kind]
+  local attack = ({ fwd = turtle.attack, up = turtle.attackUp, down = turtle.attackDown })[kind]
+  for _ = 1, 3 do
+    if tmove.move(st, save, kind, move, apply) then return true end
+    attack()
+    sleep(0.5)
+  end
+  return false
+end
+
+-- Flat walk to (x, z) at the current height, x first or z first; on a block
+-- in the way it walks back the way it came and returns false.
+local function walkFlat(x, z, xFirst)
+  local done = {}
+  local function leg(axis)
+    while (axis == "x" and st.pos.x ~= x) or (axis == "z" and st.pos.z ~= z) do
+      local h
+      if axis == "x" then h = st.pos.x < x and 1 or 3 else h = st.pos.z < z and 2 or 0 end
+      turnTo(h)
+      if not tryStep("fwd") then return false end
+      done[#done + 1] = h
+    end
+    return true
+  end
+  local ok = leg(xFirst and "x" or "z") and leg(xFirst and "z" or "x")
+  if ok then return true end
+  for i = #done, 1, -1 do turnTo((done[i] + 2) % 4); step("fwd") end
+  return false
+end
+
+local function columnTo(x, z, cruise)
+  while st.pos.y < cruise do step("up") end
+  while st.pos.x ~= x do turnTo(st.pos.x < x and 1 or 3); step("fwd") end
+  while st.pos.z ~= z do turnTo(st.pos.z < z and 2 or 0); step("fwd") end
+end
+
+local function downTo(y)
+  while st.pos.y > y do if not tryStep("down") then return false end end
+  return true
+end
+
+-- Fly CLEARANCE above the build spot (and above the target), then down into
+-- the target. When it is roofed over (a home in a pocket, under a cable...):
+-- down a neighbouring column (nearest first, up to 3 away) and walk in
+-- sideways. Never digs.
 local function goTo(t)
-  -- fly CLEARANCE above the build spot (and above the target) on the way
   local cruise = math.max(CLEARANCE, t.y + 1)
-  while st.pos.y < cruise and (st.pos.x ~= t.x or st.pos.z ~= t.z) do step("up") end
-  while st.pos.x ~= t.x do turnTo(st.pos.x < t.x and 1 or 3); step("fwd") end
-  while st.pos.z ~= t.z do turnTo(st.pos.z < t.z and 2 or 0); step("fwd") end
-  while st.pos.y > t.y do step("down") end
-  while st.pos.y < t.y do step("up") end
+  if st.pos.x ~= t.x or st.pos.z ~= t.z then columnTo(t.x, t.z, cruise) end
+  if downTo(t.y) then
+    while st.pos.y < t.y do step("up") end
+    return
+  end
+  local around = {}
+  for dx = -3, 3 do for dz = -3, 3 do
+    if dx ~= 0 or dz ~= 0 then around[#around + 1] = { dx, dz } end
+  end end
+  table.sort(around, function(a, b)
+    local da, db = math.abs(a[1]) + math.abs(a[2]), math.abs(b[1]) + math.abs(b[2])
+    if da ~= db then return da < db end
+    return a[1] * 10 + a[2] < b[1] * 10 + b[2]
+  end)
+  for _, d in ipairs(around) do
+    columnTo(t.x + d[1], t.z + d[2], cruise)
+    if downTo(t.y) and (walkFlat(t.x, t.z, true) or walkFlat(t.x, t.z, false)) then return end
+  end
+  error(("No way into my home slot %d,%d,%d from above or the side (it is roofed over); clear a way and reboot me")
+    :format(t.x, t.y, t.z), 0)
 end
 
 -- Back from the home slot to the build spot (to be taken apart there).
