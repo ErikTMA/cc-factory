@@ -1706,6 +1706,16 @@ do
   factory.handle(F, 95, { type = "status", state = "resting", role = "forester", label = "f-95" }) -- (it took it)
   factory.serviceChests(F)
   check(has(chest, "minecraft:dirt") == 0, "after its next status the chest is emptied again")
+  -- its turn at the chest: what is in it goes to storage first (it takes all it finds)
+  chest.insert("minecraft:oak_log", 30)
+  ask(95, { fuel = 16 })
+  check(has(chest, "minecraft:oak_log") == 0 and has(chest, "minecraft:charcoal") == 16, "logs stored, then fuel sent")
+  -- but not another turtle's delivery waiting there
+  F.held["minecraft:chest_95"].by = 12345
+  ask(95, { fuel = 32 })
+  check(has(chest, "minecraft:charcoal") == 48, "another's delivery stays: its 16 + 32: " .. has(chest, "minecraft:charcoal"))
+  F.held = {}
+  factory.serviceChests(F)
   -- auto (nothing selected): the kind storage has most of
   F.saplings = {}
   ask(95, { saplings = 16 })
@@ -1726,6 +1736,16 @@ do
   r = ask(99, { fuel = 16 })
   check(r.chest == "minecraft:chest_98" and has(hc, "minecraft:charcoal") == 32, "the miner sharing it gets its own 16 there too")
   table.remove(F.homes); table.remove(F.homes); F.turtles[98] = nil; F.turtles[99] = nil
+  -- a turtle at a home without a chest on record claims it: the chest goes on the HOME
+  local cc = newInv("minecraft:chest_93", 840, 0, 800)
+  F.turtles[96] = { id = 96, role = "miner", seen = W.clock }
+  table.insert(F.homes, { id = 996, x = 840, y = 0, z = 801, facing = "north", role = "miner", source = "cfg", owner = 96 })
+  factory.handle(F, 96, { type = "status", state = "mark1", role = "miner", label = "m-96" })
+  cc.insert("minecraft:cobblestone", 1)
+  local rm = factory.handle(F, 96, { type = "status", state = "mark2", role = "miner", label = "m-96", marker = "minecraft:cobblestone" })
+  check(rm.type == "marked" and F.homes[#F.homes].chest == "minecraft:chest_93" and F.turtles[96].chest == nil,
+    "claimed: the chest is on its home, not on the turtle: " .. tostring(rm.type) .. " " .. tostring(F.homes[#F.homes].chest))
+  table.remove(F.homes); F.turtles[96] = nil; factory.serviceChests(F)
   -- a turtle whose chest the base doesn't know: it is told so (and claims it)
   F.turtles[97] = { id = 97, role = "miner", seen = W.clock }
   check(ask(97, { fuel = 16 }).type == "nochest", "no chest known: nochest")

@@ -622,20 +622,8 @@ local function explore()
 end
 
 -- ------------------------------------------------------------- the round --
-local function unload()
-  turnTo((S.homeHeading + 2) % 4) -- chest is behind the home spot
-  local ok, b = turtle.inspect()
-  if not (ok and b.name:find("chest")) then
-    error("No chest behind me: I'm not where I think home is. Not unloading.", 0)
-  end
-  -- ask the base for what we want to carry; it sends it into the chest
-  local _, soilAround = treeNeeds()
-  local dirt = 0
-  if AREA and AREA.cells then for _ in pairs(cellsNeedingDirt(soilAround)) do dirt = dirt + 1 end end
-  local r = link.supply({ fuel = CFG.supply.fuel, saplings = CFG.supply.saplings,
-                          bonemeal = CFG.supply.bonemeal, dirt = dirt })
-  if r and r.plant ~= nil then setAllowed(r.plant) end
-  restock()
+-- Drop what it doesn't keep into the chest in front; returns the logs dropped.
+local function dropHaul()
   -- keep: saplings it may plant (CFG.keepSaplings of each), bone meal in
   -- slot 2, fuel, a few logs, dirt; the rest goes into the chest
   local kept, delivered = {}, 0
@@ -654,7 +642,28 @@ local function unload()
       else select(i); turtle.drop() end
     end
   end
-  link.claimChest() -- (once) tell the base which chest is ours: it fills it
+  return delivered
+end
+
+-- At home, facing the chest: unload the haul FIRST (room to take supplies;
+-- the base empties the chest before it sends), ask the base for what we want
+-- to carry, take it all, and put back what we don't keep.
+local function unload()
+  turnTo((S.homeHeading + 2) % 4) -- chest is behind the home spot
+  local ok, b = turtle.inspect()
+  if not (ok and b.name:find("chest")) then
+    error("No chest behind me: I'm not where I think home is. Not unloading.", 0)
+  end
+  link.claimChest() -- (once, while it has something to mark the chest with)
+  local delivered = dropHaul()
+  local _, soilAround = treeNeeds()
+  local dirt = 0
+  if AREA and AREA.cells then for _ in pairs(cellsNeedingDirt(soilAround)) do dirt = dirt + 1 end end
+  local r = link.supply({ fuel = CFG.supply.fuel, saplings = CFG.supply.saplings,
+                          bonemeal = CFG.supply.bonemeal, dirt = dirt })
+  if r and r.plant ~= nil then setAllowed(r.plant) end
+  restock()
+  dropHaul() -- (what it took but doesn't keep)
   select(WORK_SLOT)
   turnTo(S.homeHeading)
   return delivered

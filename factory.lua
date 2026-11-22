@@ -565,8 +565,8 @@ local function plantKinds(F, stock)
   return { best }
 end
 
--- The home chest of turtle `id`: its home's (surveyed, registered), else the
--- one it claimed itself (the marker trick). Several homes may share a chest.
+-- The home chest of turtle `id`: its home's (surveyed, or claimed with the
+-- marker trick), else, for a turtle without a home, the one it claimed.
 local function chestOf(F, id)
   for _, h in ipairs(F.homes) do if h.owner == id and h.chest then return h.chest end end
   return F.turtles[id] and F.turtles[id].chest
@@ -585,6 +585,10 @@ function M.supply(F, from, req, have)
   local chest = chestOf(F, from)
   if not chest then return { type = "nochest" } end
   local S = F.deps.storage
+  -- it is this turtle's turn at the chest: empty it first (it takes all it
+  -- finds), unless another turtle's delivery is waiting there
+  local held = F.held and F.held[chest]
+  if not (held and held.by ~= from and now(F) < held.untilTime) then S.store(chest) end
   local stock = S.list()
   have = have or {}
   local sent, short = {}, {}
@@ -998,7 +1002,11 @@ function M.handle(F, from, msg)
     else
       local found = markFind(F, from, msg.marker)
       if found then
-        t.chest = found
+        -- the chest belongs to its home (one chest per home, shared by every
+        -- turtle there); the turtle's own record only for one without a home
+        local home
+        for _, h in ipairs(F.homes) do if h.owner == from then home = h end end
+        if home then home.chest = found else t.chest = found end
         F.note = ("%s's home chest: %s"):format(label(F, from), found)
         reply = { type = "marked", chest = found }
       else

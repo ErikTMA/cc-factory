@@ -212,12 +212,12 @@ end
 -- takes it; the base empties everything else. Several turtles may share one
 -- chest. These functions expect the turtle to FACE its home chest.
 
--- Take what is in the chest (the caller drops back what it doesn't keep).
-function L.takeSupplies(maxStacks)
-  for _ = 1, maxStacks or 8 do
-    local free = false
-    for i = 1, 16 do if turtle.getItemCount(i) == 0 then free = true; break end end
-    if not free or not turtle.suck() then break end
+-- Take what is in the chest, until it is empty or nothing more fits (CC's
+-- suck takes the chest's first stack and stacks it into the turtle; false
+-- when none of it fits). The caller drops back what it doesn't keep.
+function L.takeSupplies()
+  for _ = 1, 64 do
+    if not turtle.suck() then break end
   end
 end
 
@@ -232,16 +232,17 @@ end
 
 -- Ask the base for supplies: `want` = { fuel = items, saplings = per kind,
 -- bonemeal = n, dirt = n } (what it wants to carry), then take what is in the
--- chest (the caller drops back what it doesn't keep). Returns the base's
--- reply ({ sent, short, plant }) or nil (no base: it still takes what a
--- player put in the chest).
+-- chest (the caller drops back what it doesn't keep). The base emptied the
+-- chest before it sent, so all of it is ours: without its answer nothing is
+-- taken (it would be our own haul). Returns the reply ({ sent, short,
+-- plant }) or nil.
 function L.supply(want)
   local r = L.talk("supply", { supply = want, have = carried() }, false)
   if r and r.type == "nochest" and L.claimChest() then
     r = L.talk("supply", { supply = want, have = carried() }, false)
   end
-  L.takeSupplies()
   if r and r.type == "supplied" then
+    L.takeSupplies()
     local miss = {}
     for k, n in pairs(r.short or {}) do miss[#miss + 1] = ("%d %s"):format(n, k) end
     table.sort(miss)

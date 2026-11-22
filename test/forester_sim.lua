@@ -27,7 +27,35 @@ local function isSap(v) return v ~= nil and v:find("sapling") ~= nil end
 local FENCE = "minecraft:oak_fence"
 local function newWorld(opts)
   opts = opts or {}
-  local W = { b = {}, chest = {}, saplingsPlanted = 0 }
+  local W = { b = {}, saplingsPlanted = 0 }
+  -- the home chest, like CC's: 27 ordered slots of up to 64. W.slots is the
+  -- truth; W.chest[name] reads the total and setting it replaces that item.
+  W.slots = {}
+  function W.insert(name, n)
+    for i = 1, 27 do
+      local st = W.slots[i]
+      if n > 0 and st and st.name == name and st.count < 64 then
+        local m = math.min(64 - st.count, n); st.count = st.count + m; n = n - m
+      end
+    end
+    for i = 1, 27 do
+      if n > 0 and not W.slots[i] then
+        local m = math.min(64, n); W.slots[i] = { name = name, count = m }; n = n - m
+      end
+    end
+    return n -- what did not fit
+  end
+  W.chest = setmetatable({}, {
+    __index = function(_, name)
+      local c = 0
+      for i = 1, 27 do local st = W.slots[i]; if st and st.name == name then c = c + st.count end end
+      return c > 0 and c or nil
+    end,
+    __newindex = function(_, name, v)
+      for i = 1, 27 do if W.slots[i] and W.slots[i].name == name then W.slots[i] = nil end end
+      if v and v > 0 then W.insert(name, v) end
+    end,
+  })
   local function k(x, y, z) return x .. "," .. y .. "," .. z end
   function W.get(x, y, z) return W.b[k(x, y, z)] end
   function W.set(x, y, z, v) W.b[k(x, y, z)] = v end
@@ -139,19 +167,32 @@ local function newTurtle(W, fuel)
   function api.inspectDown() return insp(W.get(T.x, T.y - 1, T.z)) end
   function api.attack() return false end
   api.attackUp, api.attackDown = api.attack, api.attack
-  -- from the home chest in front: one stack of the first item (by name)
-  function api.suck()
+  -- from the home chest in front, like CC: the FIRST non-empty slot, into
+  -- the turtle from the selected slot on (stacking); false if none fits
+  function api.suck(limit)
     if W.get(front()) ~= "minecraft:chest" then return false end
-    local names = {}
-    for name, n in pairs(W.chest) do if n > 0 then names[#names + 1] = name end end
-    if #names == 0 then return false end
-    table.sort(names)
-    local slot
-    for k = 0, 15 do local i = (T.sel - 1 + k) % 16 + 1; if not T.inv[i] then slot = i; break end end
-    if not slot then return false end
-    local n = math.min(64, W.chest[names[1]])
-    W.chest[names[1]] = W.chest[names[1]] - n
-    T.inv[slot] = { name = names[1], count = n }
+    local ci
+    for i = 1, 27 do if W.slots[i] then ci = i; break end end
+    if not ci then return false end
+    local st = W.slots[ci]
+    local want = math.min(limit or 64, st.count)
+    local moved = 0
+    for pass = 1, 2 do
+      for k = 0, 15 do
+        local i = (T.sel - 1 + k) % 16 + 1
+        local t = T.inv[i]
+        if moved < want then
+          if pass == 1 and t and t.name == st.name and t.count < 64 then
+            local m = math.min(64 - t.count, want - moved); t.count = t.count + m; moved = moved + m
+          elseif pass == 2 and not t then
+            local m = want - moved; T.inv[i] = { name = st.name, count = m }; moved = moved + m
+          end
+        end
+      end
+    end
+    if moved == 0 then return false end
+    st.count = st.count - moved
+    if st.count == 0 then W.slots[ci] = nil end
     return true
   end
   function api.suckDown() return false end
@@ -214,12 +255,15 @@ local function newTurtle(W, fuel)
     if s.count == 0 then T.inv[T.sel] = nil end
     return true
   end
-  function api.drop()
+  function api.drop(n)
     local s = T.inv[T.sel]; if not s then return false end
     local fx, fy, fz = front()
     if W.get(fx, fy, fz) ~= "minecraft:chest" then return false end
-    W.chest[s.name] = (W.chest[s.name] or 0) + s.count
-    T.inv[T.sel] = nil
+    local m = math.min(n or s.count, s.count)
+    local left = W.insert(s.name, m)
+    if left == m then return false end -- chest full
+    s.count = s.count - (m - left)
+    if s.count == 0 then T.inv[T.sel] = nil end
     return true
   end
   return T, api
@@ -287,6 +331,34 @@ end
 
 local function run(env, ...)
   return pcall(assert(load(SRC, "forester", "t", env)), ...)
+end
+
+-- A base like factory.supply: on "supply" it empties the chest into its
+-- storage, then sends what the turtle lacks from storage. `stock` = { [item]
+-- = n }; `plant` = the kinds to plant (nil: any). The turtle needs a modem.
+local function fakeBase(W, T, stock, plant)
+  local B = { stock = stock or {}, asks = {} }
+  T.reply = function(msg)
+    if msg.state == "supply" then
+      B.asks[#B.asks + 1] = msg
+      for i = 1, 27 do local st = W.slots[i]; if st then B.stock[st.name] = (B.stock[st.name] or 0) + st.count end end
+      W.slots = {}
+      local req, have = msg.supply or {}, msg.have or {}
+      local function send(item, n)
+        local m = math.min(math.max(0, n - (have[item] or 0)), B.stock[item] or 0)
+        if m > 0 then B.stock[item] = B.stock[item] - m; W.insert(item, m) end
+      end
+      for item in pairs(B.stock) do
+        if item:find("sapling") and (not plant or plant[item]) then send(item, req.saplings or 0) end
+      end
+      send("minecraft:dirt", req.dirt or 0)
+      local pl = false
+      if plant then pl = {}; for k in pairs(plant) do pl[#pl + 1] = k end end
+      return { type = "supplied", sent = {}, short = {}, plant = pl }
+    end
+    if msg.state == "resting" then return { type = "ok" } end
+  end
+  return B
 end
 
 -- The run ends when the program sleeps for the Nth time (time passes: trees grow).
@@ -497,7 +569,7 @@ do
   local T, api = newTurtle(W, 3000)
   T.inv[1] = { name = SAP, count = 64 }
   T.inv[4] = { name = "computercraft:wireless_modem_normal", count = 1 } -- (to report)
-  W.chest["minecraft:dirt"] = 2 -- the base put some in the mailbox (taken at the end of round 1)
+  fakeBase(W, T, { ["minecraft:dirt"] = 2 }) -- the base has 2 dirt (sent at the end of round 1)
   local rounds, need1 = 0, nil
   local function lastAsk()
     for i = #(T.sent or {}), 1, -1 do if T.sent[i].state == "supply" then return T.sent[i] end end
@@ -527,11 +599,47 @@ do
   check(a2.supply.dirt == 1, "round 2: it asks for dirt for the 1 cell left: " .. tostring(a2.supply.dirt))
 end
 
-print("scenario: starts without saplings and takes them from its home chest (the mailbox)")
+print("scenario: the live forester-4: it comes home full of haul, 7 kinds selected; the base")
+print("          sends fuel, 7 sapling kinds, bone meal and dirt (in that order): it takes the dirt too")
+do
+  local KINDS = { "minecraft:acacia_sapling", BIRCH, "minecraft:cherry_sapling", "minecraft:jungle_sapling",
+                  SAP, "minecraft:spruce_sapling", "minecraft:mangrove_propagule" }
+  local W = newWorld({ rough = true })
+  local T, api = newTurtle(W, 3000)
+  T.inv[1] = { name = SAP, count = 64 }
+  T.inv[4] = { name = "computercraft:wireless_modem_normal", count = 1 }
+  for i = 5, 16 do T.inv[i] = { name = "minecraft:stick", count = 64 } end -- (haul from the trees)
+  local stored, asked = {}, nil
+  -- a base like factory.supply: it empties the chest into storage, then sends
+  T.reply = function(msg)
+    if msg.state == "supply" then
+      asked = msg.supply
+      for i = 1, 27 do local st = W.slots[i]; if st then stored[st.name] = (stored[st.name] or 0) + st.count end end
+      W.slots = {}
+      W.insert("minecraft:charcoal", 16)
+      for _, k in ipairs(KINDS) do W.insert(k, 16) end
+      W.insert("minecraft:bone_meal", 32)
+      W.insert("minecraft:dirt", msg.supply.dirt or 0)
+      return { type = "supplied", sent = {}, short = {}, plant = KINDS }
+    end
+    if msg.state == "resting" then return { type = "ok", plant = KINDS } end
+  end
+  local ok, err = run(makeEnv(T, api, {}, function() error("END OF TEST") end), "10")
+  check(tostring(err):find("END OF TEST") ~= nil, "one round (" .. tostring(err) .. ")")
+  local dirt = 0
+  for i = 1, 16 do if T.inv[i] and T.inv[i].name == "minecraft:dirt" then dirt = dirt + T.inv[i].count end end
+  check(asked and asked.dirt == 4, "it asked for dirt for 4 cells: " .. tostring(asked and asked.dirt))
+  check(dirt == 4, "it carries the 4 dirt the base sent: " .. dirt)
+  check(not W.chest["minecraft:dirt"], "no dirt left in the chest")
+  check((stored["minecraft:stick"] or 0) >= 12 * 64, "its haul was unloaded before it asked: " .. tostring(stored["minecraft:stick"]))
+end
+
+print("scenario: starts without saplings, asks the base and takes them from its home chest")
 do
   local W = newWorld()
-  W.chest[SAP] = 64
   local T, api = newTurtle(W, 3000)
+  T.inv[4] = { name = "computercraft:wireless_modem_normal", count = 1 }
+  fakeBase(W, T, { [SAP] = 64 })
   local ok, err = run(makeEnv(T, api, {}, sleeper(W, 3)), "10")
   check(tostring(err):find("END OF TEST") ~= nil, "ran (" .. tostring(err) .. ")")
   check(plantedSpots(W) == #SPOTS, ("round 1 took the saplings, round 2 planted every spot: %d/%d"):format(plantedSpots(W), #SPOTS))

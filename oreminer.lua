@@ -256,9 +256,7 @@ local function unload()
   if not (ok and b.name:find("chest")) then
     error("No chest behind me: I'm not where I think home is. Not unloading.", 0)
   end
-  -- the chest is a mailbox: ask the base for fuel and take it (what isn't
-  -- ours goes straight back below)
-  link.supply({ fuel = 16 })
+  link.claimChest() -- (once, while it has something to mark the chest with)
   -- drop everything but the kept items and one stack of fuel; if the chest is
   -- full, wait here (going back out full would just bring us straight back)
   local waited = 0
@@ -277,7 +275,8 @@ local function unload()
     end
     turtle.select(1)
     if left == 0 then
-      link.claimChest() -- (once) tell the base which chest is ours
+      -- unloaded: the chest is a mailbox, ask the base for fuel and take it
+      link.supply({ fuel = 16 })
       return
     end
     if waited % 60 == 0 then
