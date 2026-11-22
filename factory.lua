@@ -15,6 +15,7 @@ local C = require("oreconf")
 local production = require("production")
 local recipes = require("recipes")
 local homes = require("homes")
+local oremap = require("oremap")
 
 local M = {}
 
@@ -98,6 +99,7 @@ function M.new(config, deps)
     ruleJobs = {}, selected = nil, note = "Ready",
     hammer = config.production and config.production.hammer or false,
     craft = nil, nextCraftId = 1, crafted = {}, prod = { furnaces = 0, missing = {} },
+    map = oremap.new(), -- (its own file: base.lua loads and saves it)
   }
   homes.import(F, F.cfg.homes)
   return F
@@ -948,10 +950,60 @@ local function handleSurveyor(F, from, msg)
   return { type = "ok" }
 end
 
+-- ------------------------------------------------------------- ore map --
+-- Where turtle `id` lives, in the home frame: its home record, or nil (a
+-- miner set up by hand: its reports can't be placed in the map).
+local function homeOf(F, id)
+  for _, h in ipairs(F.homes) do if h.owner == id then return h end end
+end
+
+-- A miner's map report, in its own frame (from its home, world axes):
+-- { scans = { { x, y, z, r, ores = { { x, y, z, name }, ... } }, ... },
+--   mined = { { x, y, z }, ... } }. Moved into the home frame and applied.
+function M.applyMap(F, from, rep)
+  local h = homeOf(F, from)
+  if not h or type(rep) ~= "table" then return false end
+  local function at(p) return { x = h.x + p.x, y = h.y + p.y, z = h.z + p.z, name = p.name, ore = p.ore } end
+  for _, sc in ipairs(rep.scans or {}) do
+    local ores = {}
+    for _, o in ipairs(sc.ores or {}) do ores[#ores + 1] = at(o) end
+    oremap.scan(F.map, at(sc), sc.r or 8, ores)
+  end
+  local mined = {}
+  for _, p in ipairs(rep.mined or {}) do mined[#mined + 1] = at(p) end
+  oremap.mined(F.map, mined)
+  F.mapDirty = true
+  return true
+end
+
+-- The known ores a job of turtle `id` should go for first, nearest its home,
+-- held for the job; in the turtle's own frame. (A job wanting `quantity`
+-- gets a few more than that: some may be gone.)
+local KNOWN_MAX = 64
+local function knownFor(F, id, job)
+  local h = homeOf(F, id)
+  if not h then return nil end
+  local max = job.quantity and math.min(KNOWN_MAX, job.quantity * 2) or KNOWN_MAX
+  local list = oremap.find(F.map, h, job.only, max)
+  if #list == 0 then return nil end
+  oremap.hold(F.map, list, job.id)
+  F.mapDirty = true
+  local out = {}
+  for i, o in ipairs(list) do out[i] = { x = o.x - h.x, y = o.y - h.y, z = o.z - h.z, name = o.name } end
+  return out
+end
+
 -- ------------------------------------------------------------- protocol --
 -- Turtles always talk first, while at home; the reply says what to do next.
 function M.handle(F, from, msg)
   if type(msg) ~= "table" or msg.type ~= "status" then return nil end
+  -- what a miner saw and dug (with any status; "map" is a miner out on a job,
+  -- in wireless reach: only that, its record stays as it was)
+  if msg.map then M.applyMap(F, from, msg.map) end
+  if msg.state == "map" then
+    if F.turtles[from] then F.turtles[from].seen = now(F) end
+    return { type = "ok" }
+  end
   local prev = F.turtles[from] or {}
   F.turtles[from] = { id = from, label = msg.label, role = msg.role or prev.role or "miner",
                       state = msg.state, fuel = msg.fuel, mined = msg.mined or 0,
@@ -1034,12 +1086,14 @@ function M.handle(F, from, msg)
   else -- miner
     if msg.state == "done" and msg.job and msg.job.id and not F.counted[msg.job.id] then
       F.counted[msg.job.id] = true
+      oremap.release(F.map, msg.job.id)
       local k = oreKey(msg.job)
       F.totals[k] = (F.totals[k] or 0) + (msg.mined or 0)
       if msg.job.rule then F.ruleJobs[msg.job.rule] = nil end
       F.note = ("%s finished: %d %s"):format(label(F, from), msg.mined or 0, k)
     end
     if msg.state == "no fuel" and msg.job then
+      oremap.release(F.map, msg.job.id)
       table.insert(F.queue, 1, msg.job) -- back to the front for someone else
       t.noFuel, t.job = msg.fuel or 0, nil
       F.note = ("%s needs fuel (~%d) for jobs"):format(label(F, from), msg.need or 0)
@@ -1052,7 +1106,7 @@ function M.handle(F, from, msg)
         local job = table.remove(F.queue, 1)
         t.job, t.mined, t.state = job, 0, "assigned"
         F.note = ("%s took job: %s"):format(label(F, from), M.jobText(job))
-        reply = { type = "job", job = job }
+        reply = { type = "job", job = job, known = knownFor(F, from, job) }
       end
     elseif F.stopFor[from] then
       F.stopFor[from] = nil

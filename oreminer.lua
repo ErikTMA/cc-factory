@@ -37,7 +37,9 @@ local CFG = {
   fuelMargin = 100,    -- head home when fuel < distance home + this
   askFuelBelow = 1000, -- at home, ask the base for fuel below this
   minDepth = 16,       -- a job's level is at least this far below home (never up through the base)
+  mapEvery = 3,        -- out on a job: send the base its scans every this many (wireless modem)
   stateFile = "oreminer.state",
+  mapFile = "oremap.pending", -- what it saw and dug, until the base has it
   homeFile = "oreminer.home",
   -- ores whose name matches any of these are left alone
   skip = { },
@@ -99,16 +101,40 @@ end
 -- ---------------------------------------------------------------- scanner --
 local function scan() return nav.scan(CFG.radius) end
 
-local function isOre(b)
+-- Any ore.
+local function anyOre(b)
   for _, pat in ipairs(CFG.skip) do
     if b.name:find(pat) then return false end
   end
-  local ore = b.name:find("_ore$") ~= nil
-  if not ore and b.tags then
-    for _, t in ipairs(b.tags) do
-      if t == "c:ores" or t:find("^c:ores/") or t:find("^forge:ores") then ore = true; break end
-    end
+  if b.name:find("_ore$") then return true end
+  for _, t in ipairs(b.tags or {}) do
+    if t == "c:ores" or t:find("^c:ores/") or t:find("^forge:ores") then return true end
   end
+  return false
+end
+
+-- Filler: the ground itself, not worth a place in the base's map. Liquids
+-- too: a turtle moves through water and lava (checked in the jar).
+local FILLER_TAGS = { ["minecraft:base_stone_overworld"] = true, ["minecraft:base_stone_nether"] = true,
+                      ["c:stones"] = true, ["c:cobblestones"] = true, ["minecraft:dirt"] = true,
+                      ["c:gravels"] = true, ["c:sands"] = true, ["minecraft:sand"] = true }
+local FILLER = { ["minecraft:gravel"] = true, ["minecraft:sand"] = true, ["minecraft:red_sand"] = true,
+                 ["minecraft:dirt"] = true, ["minecraft:coarse_dirt"] = true, ["minecraft:clay"] = true,
+                 ["minecraft:cobblestone"] = true, ["minecraft:cobbled_deepslate"] = true,
+                 ["minecraft:calcite"] = true, ["minecraft:smooth_basalt"] = true, ["minecraft:dripstone_block"] = true,
+                 ["minecraft:bedrock"] = true, ["minecraft:water"] = true, ["minecraft:lava"] = true,
+                 ["minecraft:stone"] = true, ["minecraft:deepslate"] = true, ["minecraft:tuff"] = true,
+                 ["minecraft:granite"] = true, ["minecraft:diorite"] = true, ["minecraft:andesite"] = true,
+                 ["minecraft:netherrack"] = true }
+local function filler(b)
+  if FILLER[b.name] then return true end
+  for _, t in ipairs(b.tags or {}) do if FILLER_TAGS[t] then return true end end
+  return false
+end
+
+-- An ore this job digs.
+local function isOre(b)
+  local ore = anyOre(b)
   if not ore or not S.only then return ore end
   -- restricted to one ore kind: match the block name or its c:ores/<kind> tag
   if b.name:find(S.only, 1, true) then return true end
@@ -310,13 +336,41 @@ local function unload()
 end
 
 -- -------------------------------------------------------------- base link --
+-- What it saw and dug since it last told the base: { scans = { { x, y, z, r,
+-- ores = { { x, y, z, name } } } }, mined = { { x, y, z } } }, from its home,
+-- world axes. Its own file (not the job state, which is saved every move),
+-- written only when it changes; kept across jobs until the base has it.
+local PEND
+local function loadPend()
+  PEND = readFile(CFG.mapFile) or {}
+  PEND.scans, PEND.mined = PEND.scans or {}, PEND.mined or {}
+end
+local function savePend() writeFile(CFG.mapFile, PEND) end
+local function clearPend() PEND = { scans = {}, mined = {} }; savePend() end
+local function pending()
+  return PEND and (#PEND.scans > 0 or #PEND.mined > 0) and PEND or nil
+end
+
 local function status()
-  return { job = S and S.job, mined = S and S.mined or 0 }
+  return { job = S and S.job, mined = S and S.mined or 0, map = pending() }
 end
 
 -- Report to the base (only at home). Code updates wait until the job is done.
+-- A reply means the base has the map report too.
 talk = function(state)
-  return link.talk(state, status(), state == "idle" or state == "done")
+  local had = pending()
+  local r = link.talk(state, status(), state == "idle" or state == "done")
+  if r and had then clearPend() end
+  return r
+end
+
+-- Out on a job with a wireless modem: send the map report if the base is in
+-- reach (nothing else; no reply needed to carry on).
+local function sendMap()
+  if not pending() or not link.hasModem() then return end
+  local r = link.talk("map", { map = PEND }, false)
+  link.restoreUpgrade() -- (the scanner back in)
+  if r then clearPend() end
 end
 
 -- The base counts the job (and frees its stock rule) on "done": say it until
@@ -357,13 +411,9 @@ local function serviceTrip(reason)
 end
 
 -- ---------------------------------------------------------------- mining --
-local function mineVisible()
-  local ores = {}
-  for _, b in ipairs(scan()) do
-    if isOre(b) then
-      ores[#ores + 1] = { x = S.pos.x + b.x, y = S.pos.y + b.y, z = S.pos.z + b.z, name = b.name }
-    end
-  end
+-- Dig `ores` (from home, { x, y, z, name }) nearest first, which also follows
+-- veins; each one dug goes into the map report. Returns how many.
+local function mineList(ores)
   local mined = 0
   while #ores > 0 and not finished() do
     -- nearest first, which also follows veins naturally
@@ -379,12 +429,43 @@ local function mineVisible()
     if goTo(o) then
       mined = mined + 1
       S.mined = S.mined + 1
-      save()
+      PEND.mined[#PEND.mined + 1] = { x = o.x, y = o.y, z = o.z }
+      save(); savePend()
     else
       log("Skipped unreachable " .. o.name)
     end
   end
   return mined
+end
+
+-- Scan here: every block but filler goes into the map report (flagged if an
+-- ore); the job's ores get dug.
+local function mineVisible()
+  local seen, ores = {}, {}
+  for _, b in ipairs(scan()) do
+    local ore = anyOre(b)
+    if ore or not filler(b) then
+      local o = { x = S.pos.x + math.floor(b.x + 0.5), y = S.pos.y + math.floor(b.y + 0.5),
+                  z = S.pos.z + math.floor(b.z + 0.5), name = b.name, ore = ore or nil }
+      seen[#seen + 1] = o
+      if ore and isOre(b) then ores[#ores + 1] = o end
+    end
+  end
+  PEND.scans[#PEND.scans + 1] = { x = S.pos.x, y = S.pos.y, z = S.pos.z, r = CFG.radius, ores = seen }
+  savePend()
+  local n = mineList(ores)
+  if #PEND.scans >= CFG.mapEvery then sendMap() end
+  return n
+end
+
+-- The ores the base already knows of for this job (S.known): first.
+local function mineKnown()
+  if not S.known or #S.known == 0 then return end
+  log(("Going for %d ore the base knows of"):format(#S.known))
+  local list = S.known
+  S.known = {}
+  save()
+  mineList(list)
 end
 
 -- Lane target: lanes go out along homeHeading, each shifted right by `spacing`.
@@ -402,6 +483,7 @@ local function detectHeading()
 end
 
 local function run()
+  mineKnown()
   while S.lane < S.lanes and not finished() do
     while S.progress <= S.length and not finished() do
       local why = needHome()
@@ -444,8 +526,9 @@ end
 
 -- A job: { only = "diamond" | nil, y = <absolute Y> | nil, quantity = n | nil,
 --          lanes = n | nil, length = n | nil, sector = first lane | nil, id = n | nil }
-local function newJob(job, home)
+local function newJob(job, home, known)
   S = { pos = { x = 0, y = 0, z = 0 }, heading = home.heading, homeHeading = home.heading,
+        known = known or {},
         lane = 0, progress = 0, lanes = job.lanes or CFG.lanes, length = job.length or CFG.length,
         dy = job.y and math.min(job.y - home.y, -CFG.minDepth) or 0, only = job.only, quantity = job.quantity,
         sector = job.sector or 0, mined = 0, job = job }
@@ -499,6 +582,7 @@ end
 
 -- ---------------------------------------------------------------- main --
 if not ensureScanner() then error("No Geo Scanner equipped (or in inventory)", 0) end
+loadPend()
 
 local args = { ... }
 if args[1] == "resume" then
@@ -548,7 +632,7 @@ elseif args[1] == "serve" then
         link.talk("no fuel", { job = j, need = needFuel }, false)
         sleep(30)
       else
-        newJob(j, home)
+        newJob(j, home, reply.known)
         run()
         reportDone()
       end

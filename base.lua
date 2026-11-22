@@ -392,6 +392,9 @@ local F = factory.new(config, {
   end,
 })
 factory.restore(F, readTable("/base.state"))
+-- the ore map: its own file (it grows with every scan the miners report)
+local oremap = require("oremap")
+F.map = oremap.load(readTable("/oremap.db"))
 if release then
   -- the installer disk gets the active build's data again (a base restart
   -- mid-build must not turn a forester into a miner)
@@ -408,6 +411,22 @@ if mon then mon.setTextScale(0.5) end
 local function persist()
   local ok, err = pcall(writeTable, "/base.state", factory.snapshot(F))
   if not ok then F.note = "could not save state: " .. tostring(err) end
+  if F.mapDirty then
+    F.mapDirty = false
+    ok, err = pcall(function()
+      -- it must fit what this computer has left (1 MB in all on a default
+      -- server), with room to spare for the state and the code
+      local old = fs.exists("/oremap.db") and fs.getSize("/oremap.db") or 0
+      local budget = fs.getFreeSpace("/") + old - 64 * 1024
+      local data, dropped = oremap.encode(F.map, budget,
+        function(t) return textutils.serialize(t, { compact = true }) end)
+      if dropped > 0 then F.note = ("Ore map full: dropped the %d blocks farthest from the base"):format(dropped) end
+      local f = fs.open("/oremap.db", "w")
+      f.write(data)
+      f.close()
+    end)
+    if not ok then F.note = "could not save the ore map: " .. tostring(err) end
+  end
 end
 
 local function update()

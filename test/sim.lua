@@ -6,7 +6,8 @@ local function readAll(path) return assert(io.open(path)):read("*a") end
 local BASE_SRC = readAll(DIR .. "/base.lua")
 local FACTORY_SRC = readAll(os.getenv("FACTORY") or (DIR .. "/factory.lua"))
 MODULES_EXTRA = { factory = FACTORY_SRC, production = readAll(DIR .. "/production.lua"),
-                  recipes = readAll(DIR .. "/recipes.lua"), homes = readAll(DIR .. "/homes.lua") }
+                  recipes = readAll(DIR .. "/recipes.lua"), homes = readAll(DIR .. "/homes.lua"),
+                  oremap = readAll(DIR .. "/oremap.lua") }
 local MODULES = { oreconf = readAll(DIR .. "/oreconf.lua"), tmove = readAll(DIR .. "/tmove.lua"),
                   link = readAll(DIR .. "/link.lua"), nav = readAll(DIR .. "/nav.lua") }
 
@@ -219,9 +220,17 @@ local function makeEnv(T, api, scanner, files, bus, id)
     send = function(to, msg) return env.rednet.broadcast(msg) end,
     broadcast = function(msg)
       assert(T.rednetOpen, "broadcast without open modem")
-      local reply = bus.base.handleMessage(bus.B, id, msg)
-      bus.log[#bus.log + 1] = { from = id, msg = msg, reply = reply }
-      if reply then bus.inbox[id] = bus.inbox[id] or {}; table.insert(bus.inbox[id], reply) end
+      -- like rednet: each side gets its own copy (messages are serialized)
+      local function copy(v)
+        if type(v) ~= "table" then return v end
+        local c = {}
+        for k, x in pairs(v) do c[copy(k)] = copy(x) end
+        return c
+      end
+      msg = copy(msg)
+      local reply = bus.base.handleMessage(bus.B, id, copy(msg))
+      bus.log[#bus.log + 1] = { from = id, msg = msg, reply = copy(reply) }
+      if reply then bus.inbox[id] = bus.inbox[id] or {}; table.insert(bus.inbox[id], copy(reply)) end
       if bus.onMessage then bus.onMessage(id, msg) end
     end,
     receive = function()
@@ -561,6 +570,55 @@ do
   end
   check(asked, "asked for fuel at its chest")
   check(not pushed, "no wired-network fuel push")
+print("scenario: the ore map: job 1 reports every non-filler block it scans (with its wireless")
+print("          modem, mid-job too); job 2 gets the known iron and digs it first; dug iron leaves the map")
+do
+  local W = newWorld(33, 0, { span = 70, ymin = -40, ymax = 6 })
+  W.set(4, -20, -20, "minecraft:spawner") -- something that isn't ore, worth knowing of
+  local queued2, known2, job1Done = false, nil, nil
+  local B, fleet, _, _, Base, bus = runFleet(W, { { x = 0, z = 0, h = 0 } }, function(Base, B)
+    table.insert(B.homes, { id = 1, x = 0, y = 0, z = 0, facing = "north", role = "miner", owner = 101 })
+    -- job 1 wants more iron than one scan holds: it scans along its lane
+    Base.queueJob(B, { only = "iron", y = -20, quantity = 100, lanes = 1, length = 64 })
+  end, {
+    onTick = function(Base, B, fleet)
+      if not queued2 and (B.totals.iron or 0) > 0 then
+        queued2 = true
+        Base.queueJob(B, { only = "iron", y = -20, quantity = 8, lanes = 1, length = 48 })
+      end
+    end,
+  })
+  local f = fleet[1]
+  check(not f.err, "ran without error: " .. tostring(f.err))
+  local mapMid, doneAt = nil, nil
+  for i, e in ipairs(bus.log) do
+    if e.msg.state == "map" and not mapMid then mapMid = i end
+    if e.msg.state == "done" and not doneAt then doneAt = i end
+    if e.reply and e.reply.type == "job" and e.reply.job.id == 2 then known2 = e.reply.known end
+  end
+  check(mapMid and doneAt and mapMid < doneAt, "a map report came in mid-job, before job 1 was done")
+  local ores, spawner, iron = 0, false, 0
+  for k, v in pairs(B.map.ores) do
+    ores = ores + 1
+    if v == "minecraft:spawner" then spawner = true end
+    if v == "minecraft:iron_ore" then iron = iron + 1 end
+  end
+  check(ores > 20, "the base's map holds what was scanned: " .. ores .. " blocks")
+  check(spawner, "the spawner too (not ore, not filler)")
+  local stone = false
+  for _, v in pairs(B.map.ores) do if v == "minecraft:stone" or v == "minecraft:cobblestone" then stone = true end end
+  check(not stone, "no stone or cobblestone in it")
+  check(known2 and #known2 > 0, "job 2 came with known iron: " .. tostring(known2 and #known2))
+  local dugKnown = 0
+  for _, o in ipairs(known2 or {}) do
+    if W.get(o.x, o.y, o.z) == nil and B.map.ores[o.x .. "," .. o.y .. "," .. o.z] == nil then dugKnown = dugKnown + 1 end
+  end
+  check(known2 and dugKnown == math.min(8, #known2),
+    ("it dug the known iron it needed (8), the map dropped those: %d of %d known"):format(dugKnown, known2 and #known2 or 0))
+  local left = 0
+  for _, o in ipairs(known2 or {}) do if B.map.ores[o.x .. "," .. o.y .. "," .. o.z] then left = left + 1 end end
+  check(left == #(known2 or {}) - dugKnown and next(B.map.held) == nil, "the rest stays known, free for the next job: " .. left)
+  check((B.totals.iron or 0) >= 100, "both jobs counted: " .. tostring(B.totals.iron))
 end
 
 print("scenario: STOP a working turtle from the base")

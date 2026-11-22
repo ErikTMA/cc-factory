@@ -17,8 +17,21 @@ over rednet. Friends-only server: base-ID pinning, no signing.
   `ItemEntity`s inside that block's box (x..x+1, y..y+1, z..z+1), "No items
   to take" if none. Items on the floor lie in the air cell above it: face
   that cell with `suck()`; `suckDown()` only reaches inside the floor block.
+- Geo Scanner `scanBlocks(r)` (AP 0.8.2a, `GeoScannerPeripheral` +
+  `ScanUtil.traverseBlocks`, decompiled): a CUBE, every block from -r to +r on
+  each axis; air is skipped, every other block (stone too) is listed as
+  `{ name, tags, x, y, z }` relative to the scanner. Server config
+  (`Advancedperipherals/peripherals.toml`): free up to r 8, 9-16 costs fuel,
+  2 s cooldown. The Geo Scanner has only `scanBlocks` and `chunkAnalyze`:
+  no `scanEntities` (that setting belongs to another peripheral).
+- Turtle movement (`TurtleMoveCommand.canEnter` + `WorldUtil.isEmptyBlock`,
+  CC 1.120.2): it may move into air **or any liquid** (water, lava), or a
+  block that `canBeReplaced()`. Liquids never block a turtle: no need to dig
+  or plan around them.
 - Space limits (server `config/computercraft-server.toml`):
-  `computer_space_limit = 1000000`, `floppy_space_limit = 125000` bytes;
+  `computer_space_limit = 1000000` (GamePortal: raised to 16000000 on
+  2026-11-22, takes effect at the next server restart; other servers may keep
+  1 MB, the ore map must fit either), `floppy_space_limit = 125000` bytes;
   writing past it fails with "Out of space". All turtle files (~130 KB) don't
   fit a floppy, so the installer disk carries only `manifest.boot` plus the
   built role's program; the rest arrives as a code update (version "boot").
