@@ -848,7 +848,12 @@ baseEnv.textutils = textutils
 baseEnv.parallel = { waitForAll = function(...)
   local fns = { ... }
   local net = rawget(_G, "SIM_NET")
-  if net then net.ticks = net.ticks + 1; net.inBatch = true end
+  -- (CC resumes every waiting coroutine on every event: n^2 resumes)
+  if net then
+    net.ticks = net.ticks + 1; net.inBatch = true
+    net.resumes = (net.resumes or 0) + #fns * #fns
+    net.maxBatch = math.max(net.maxBatch or 0, #fns)
+  end
   for _, f in ipairs(fns) do f() end
   if net then net.inBatch = false end
 end }
@@ -2322,14 +2327,29 @@ do
     and storage.classify("sophisticatedstorage:controller_0") == nil
     and storage.classify("functionalstorage:compacting_drawer_0") == nil, "controllers and compacting drawers are not storage")
   local before, usedBefore = storageTotals()
+  local storageSlots = 0
+  for name, I in pairs(W.inv) do
+    if storage.classify(name) == "storage" then storageSlots = storageSlots + (I.drawerSlots or I.size) end
+  end
   F.deps.storage.forget()
   local seen = F.deps.storage.list()["minecraft:cobblestone"]
   check(seen == before["minecraft:cobblestone|nil"],
     ("the base counts the double chest once: it sees %s cobblestone, there are %s"):format(tostring(seen), tostring(before["minecraft:cobblestone|nil"])))
   F.deps.storage.forget()
+  net.calls, net.maxBatch = {}, 0
   factory.toggleDefrag(F)
   check(F.defrag ~= nil, "DEFRAG pressed: " .. tostring(F.note))
-  runUntil(function() return F.defrag == nil end, 20000)
+  local defragTicks = 0
+  runUntil(function()
+    if F.defrag then defragTicks = defragTicks + 1 end
+    return F.defrag == nil
+  end, 20000)
+  -- cost: every slot's limit read once a run (not every tick), and side by
+  -- side in chunks (CC's parallel costs n^2 a batch)
+  check((net.calls.getItemLimit or 0) <= storageSlots,
+    ("slot limits read once: %d reads for %d slots, over %d ticks"):format(net.calls.getItemLimit or 0, storageSlots, defragTicks))
+  check(storageSlots > storage.BATCH and net.maxBatch <= storage.BATCH,
+    ("reads in chunks: biggest batch %d (%d slots)"):format(net.maxBatch, storageSlots))
   local after, usedAfter = storageTotals()
   local same = true
   for k2, n in pairs(before) do if after[k2] ~= n then same = false; print("    changed", k2, n, after[k2]) end end

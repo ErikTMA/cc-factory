@@ -121,12 +121,20 @@ end
 -- Run peripheral calls side by side: CC (parallel API, coroutines) lets
 -- calls from several coroutines complete in the same tick, where one after
 -- the other each waits for its own (every call over a wired network does).
+-- In chunks: CC's parallel resumes EVERY waiting coroutine on every event,
+-- so one batch of n calls costs n^2 resumes (a thousand slots: a million).
+local BATCH = 100
+M.BATCH = BATCH
 local function runAll(fns)
   if #fns == 0 then return end
-  if parallel and parallel.waitForAll and #fns > 1 then
-    parallel.waitForAll(table.unpack(fns))
-  else
+  if not (parallel and parallel.waitForAll) then
     for _, f in ipairs(fns) do f() end
+    return
+  end
+  for i = 1, #fns, BATCH do
+    local chunk = {}
+    for j = i, math.min(#fns, i + BATCH - 1) do chunk[#chunk + 1] = fns[j] end
+    if #chunk == 1 then chunk[1]() else parallel.waitForAll(table.unpack(chunk)) end
   end
 end
 M.runAll = runAll
@@ -361,9 +369,14 @@ local function chests(api)
   -- doesn't fit. An empty drawer slot isn't planned into (one the player
   -- locked to an item takes nothing else, and CC can't tell).
   local function key(it) return it.name .. "|" .. tostring(it.nbt or "") end
-  function S.layout()
+  -- `cache` (kept by the caller for one defrag run): slot limits and max
+  -- stacks already read; a slot's limit only changes with an upgrade.
+  function S.layout(cache)
     fresh()
-    local list, fns, limits, maxOf, probe = {}, {}, {}, {}, {}
+    cache = cache or {}
+    cache.base, cache.maxOf = cache.base or {}, cache.maxOf or {}
+    local list, fns, limits, probe = {}, {}, {}, {}
+    local maxOf = cache.maxOf
     local invs = {}
     for inv in pairs(slots) do invs[#invs + 1] = inv end
     table.sort(invs)
@@ -379,20 +392,26 @@ local function chests(api)
           s.lock = "?" -- (nothing goes in)
         end
         list[#list + 1] = s
-        fns[#fns + 1] = function() limits[s.id] = api.call(inv, "getItemLimit", slot) or 64 end
+        if not cache.base[s.id] then
+          fns[#fns + 1] = function() limits[s.id] = api.call(inv, "getItemLimit", slot) or 64 end
+        end
       end
     end
     for k, s in pairs(probe) do
-      fns[#fns + 1] = function()
+      if not maxOf[k] then fns[#fns + 1] = function()
         local d = api.call(s.inv, "getItemDetail", s.slot)
         maxOf[k] = d and d.maxCount or 64
-      end
+      end end
     end
     runAll(fns)
     for _, s in ipairs(list) do
-      local limit = limits[s.id] or 64
-      if s.drawer and s.key then limit = math.floor(limit * 64 / (maxOf[s.key] or 64)) end
-      s.limit = limit
+      if not cache.base[s.id] then
+        local limit = limits[s.id] or 64
+        -- (a drawer reports its stored item's limit: back to per 64-stack)
+        if s.drawer and s.key then limit = math.floor(limit * 64 / (maxOf[s.key] or 64)) end
+        cache.base[s.id] = limit
+      end
+      s.limit = cache.base[s.id]
     end
     local function cap(s, k)
       local m = k and (maxOf[k] or 64) or 64

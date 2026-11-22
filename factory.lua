@@ -709,7 +709,8 @@ local function defragStep(F)
   local d = F.defrag
   if not d then return end
   local S = F.deps.storage
-  local slots, cap = S.layout()
+  d.cache = d.cache or {} -- (slot limits: read once a run)
+  local slots, cap = S.layout(d.cache)
   local before = defrag.usedSlots(slots)
   d.from = d.from or before
   local moves, after = defrag.plan(slots, cap)
