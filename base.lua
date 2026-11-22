@@ -549,7 +549,11 @@ end
 
 local function chatter()
   while true do
-    local ev, user, message = os.pullEvent()
+    local ev, a, b, c = os.pullEvent()
+    -- AP 0.8.2a: "chat", uuid, username, message, hidden (checked in the
+    -- jar); older APs: "chat", username, message, uuid, hidden
+    local user, message = a, b
+    if ev == "chat" and type(c) == "string" and c:sub(1, 1) == "$" then user, message = b, c end
     if ev == "peripheral" or ev == "peripheral_detach" then
       local had = chatBox ~= nil
       findChatPeripherals()

@@ -193,10 +193,12 @@ do
   files["release"] = "aaa"; githubSha = "aaa"
   boot(400, function(step)
     if step == 100 then attached = true; queue[#queue + 1] = { "peripheral", "chat_box_0" } end
-    if step == 120 then queue[#queue + 1] = { "chat", "Erik", "$help", "uuid", true } end
+    -- AP 0.8.2a's order: uuid, username, message, hidden, message
+    if step == 120 then queue[#queue + 1] = { "chat", "6a1e-uuid", "Erik", "$help", true, "$help" } end
   end)
   periph.find = oldFind
   check(#said >= 1 and said[1][1]:find("%$build"), "answered $help after the Chat Box was connected: " .. tostring(said[1] and said[1][1]))
+  check(said[1] and said[1][2] == "Erik", "to the player who asked: " .. tostring(said[1] and said[1][2]))
 end
 
 print("scenario: new files copied in while it runs: the updater restarts it (no download)")
