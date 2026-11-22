@@ -788,7 +788,7 @@ function M.defragStep(F)
       end
       if budget <= 0 then return true end
     end
-    d.stage = "evict"
+    d.stage = "place"
     return true
   end
 
@@ -803,57 +803,115 @@ function M.defragStep(F)
     return false
   end
   local inv = byName[X]
-  if not inv then d.i, d.stage = d.i + 1, "evict"; return true end -- (gone from the network)
+  if not inv then d.i, d.seq = d.i + 1, nil; return true end -- (gone from the network)
 
-  if d.stage == "evict" then
-    -- everything out: into the inventories still to do first, then the free
-    -- tail of finished ones (taken back below)
-    local targets, full = {}, {}
-    for j = d.i + 1, #d.order do targets[#targets + 1] = d.order[j] end
-    for j = 1, d.i - 1 do targets[#targets + 1] = d.order[j] end
-    for _, slot in ipairs(sortedSlots(inv)) do
-      local st = inv.slots[slot]
-      for _, t in ipairs(targets) do
-        if not st or st.count <= 0 then break end
-        if budget <= 0 then return true end
-        if not full[t] then
-          if push(X, slot, st, t, st.count) == 0 then full[t] = true end
-        end
+  -- In place, slot by slot: slot p gets the p-th stack of its share (full
+  -- stacks of each item in name order, its part stack last). What is wrong
+  -- in p goes out to a free slot anywhere else; so does a part stack of the
+  -- wanted item further on in this inventory (an insert goes onto it first);
+  -- then the wanted stack comes in and lands in p: every slot before p is
+  -- full, so p is the lowest empty one (Sophisticated), and CC is asked for
+  -- p anyway. A stack of it further on in here goes out and back in. Needs
+  -- a free slot or two anywhere, not a barrel's worth.
+  if not d.seq then
+    d.seq, d.p = {}, 1
+    for _, e in ipairs(d.shares[X] or {}) do
+      local c = defrag.cap(inv.limit, view.maxOf[e.key])
+      local left = e.n
+      while left > 0 do
+        local n = math.min(c, left)
+        d.seq[#d.seq + 1] = { key = e.key, n = n, cap = c }
+        left = left - n
       end
-      if inv.slots[slot] then d.messy[X] = true end -- (no room anywhere)
     end
-    d.stage, d.j = "fill", 1
-    return true
   end
-
-  -- fill: its share, item by item in name order
-  local share = d.shares[X] or {}
-  while d.j <= #share do
-    local e = share[d.j]
-    local have = 0
-    for _, st in pairs(inv.slots) do if st.key == e.key then have = have + st.count end end
-    local need = e.n - have
-    local found = false
-    if need > 0 then
-      for _, src in ipairs(view.invs) do
-        if src.name ~= X then
-          local give = spare(src, e.key)
-          for _, slot in ipairs(sortedSlots(src)) do
-            local st = src.slots[slot]
-            if need > 0 and give > 0 and st and st.key == e.key then
+  -- a free slot outside X: inventories still to do first, then the tail of
+  -- finished ones (their surplus is taken back by spare())
+  local scratchOrder = {}
+  for j = d.i + 1, #d.order do scratchOrder[#scratchOrder + 1] = d.order[j] end
+  for j = 1, d.i - 1 do scratchOrder[#scratchOrder + 1] = d.order[j] end
+  local full = {}
+  local function out(slot)
+    local st = inv.slots[slot]
+    for _, t in ipairs(scratchOrder) do
+      if not st or st.count <= 0 then return true end
+      if budget <= 0 then return false end
+      if not full[t] and push(X, slot, st, t, st.count) == 0 then full[t] = true end
+    end
+    return not inv.slots[slot]
+  end
+  while d.p <= inv.size do
+    if budget <= 0 then return true end
+    local p, w = d.p, d.seq[d.p]
+    local st = inv.slots[p]
+    if not w then
+      -- past its share: the slot ends empty
+      if st and not out(p) then
+        if budget <= 0 then return true end
+        d.messy[X] = true
+      end
+      d.p = p + 1
+    elseif st and st.key == w.key and st.count >= w.n then
+      d.p = p + 1
+    else
+      local progressed = false
+      if st and st.key ~= w.key then
+        if not out(p) then
+          if budget <= 0 then return true end
+          d.messy[X] = true; d.p = p + 1
+        end
+        progressed = true
+      else
+        -- part stacks of it further on would take the insert: out first
+        local busy = false
+        for q = p + 1, inv.size do
+          local o = inv.slots[q]
+          if o and o.key == w.key and o.count < w.cap then
+            busy = true
+            if not out(q) then
               if budget <= 0 then return true end
-              local moved = push(src.name, slot, st, X, math.min(need, give, st.count))
-              need, give = need - moved, give - moved
-              if moved > 0 then found = true end
+              d.messy[X] = true; busy = false
             end
+            progressed = true
+            break
           end
         end
+        if not busy then
+          local need = w.n - (st and st.count or 0)
+          -- from another inventory (not a finished one's share)
+          for _, src in ipairs(view.invs) do
+            if need <= 0 then break end
+            if src.name ~= X then
+              local give = spare(src, w.key)
+              for _, slot in ipairs(sortedSlots(src)) do
+                local o = src.slots[slot]
+                if need > 0 and give > 0 and o and o.key == w.key then
+                  if budget <= 0 then return true end
+                  local moved = push(src.name, slot, o, X, math.min(need, give, o.count), p)
+                  need, give = need - moved, give - moved
+                  if moved > 0 then progressed = true end
+                end
+              end
+            end
+          end
+          if need > 0 and not progressed then
+            -- in here, further on: out (next step it comes back in from there)
+            for q = p + 1, inv.size do
+              local o = inv.slots[q]
+              if o and o.key == w.key then
+                if out(q) then progressed = true end
+                break
+              end
+            end
+          end
+          if need <= 0 then d.p = p + 1; progressed = true end
+        end
+        if not progressed then d.messy[X] = true; d.p = p + 1 end -- (it isn't there any more)
       end
+      return true -- (moved: read again before the next slot)
     end
-    if need <= 0 or not found then d.j = d.j + 1 end
-    if budget <= 0 then return true end
   end
-  d.i, d.stage = d.i + 1, "evict"
+  d.i, d.stage, d.seq = d.i + 1, "place", nil
   return true
 end
 

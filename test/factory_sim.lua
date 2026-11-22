@@ -2432,5 +2432,57 @@ do
 
 end
 
+print("scenario: DEFRAG with storage nearly full (2 free slots): every inventory still ends SORTED from")
+print("          its first slot, no gaps (live: the big barrels came last, no room left to empty them)")
+do
+  -- a fresh storage network of its own: only these inventories count
+  local keepInv = W.inv
+  W.inv = {}
+  -- scattered like the live gold barrels: items mixed, gaps between them
+  local names = { "minecraft:stone", "minecraft:redstone", "minecraft:apple", "minecraft:gold_ingot",
+                  "minecraft:bone", "minecraft:diamond", "minecraft:sugar", "minecraft:cobblestone", "minecraft:dirt" }
+  local plain = newInv("sophisticatedstorage:barrel_20", nil, nil, nil, 27, { loose = true })
+  local big = newInv("sophisticatedstorage:gold_barrel_5", nil, nil, nil, 81, { loose = true })
+  local big2 = newInv("sophisticatedstorage:gold_barrel_6", nil, nil, nil, 81, { loose = true })
+  local n = 0
+  for _, I in ipairs({ plain, big, big2 }) do
+    for i = 1, I.size do
+      n = n + 1
+      if n % 7 ~= 3 then I.slots[i] = { name = names[n % #names + 1], count = (n % 5 == 0) and 64 or (n % 40 + 1) } end
+    end
+  end
+  -- fill every gap but 2: almost no room to empty anything
+  local free = {}
+  for _, I in ipairs({ plain, big, big2 }) do for i = 1, I.size do if not I.slots[i] then free[#free + 1] = { I, i } end end end
+  for j = 3, #free do free[j][1].slots[free[j][2]] = { name = "minecraft:sand", count = 64 } end
+  local function totals()
+    local t = {}
+    for _, I in ipairs({ plain, big, big2 }) do for _, st in pairs(I.slots) do t[st.name] = (t[st.name] or 0) + st.count end end
+    return t
+  end
+  local t0 = totals()
+  F.deps.storage.forget()
+  factory.toggleDefrag(F)
+  runUntil(function() return F.defrag == nil end, 20000)
+  local t1, same = totals(), true
+  for k2, v in pairs(t0) do if t1[k2] ~= v then same = false end end
+  check(same, "nothing lost or made")
+  check((F.note or ""):find("Defrag done") ~= nil and not (F.note or ""):find("not enough"), "finished, all sorted: " .. tostring(F.note))
+  local bad = {}
+  for _, I in ipairs({ plain, big, big2 }) do
+    local last, gap = "", false
+    for i = 1, I.size do
+      local st = I.slots[i]
+      if st then
+        if gap or st.name < last then bad[#bad + 1] = I.name .. "@" .. i; break end
+        last = st.name
+      else gap = true end
+    end
+  end
+  check(#bad == 0, "every inventory sorted from its first slot, no gaps: " .. table.concat(bad, ", "))
+  W.inv = keepInv
+  F.deps.storage.forget()
+end
+
 print(failures == 0 and "ALL PASSED" or (failures .. " FAILURE(S)"))
 os.exit(failures == 0 and 0 or 1)

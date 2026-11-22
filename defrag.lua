@@ -9,7 +9,11 @@
 -- Either way: an EMPTY inventory filled item by item in name order ends up
 -- sorted from its first slot, every item in as few stacks as it needs. So
 -- storage is rebuilt one inventory at a time: empty it into the others,
--- fill it with its share in name order (the executor is in factory.lua).
+-- fill it with its share in name order. In place, that is (factory.lua):
+-- slot by slot, the wrong stack out to a free slot anywhere, a part stack of
+-- the wanted item further on out of the way, then the wanted stack in: it
+-- lands in that slot, the lowest empty one. A slot or two free anywhere is
+-- enough; no inventory has to be emptied whole.
 --
 -- The share: every item's total is spread over the inventories in turn. An
 -- inventory whose slots hold more than 64 (stack upgrades) takes the items
