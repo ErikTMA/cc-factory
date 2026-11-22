@@ -538,6 +538,16 @@ do
   check(plantedSpots(W) == #SPOTS, "every spot planted: " .. plantedSpots(W))
 end
 
+print("scenario: it starts with fuel 0 but coal in its inventory (the live forester): it burns that")
+do
+  local W = newWorld()
+  local T, api = newTurtle(W, 0)
+  T.inv[1] = { name = SAP, count = 32 }
+  T.inv[5] = { name = "minecraft:coal", count = 16 }
+  local ok, err = run(makeEnv(T, api, {}, sleeper(W, 2)), "10")
+  check(tostring(err):find("END OF TEST") ~= nil and plantedSpots(W) == #SPOTS, "fuelled itself and worked: " .. tostring(err))
+end
+
 print("scenario: too little fuel to measure the whole pen: it goes HOME before it runs dry, and says so")
 do
   local W = newWorld()

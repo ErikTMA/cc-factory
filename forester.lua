@@ -753,7 +753,8 @@ S.wait = nums[#nums] or S.wait or CFG.wait
 save()
 
 if turtle.getFuelLevel() ~= "unlimited" and turtle.getFuelLevel() == 0 then
-  error("No fuel: put coal or logs in it", 0)
+  refuel() -- (what it carries first)
+  if turtle.getFuelLevel() == 0 then error("No fuel: put coal or logs in it", 0) end
 end
 
 if args[1] == "rescan" then AREA = nil end
