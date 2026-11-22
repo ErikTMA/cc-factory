@@ -3,143 +3,143 @@
 -- block but filler (stone, dirt...) and liquids: ores, and amethyst, chests,
 -- spawners...
 --
--- Miners report every scan they take (where, and every ore in it) and every
--- ore they dig. A scan is the truth for what it covers: ores it lists are
--- added, known ores inside it that it no longer lists are gone (someone dug
--- them). A job is handed the known ores of its kind nearest the miner's home;
--- those are held for that job until it ends, so two jobs don't race for them.
+-- Miners report every scan they take (where, and every block in it worth
+-- keeping) and every block they dig. A scan is the truth for what it covers:
+-- blocks it lists are added, known ones inside it that it no longer lists are
+-- gone (someone dug them). A job is handed the known ores of its kind nearest
+-- the miner's home; those are held for that job until it ends, so two jobs
+-- don't race for them.
 --
---   map = { ores = { ["x,y,z"] = name }, isOre = { [name] = true },
---           scans = { ["x,y,z"] = radius }, held = { ["x,y,z"] = jobId } }
--- (`ores` holds every block kept, ore or not; isOre says which names are ores.)
+-- In memory the map is kept per 16x16x16 cell, so a scan or a search only
+-- touches the cells around it, however big the map grows:
+--   map = { cells = { ["cx,cy,cz"] = { ["x,y,z"] = name } }, n = blocks,
+--           isOre = { [name] = kind or true }, scans = { ["x,y,z"] = radius },
+--           held = { ["x,y,z"] = jobId } }
 
 local M = {}
+
+local CELL = 16
 
 local function key(x, y, z) return x .. "," .. y .. "," .. z end
 local function unkey(k)
   local x, y, z = k:match("^(-?%d+),(-?%d+),(-?%d+)$")
   return tonumber(x), tonumber(y), tonumber(z)
 end
+local function cellOf(v) return math.floor(v / CELL) end
+local function cellKey(x, y, z) return key(cellOf(x), cellOf(y), cellOf(z)) end
 M.key, M.unkey = key, unkey
 
-function M.new() return { ores = {}, isOre = {}, scans = {}, held = {} } end
+function M.new() return { cells = {}, n = 0, isOre = {}, scans = {}, held = {} } end
 
--- ------------------------------------------------------------------ disk --
--- On disk the map is packed: every block name once, and per 16x16x16 cell a
--- string of "x y z i" (offsets in the cell, name index): ~8 bytes a block
--- instead of ~45. (A base may have 1 MB in all, code included.)
-local CELL = 16
-local function cellOf(v) return math.floor(v / CELL) end
-
-function M.pack(map)
-  local names, index, cells = {}, {}, {}
-  for k, name in pairs(map.ores) do
-    local x, y, z = unkey(k)
-    if not index[name] then names[#names + 1] = name; index[name] = #names end
-    local ck = key(cellOf(x), cellOf(y), cellOf(z))
-    cells[ck] = cells[ck] or {}
-    local c = cells[ck]
-    c[#c + 1] = (x - cellOf(x) * CELL) .. " " .. (y - cellOf(y) * CELL) .. " " .. (z - cellOf(z) * CELL) .. " " .. index[name]
-  end
-  local packed, ore = {}, {}
-  for ck, list in pairs(cells) do table.sort(list); packed[ck] = table.concat(list, ",") end
-  for i, name in ipairs(names) do if map.isOre[name] then ore[#ore + 1] = i end end
-  local scans = {}
-  for k, r in pairs(map.scans) do scans[#scans + 1] = k .. "," .. r end
-  table.sort(scans)
-  return { v = 2, names = names, ore = ore, cells = packed, scans = table.concat(scans, ";"), held = map.held }
+function M.get(map, x, y, z)
+  local c = map.cells[cellKey(x, y, z)]
+  return c and c[key(x, y, z)]
 end
 
--- A map read back from disk (packed, an older plain one, or nothing).
-function M.load(t)
-  if type(t) ~= "table" then return M.new() end
-  if t.v ~= 2 then
-    t.ores, t.isOre, t.scans, t.held = t.ores or {}, t.isOre or {}, t.scans or {}, t.held or {}
-    return t
+function M.put(map, x, y, z, name)
+  local ck = cellKey(x, y, z)
+  local c = map.cells[ck]
+  if not c then c = {}; map.cells[ck] = c end
+  local k = key(x, y, z)
+  if c[k] == nil then map.n = map.n + 1 end
+  c[k] = name
+end
+
+function M.del(map, x, y, z)
+  local ck = cellKey(x, y, z)
+  local c = map.cells[ck]
+  local k = key(x, y, z)
+  if c and c[k] ~= nil then
+    c[k] = nil
+    map.n = map.n - 1
+    if next(c) == nil then map.cells[ck] = nil end
   end
-  local map = M.new()
-  for _, i in ipairs(t.ore or {}) do map.isOre[t.names[i]] = true end
-  for ck, s in pairs(t.cells or {}) do
-    local cx, cy, cz = unkey(ck)
-    for x, y, z, i in s:gmatch("(%d+) (%d+) (%d+) (%d+)") do
-      map.ores[key(cx * CELL + tonumber(x), cy * CELL + tonumber(y), cz * CELL + tonumber(z))] = t.names[tonumber(i)]
+  map.held[k] = nil
+end
+
+-- Every block: fn(x, y, z, name).
+function M.each(map, fn)
+  for _, c in pairs(map.cells) do
+    for k, name in pairs(c) do
+      local x, y, z = unkey(k)
+      fn(x, y, z, name)
     end
   end
-  for x, y, z, r in (t.scans or ""):gmatch("(-?%d+),(-?%d+),(-?%d+),(%d+)") do
-    map.scans[key(tonumber(x), tonumber(y), tonumber(z))] = tonumber(r)
-  end
-  map.held = t.held or {}
-  return map
-end
-
--- Make room: drop the blocks (and scans) farthest from `center` until at most
--- `keep` blocks are left. Returns how many were dropped.
-function M.prune(map, center, keep)
-  local list = {}
-  for k in pairs(map.ores) do
-    local x, y, z = unkey(k)
-    list[#list + 1] = { k = k, d = math.abs(x - center.x) + math.abs(y - center.y) + math.abs(z - center.z) }
-  end
-  if #list <= keep then return 0 end
-  table.sort(list, function(a, b) return a.d < b.d end)
-  local maxD = list[keep] and list[keep].d or 0
-  for i = keep + 1, #list do map.ores[list[i].k], map.held[list[i].k] = nil, nil end
-  for k in pairs(map.scans) do
-    local x, y, z = unkey(k)
-    if math.abs(x - center.x) + math.abs(y - center.y) + math.abs(z - center.z) > maxD then map.scans[k] = nil end
-  end
-  return #list - keep
 end
 
 -- What a scan covers: the cube of `r` around its center (AP 0.8.2a
 -- ScanUtil.traverseBlocks: BlockPos.betweenClosed(-r..r) on each axis, every
--- block but air listed; checked in the jar). A known ore in there that the
+-- block but air listed; checked in the jar). A known block in there that the
 -- scan doesn't list is gone.
-local function covered(c, r, x, y, z)
-  return math.abs(x - c.x) <= r and math.abs(y - c.y) <= r and math.abs(z - c.z) <= r
-end
-
--- A scan at `c` (radius `r`) listing `ores` = { { x, y, z, name }, ... }.
-function M.scan(map, c, r, ores)
-  for k in pairs(map.ores) do
-    local x, y, z = unkey(k)
-    if covered(c, r, x, y, z) then map.ores[k] = nil end
+-- A scan at `c` (radius `r`) listing `blocks` = { { x, y, z, name, ore, kind }, ... }.
+function M.scan(map, c, r, blocks)
+  for cx = cellOf(c.x - r), cellOf(c.x + r) do
+    for cy = cellOf(c.y - r), cellOf(c.y + r) do
+      for cz = cellOf(c.z - r), cellOf(c.z + r) do
+        local cell = map.cells[key(cx, cy, cz)]
+        if cell then
+          local gone = {}
+          for k in pairs(cell) do
+            local x, y, z = unkey(k)
+            if math.abs(x - c.x) <= r and math.abs(y - c.y) <= r and math.abs(z - c.z) <= r then
+              gone[#gone + 1] = { x, y, z }
+            end
+          end
+          for _, g in ipairs(gone) do M.del(map, g[1], g[2], g[3]) end
+        end
+      end
+    end
   end
-  for _, o in ipairs(ores) do
-    map.ores[key(o.x, o.y, o.z)] = o.name
-    if o.ore then map.isOre[o.name] = true end
+  for _, b in ipairs(blocks) do
+    M.put(map, b.x, b.y, b.z, b.name)
+    if b.ore then map.isOre[b.name] = b.kind or map.isOre[b.name] or true end
   end
   map.scans[key(c.x, c.y, c.z)] = r
 end
 
--- Ores dug: { { x, y, z }, ... }.
+-- Blocks dug: { { x, y, z }, ... }.
 function M.mined(map, list)
-  for _, p in ipairs(list) do
-    local k = key(p.x, p.y, p.z)
-    map.ores[k], map.held[k] = nil, nil
-  end
+  for _, p in ipairs(list) do M.del(map, p.x, p.y, p.z) end
 end
 
--- Does block `name` match a job's `only` (nil: every ore)?
+-- Does block `name` match a job's `only` (nil: every ore)? By name, or by
+-- the ore kind its tag gave (c:ores/<kind>).
 function M.matches(map, name, only)
-  if not map.isOre[name] then return false end
-  return only == nil or name:find(only, 1, true) ~= nil
+  local ore = map.isOre[name]
+  if not ore then return false end
+  return only == nil or name:find(only, 1, true) ~= nil or ore == only
 end
 
 -- Up to `max` known ores matching `only`, nearest `from` first, not held by
--- another job: { { x, y, z, name }, ... }.
-function M.find(map, from, only, max)
+-- another job, at most `below.y` high (never above the miner's home: its
+-- way there goes down its shaft), within 256 blocks across and 128 down:
+-- { { x, y, z, name }, ... }.
+local FIND_ACROSS, FIND_DOWN = 16, 8 -- in cells
+function M.find(map, from, only, max, below)
+  local top = below and below.y or math.huge
   local list = {}
-  for k, name in pairs(map.ores) do
-    if not map.held[k] and M.matches(map, name, only) then
-      local x, y, z = unkey(k)
-      list[#list + 1] = { x = x, y = y, z = z, name = name,
-                          d = math.abs(x - from.x) + math.abs(y - from.y) + math.abs(z - from.z) }
+  local fx, fy, fz = cellOf(from.x), cellOf(from.y), cellOf(from.z)
+  for cx = fx - FIND_ACROSS, fx + FIND_ACROSS do
+    for cz = fz - FIND_ACROSS, fz + FIND_ACROSS do
+      for cy = fy - FIND_DOWN, fy + 1 do
+        local cell = map.cells[key(cx, cy, cz)]
+        if cell then
+          for k, name in pairs(cell) do
+            if not map.held[k] and M.matches(map, name, only) then
+              local x, y, z = unkey(k)
+              if y <= top then
+                list[#list + 1] = { x = x, y = y, z = z, name = name, k = k,
+                                    d = math.abs(x - from.x) + math.abs(y - from.y) + math.abs(z - from.z) }
+              end
+            end
+          end
+        end
+      end
     end
   end
   table.sort(list, function(a, b)
     if a.d ~= b.d then return a.d < b.d end
-    return key(a.x, a.y, a.z) < key(b.x, b.y, b.z)
+    return a.k < b.k
   end)
   local out = {}
   for i = 1, math.min(max, #list) do
@@ -157,27 +157,107 @@ function M.release(map, jobId)
   for k, id in pairs(map.held) do if id == jobId then map.held[k] = nil end end
 end
 
--- The map as it goes to disk, at most `budget` bytes: `ser` serializes a
--- table. Too big: the farthest from `center` are dropped until it fits.
--- Returns the text and how many blocks were dropped.
-function M.encode(map, budget, ser, center)
-  local data = ser(M.pack(map))
-  local dropped = 0
-  for _ = 1, 8 do
-    if #data <= budget then break end
-    local n = 0
-    for _ in pairs(map.ores) do n = n + 1 end
-    dropped = dropped + M.prune(map, center or { x = 0, y = 0, z = 0 }, math.floor(n * budget / #data * 0.9))
-    data = ser(M.pack(map))
-  end
-  return data, dropped
+-- The job ids that hold something.
+function M.holders(map)
+  local ids = {}
+  for _, id in pairs(map.held) do ids[id] = true end
+  return ids
 end
 
 -- How many known blocks of each kind: { [name] = n }.
 function M.counts(map)
   local n = {}
-  for _, name in pairs(map.ores) do n[name] = (n[name] or 0) + 1 end
+  M.each(map, function(_, _, _, name) n[name] = (n[name] or 0) + 1 end)
   return n
+end
+
+-- ------------------------------------------------------------------ disk --
+-- On disk the map is packed: every block name once, and per cell a string
+-- of "x y z i" (offsets in the cell, name index): ~10 bytes a block instead
+-- of ~45. (A base may have 1 MB in all, code included.)
+function M.pack(map)
+  local names, index, cells = {}, {}, {}
+  for ck, c in pairs(map.cells) do
+    local cx, cy, cz = unkey(ck)
+    local list = {}
+    for k, name in pairs(c) do
+      local x, y, z = unkey(k)
+      if not index[name] then names[#names + 1] = name; index[name] = #names end
+      list[#list + 1] = (x - cx * CELL) .. " " .. (y - cy * CELL) .. " " .. (z - cz * CELL) .. " " .. index[name]
+    end
+    table.sort(list)
+    cells[ck] = table.concat(list, ",")
+  end
+  local ore = {}
+  for i, name in ipairs(names) do
+    local o = map.isOre[name]
+    if o then ore[#ore + 1] = o == true and tostring(i) or (i .. "=" .. o) end
+  end
+  local scans = {}
+  for k, r in pairs(map.scans) do scans[#scans + 1] = k .. "," .. r end
+  table.sort(scans)
+  return { v = 3, names = names, ore = ore, cells = cells, scans = table.concat(scans, ";"), held = map.held }
+end
+
+-- A map read back from disk (packed, or nothing).
+function M.load(t)
+  local map = M.new()
+  if type(t) ~= "table" or not t.cells then return map end
+  for _, o in ipairs(t.ore or {}) do
+    local i, kind = tostring(o):match("^(%d+)=?(.*)$")
+    local name = t.names[tonumber(i)]
+    if name then map.isOre[name] = (kind ~= "" and kind) or true end
+  end
+  for ck, s in pairs(t.cells) do
+    local cx, cy, cz = unkey(ck)
+    for x, y, z, i in s:gmatch("(%d+) (%d+) (%d+) (%d+)") do
+      M.put(map, cx * CELL + tonumber(x), cy * CELL + tonumber(y), cz * CELL + tonumber(z), t.names[tonumber(i)])
+    end
+  end
+  for x, y, z, r in (t.scans or ""):gmatch("(-?%d+),(-?%d+),(-?%d+),(%d+)") do
+    map.scans[key(tonumber(x), tonumber(y), tonumber(z))] = tonumber(r)
+  end
+  map.held = t.held or {}
+  return map
+end
+
+-- Make room: drop the blocks (and scans) farthest from `center` until at most
+-- `keep` (at least 1) are left. Returns how many were dropped.
+function M.prune(map, center, keep)
+  keep = math.max(1, keep)
+  if map.n <= keep then return 0 end
+  local list = {}
+  M.each(map, function(x, y, z)
+    list[#list + 1] = { x = x, y = y, z = z,
+                        d = math.abs(x - center.x) + math.abs(y - center.y) + math.abs(z - center.z) }
+  end)
+  table.sort(list, function(a, b) return a.d < b.d end)
+  local maxD = list[keep].d
+  for i = keep + 1, #list do M.del(map, list[i].x, list[i].y, list[i].z) end
+  for k in pairs(map.scans) do
+    local x, y, z = unkey(k)
+    if math.abs(x - center.x) + math.abs(y - center.y) + math.abs(z - center.z) > maxD then map.scans[k] = nil end
+  end
+  return #list - keep
+end
+
+-- The map as it goes to disk, at most `budget` bytes: `ser` serializes a
+-- table. Too big: the farthest from `center` are dropped until it fits.
+-- Returns the text and how many blocks were dropped, or nil and why (no
+-- room at all: better keep the old file than write nothing).
+local MIN_BUDGET = 16 * 1024
+function M.encode(map, budget, ser, center)
+  if budget < MIN_BUDGET then return nil, "no room on this computer for the ore map" end
+  local data = ser(M.pack(map))
+  local dropped = 0
+  for _ = 1, 8 do
+    if #data <= budget then return data, dropped end
+    dropped = dropped + M.prune(map, center or { x = 0, y = 0, z = 0 },
+                                math.floor(map.n * budget / #data * 0.9))
+    data = ser(M.pack(map))
+  end
+  if #data <= budget then return data, dropped end
+  return nil, "the ore map doesn't fit, even pruned"
 end
 
 return M

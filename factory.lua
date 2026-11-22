@@ -296,6 +296,7 @@ function M.forget(F)
   local t = id and F.turtles[id]
   if not t then F.note = "Select a turtle first"; return end
   if t.job and t.job.id and t.state ~= "idle" and t.state ~= "done" then
+    oremap.release(F.map, t.job.id)
     table.insert(F.queue, 1, t.job)
   end
   F.turtles[id] = nil
@@ -963,7 +964,7 @@ end
 function M.applyMap(F, from, rep)
   local h = homeOf(F, from)
   if not h or type(rep) ~= "table" then return false end
-  local function at(p) return { x = h.x + p.x, y = h.y + p.y, z = h.z + p.z, name = p.name, ore = p.ore } end
+  local function at(p) return { x = h.x + p.x, y = h.y + p.y, z = h.z + p.z, name = p.name, ore = p.ore, kind = p.kind } end
   for _, sc in ipairs(rep.scans or {}) do
     local ores = {}
     for _, o in ipairs(sc.ores or {}) do ores[#ores + 1] = at(o) end
@@ -980,11 +981,13 @@ end
 -- held for the job; in the turtle's own frame. (A job wanting `quantity`
 -- gets a few more than that: some may be gone.)
 local KNOWN_MAX = 64
+local KNOWN_BELOW = 8 -- known ores this far below the home at least (never up through the base)
 local function knownFor(F, id, job)
   local h = homeOf(F, id)
   if not h then return nil end
   local max = job.quantity and math.min(KNOWN_MAX, job.quantity * 2) or KNOWN_MAX
-  local list = oremap.find(F.map, h, job.only, max)
+  oremap.release(F.map, job.id) -- (a job handed out again: its own holds are its again)
+  local list = oremap.find(F.map, h, job.only, max, { y = h.y - KNOWN_BELOW })
   if #list == 0 then return nil end
   oremap.hold(F.map, list, job.id)
   F.mapDirty = true
@@ -1218,6 +1221,10 @@ function M.tick(F)
   -- gone) must not block the rule forever
   for i, id in pairs(F.ruleJobs) do
     if not jobActive(F, id) then F.ruleJobs[i] = nil end
+  end
+  -- ores held for a job nobody has any more (its turtle gone, its "done" lost)
+  for id in pairs(oremap.holders(F.map)) do
+    if not jobActive(F, id) then oremap.release(F.map, id); F.mapDirty = true end
   end
   -- a build whose assembler went silent
   local o = buildingOrder(F)

@@ -1866,49 +1866,66 @@ do
 end
 
 print("scenario: the ore map: scans add what they see and drop what is gone, digs remove,")
-print("          jobs find the nearest of their kind (ores only), packed for disk, pruned to fit")
+print("          jobs find the nearest of their kind (ores only, below a height), packed for disk, pruned")
 do
   local oremap = baseEnv.require("oremap")
   local m = oremap.new()
   local IRON, COAL, CHEST = "minecraft:iron_ore", "minecraft:coal_ore", "minecraft:chest"
+  local function at(x, y, z) return oremap.get(m, x, y, z) end
   oremap.scan(m, { x = 0, y = 0, z = 0 }, 8, { { x = 1, y = 0, z = 0, name = IRON, ore = true },
     { x = 5, y = -2, z = 3, name = COAL, ore = true }, { x = 8, y = 8, z = 8, name = CHEST } })
   oremap.scan(m, { x = 40, y = 0, z = 0 }, 8, { { x = 41, y = 1, z = 0, name = IRON, ore = true } })
-  check(m.ores["1,0,0"] == IRON and m.ores["8,8,8"] == CHEST and m.ores["41,1,0"] == IRON, "a scan adds every block it lists")
+  check(at(1, 0, 0) == IRON and at(8, 8, 8) == CHEST and at(41, 1, 0) == IRON and m.n == 4, "a scan adds every block it lists")
   -- the same place scanned again: the coal is gone (someone dug it)
   oremap.scan(m, { x = 0, y = 0, z = 0 }, 8, { { x = 1, y = 0, z = 0, name = IRON, ore = true }, { x = 8, y = 8, z = 8, name = CHEST } })
-  check(m.ores["5,-2,3"] == nil and m.ores["1,0,0"] == IRON, "a later scan drops what it no longer sees")
-  check(m.ores["41,1,0"] == IRON, "but nothing outside its cube (-8..8 on each axis)")
+  check(at(5, -2, 3) == nil and at(1, 0, 0) == IRON and m.n == 3, "a later scan drops what it no longer sees")
+  check(at(41, 1, 0) == IRON, "but nothing outside its cube (-8..8 on each axis)")
   local all = oremap.find(m, { x = 0, y = 0, z = 0 }, nil, 10)
   check(#all == 2 and all[1].x == 1 and all[2].x == 41, "all ores, nearest first, and no chest: " .. #all)
   check(#oremap.find(m, { x = 0, y = 0, z = 0 }, "coal", 10) == 0, "only the job's kind")
+  check(#oremap.find(m, { x = 0, y = 0, z = 0 }, nil, 10, { y = 0 }) == 1, "none above a height (41,1,0 is)")
   oremap.hold(m, { all[1] }, 7)
   check(#oremap.find(m, { x = 0, y = 0, z = 0 }, "iron", 10) == 1, "an ore held for job 7 isn't handed out again")
+  check(oremap.holders(m)[7], "job 7 holds something")
   oremap.release(m, 7)
   check(#oremap.find(m, { x = 0, y = 0, z = 0 }, "iron", 10) == 2, "released when the job ends")
   oremap.mined(m, { { x = 1, y = 0, z = 0 } })
-  check(m.ores["1,0,0"] == nil, "dug: gone")
-  -- disk: packed, read back the same
-  for i = 1, 300 do oremap.scan(m, { x = i * 100, y = -40, z = 0 }, 8,
-    { { x = i * 100 + 3, y = -41, z = 2, name = "alltheores:osmium_ore", ore = true } }) end
+  check(at(1, 0, 0) == nil and m.n == 2, "dug: gone")
+  -- an ore known by its tag: a job for "osmium" finds a block named otherwise
+  oremap.scan(m, { x = 0, y = -30, z = 0 }, 8, { { x = 2, y = -31, z = 2, name = "mod:weird_rock", ore = true, kind = "osmium" } })
+  check(#oremap.find(m, { x = 0, y = 0, z = 0 }, "osmium", 10) == 1, "an ore kind from its c:ores tag matches")
+  -- disk: packed (negative coordinates too), read back the same
+  for i = 1, 300 do oremap.scan(m, { x = -i * 100, y = -40, z = -7 }, 8,
+    { { x = -i * 100 - 3, y = -41, z = -9, name = "alltheores:osmium_ore", ore = true, kind = "osmium" } }) end
   local text = textutils.serialize(oremap.pack(m))
   local back = oremap.load(textutils.unserialize(text))
-  local same = true
-  for k, v in pairs(m.ores) do if back.ores[k] ~= v then same = false end end
-  for k in pairs(back.ores) do if not m.ores[k] then same = false end end
-  check(same and back.isOre["alltheores:osmium_ore"] and not back.isOre[CHEST] and back.scans["100,-40,0"] == 8,
-    "packed and read back: the same map")
+  local same = back.n == m.n
+  oremap.each(m, function(x, y, z, v) if oremap.get(back, x, y, z) ~= v then same = false end end)
+  check(same and back.isOre["alltheores:osmium_ore"] == "osmium" and back.isOre["mod:weird_rock"] == "osmium"
+    and not back.isOre[CHEST] and back.scans["-100,-40,-7"] == 8 and oremap.get(back, -30003, -41, -9),
+    "packed and read back: the same map (negative coordinates, ore kinds)")
   -- a real scan: dozens of blocks in one cell
-  local dense, ores = oremap.new(), {}
-  for i = 0, 99 do ores[#ores + 1] = { x = i % 10, y = -30 - (i % 7), z = math.floor(i / 10), name = "minecraft:deepslate_iron_ore", ore = true } end
+  local dense, ores, plain = oremap.new(), {}, {}
+  for i = 0, 99 do
+    local o = { x = i % 10, y = -30 - (i % 7), z = math.floor(i / 10), name = "minecraft:deepslate_iron_ore", ore = true }
+    ores[#ores + 1] = o
+    plain[o.x .. "," .. o.y .. "," .. o.z] = o.name
+  end
   oremap.scan(dense, { x = 5, y = -33, z = 5 }, 8, ores)
-  local packed, plain = textutils.serialize(oremap.pack(dense)), textutils.serialize(dense.ores)
-  check(#packed * 3 < #plain, ("packed is a third of plain or less: %d bytes vs %d"):format(#packed, #plain))
+  local packed, flat = textutils.serialize(oremap.pack(dense)), textutils.serialize(plain)
+  check(#packed * 3 < #flat, ("packed is a third of plain or less: %d bytes vs %d"):format(#packed, #flat))
   -- too little room: the farthest go, the rest still loads
-  local data, dropped = oremap.encode(m, math.floor(#text / 3), textutils.serialize)
-  check(#data <= math.floor(#text / 3) and dropped > 0, ("fits a third of the room: %d bytes, %d dropped"):format(#data, dropped))
-  local kept = oremap.load(textutils.unserialize(data))
-  check(kept.ores["41,1,0"] == IRON and kept.ores["30003,-41,2"] == nil, "the nearest kept, the farthest dropped")
+  local budget = math.max(16 * 1024 + 1, math.floor(#text / 2))
+  local big = oremap.load(textutils.unserialize(text))
+  for i = 1, 2000 do oremap.put(big, -i, -50, 3, "alltheores:osmium_ore") end
+  local data, dropped = oremap.encode(big, budget, textutils.serialize)
+  check(data and #data <= budget and dropped > 0, ("fits the room: %s bytes, %d dropped"):format(data and #data or "-", dropped or 0))
+  local kept = oremap.load(textutils.unserialize(data or "{}"))
+  check(oremap.get(kept, 41, 1, 0) == IRON and oremap.get(kept, -30003, -41, -9) == nil, "the nearest kept, the farthest dropped")
+  -- no room at all: nothing written, nothing wiped
+  local before = big.n
+  local none, why = oremap.encode(big, 1000, textutils.serialize)
+  check(none == nil and big.n == before, "no room at all: nothing to write (" .. tostring(why) .. "), the map untouched")
 end
 
 print("scenario: the base keeps the map in its frame: a miner's report from its home, a status")
@@ -1923,25 +1940,26 @@ do
   local rep = { scans = { { x = 0, y = -20, z = -16, r = 8, ores = {
       { x = 2, y = -21, z = -16, name = "minecraft:iron_ore", ore = true },
       { x = 3, y = -21, z = -16, name = "minecraft:iron_ore", ore = true },
-      { x = -4, y = -19, z = -12, name = "minecraft:spawner" } } } },
+      { x = -4, y = -19, z = -12, name = "minecraft:spawner" },
+      -- iron just under the home: a job would dig up toward the base for it
+      { x = 1, y = -2, z = 0, name = "minecraft:iron_ore", ore = true } } } },
     mined = { { x = 0, y = -20, z = -17 } } }
   local r = factory.handle(F, 120, { type = "status", state = "map", role = "miner", label = "m-120", map = rep })
   check(r and r.type == "ok" and F.turtles[120].state == "assigned", "a map status: ok, its record unchanged")
-  check(F.map.ores["12,-24,4"] == "minecraft:iron_ore" and F.map.ores["6,-22,8"] == "minecraft:spawner",
+  check(oremap.get(F.map, 12, -24, 4) == "minecraft:iron_ore" and oremap.get(F.map, 6, -22, 8) == "minecraft:spawner",
     "stored in the base's frame (home 10,-3,20 + offset)")
   check(F.mapDirty, "and marked for saving")
   -- someone with no home at the base: its report can't be placed
   F.turtles[122] = { id = 122, role = "miner", seen = W.clock }
   factory.handle(F, 122, { type = "status", state = "map", role = "miner", label = "m-122", map = rep })
-  local n = 0
-  for _ in pairs(F.map.ores) do n = n + 1 end
-  check(n == 3, "a miner without a home at the base adds nothing: " .. n)
+  check(F.map.n == 4, "a miner without a home at the base adds nothing: " .. F.map.n)
   -- an iron job for 121: it gets the two known iron ores, in its own frame
   local qBefore = #F.queue
   local job = factory.queueJob(F, { only = "iron", y = -20, quantity = 8 })
   while #F.queue > 1 do table.remove(F.queue, 1) end
   local jr = factory.handle(F, 121, { type = "status", state = "idle", role = "miner", label = "m-121", fuel = 5000 })
-  check(jr.type == "job" and jr.known and #jr.known == 2, "job with the known iron: " .. tostring(jr.known and #jr.known))
+  check(jr.type == "job" and jr.known and #jr.known == 2,
+    "job with the known iron, not the one just under home: " .. tostring(jr.known and #jr.known))
   local at = {}
   for _, o in ipairs(jr.known or {}) do at[o.x .. "," .. o.y .. "," .. o.z] = true end
   check(at["-2,-21,-16"] and at["-1,-21,-16"] and jr.known[1].x == -1,
@@ -1954,6 +1972,10 @@ do
   factory.handle(F, 121, { type = "status", state = "done", role = "miner", label = "m-121", job = jr.job, mined = 2 })
   check(next(F.map.held) == nil or (function() for _, id in pairs(F.map.held) do if id == jr.job.id then return false end end return true end)(),
     "done: its holds released")
+  -- a job that vanished (its turtle gone without "done"): the base's tick frees its ores
+  oremap.hold(F.map, { { x = 12, y = -24, z = 4 } }, 4242)
+  pcall(factory.tick, F)
+  check(not oremap.holders(F.map)[4242], "a vanished job's held ores are freed by the tick")
   F.queue = {}
   F.turtles[120], F.turtles[121], F.turtles[122] = nil, nil, nil
   for i = #F.homes, 1, -1 do if F.homes[i].id == 9120 or F.homes[i].id == 9121 then table.remove(F.homes, i) end end

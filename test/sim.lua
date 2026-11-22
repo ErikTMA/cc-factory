@@ -59,6 +59,7 @@ local function newWorld(seed, startHeading, opts)
 end
 
 local function oreName(n) return n and n:find("_ore$") ~= nil end
+local oremap = assert(load(MODULES_EXTRA.oremap, "oremap"))()
 
 local function newTurtle(W, startHeading, fuel, start)
   start = start or { x = 0, y = 0, z = 0 }
@@ -604,25 +605,25 @@ do
   end
   check(mapMid and doneAt and mapMid < doneAt, "a map report came in mid-job, before job 1 was done")
   local ores, spawner, iron = 0, false, 0
-  for k, v in pairs(B.map.ores) do
+  oremap.each(B.map, function(_, _, _, v)
     ores = ores + 1
     if v == "minecraft:spawner" then spawner = true end
     if v == "minecraft:iron_ore" then iron = iron + 1 end
-  end
+  end)
   check(ores > 20, "the base's map holds what was scanned: " .. ores .. " blocks")
   check(spawner, "the spawner too (not ore, not filler)")
   local stone = false
-  for _, v in pairs(B.map.ores) do if v == "minecraft:stone" or v == "minecraft:cobblestone" then stone = true end end
+  oremap.each(B.map, function(_, _, _, v) if v == "minecraft:stone" or v == "minecraft:cobblestone" then stone = true end end)
   check(not stone, "no stone or cobblestone in it")
   check(known2 and #known2 > 0, "job 2 came with known iron: " .. tostring(known2 and #known2))
   local dugKnown = 0
   for _, o in ipairs(known2 or {}) do
-    if W.get(o.x, o.y, o.z) == nil and B.map.ores[o.x .. "," .. o.y .. "," .. o.z] == nil then dugKnown = dugKnown + 1 end
+    if W.get(o.x, o.y, o.z) == nil and oremap.get(B.map, o.x, o.y, o.z) == nil then dugKnown = dugKnown + 1 end
   end
   check(known2 and dugKnown == math.min(8, #known2),
     ("it dug the known iron it needed (8), the map dropped those: %d of %d known"):format(dugKnown, known2 and #known2 or 0))
   local left = 0
-  for _, o in ipairs(known2 or {}) do if B.map.ores[o.x .. "," .. o.y .. "," .. o.z] then left = left + 1 end end
+  for _, o in ipairs(known2 or {}) do if oremap.get(B.map, o.x, o.y, o.z) then left = left + 1 end end
   check(left == #(known2 or {}) - dugKnown and next(B.map.held) == nil, "the rest stays known, free for the next job: " .. left)
   check((B.totals.iron or 0) >= 100, "both jobs counted: " .. tostring(B.totals.iron))
 end
@@ -636,7 +637,7 @@ do
   W.set(GHOST.x, GHOST.y, GHOST.z, "minecraft:stone")
   local B, fleet, _, _, Base, bus = runFleet(W, { { x = 0, z = 0, h = 0 } }, function(Base, B)
     table.insert(B.homes, { id = 1, x = 0, y = 0, z = 0, facing = "north", role = "miner", owner = 101 })
-    B.map.ores[GHOST.x .. "," .. GHOST.y .. "," .. GHOST.z] = "minecraft:iron_ore"
+    oremap.put(B.map, GHOST.x, GHOST.y, GHOST.z, "minecraft:iron_ore")
     B.map.isOre["minecraft:iron_ore"] = true
     Base.queueJob(B, { only = "iron", y = -20, quantity = 1, lanes = 1, length = 64 })
     Base.queueJob(B, { only = "diamond", y = -20, quantity = 999, lanes = 1, length = 176 })
@@ -646,7 +647,7 @@ do
   })
   local f = fleet[1]
   check(not f.err, "ran without error: " .. tostring(f.err))
-  check(B.map.ores[GHOST.x .. "," .. GHOST.y .. "," .. GHOST.z] == nil, "the ghost iron left the map")
+  check(oremap.get(B.map, GHOST.x, GHOST.y, GHOST.z) == nil, "the ghost iron left the map")
   local job1Scans
   for _, e in ipairs(bus.log) do
     if e.msg.state == "done" and e.msg.job and e.msg.job.id == 1 then job1Scans = #((e.msg.map or {}).scans or {}) end
@@ -661,7 +662,7 @@ do
   check(scans >= 5 and tries <= 3, ("out of reach it backed off: %d tries over %d scans"):format(tries, scans))
   -- (its home report still brought everything: the map knows what it scanned)
   local n = 0
-  for _ in pairs(B.map.ores) do n = n + 1 end
+  n = B.map.n
   check(n > 20, "and the home report carried it all: " .. n)
 end
 
@@ -678,7 +679,7 @@ do
   end)
   check(not fleet[1].err, "ran without error: " .. tostring(fleet[1].err))
   check(W.get(AM.x, AM.y, AM.z) == nil, "the amethyst was dug (tunnel)")
-  check(B.map.ores[AM.x .. "," .. AM.y .. "," .. AM.z] == nil, "and left the map")
+  check(oremap.get(B.map, AM.x, AM.y, AM.z) == nil, "and left the map")
 end
 
 print("scenario: a hand-run job keeps no map report (nobody to send it to)")

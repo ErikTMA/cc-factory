@@ -411,28 +411,47 @@ if mon then mon.setTextScale(0.5) end
 local function persist()
   local ok, err = pcall(writeTable, "/base.state", factory.snapshot(F))
   if not ok then F.note = "could not save state: " .. tostring(err) end
-  if F.mapDirty then
-    F.mapDirty = false
-    ok, err = pcall(function()
-      -- it must fit what this computer has left (1 MB in all on a default
-      -- server), with room to spare for the state and the code
-      local old = fs.exists("/oremap.db") and fs.getSize("/oremap.db") or 0
-      local budget = fs.getFreeSpace("/") + old - 64 * 1024
-      local data, dropped = oremap.encode(F.map, budget,
-        function(t) return textutils.serialize(t, { compact = true }) end)
-      if dropped > 0 then F.note = ("Ore map full: dropped the %d blocks farthest from the base"):format(dropped) end
-      local f = fs.open("/oremap.db", "w")
+end
+
+-- The ore map: saved from the ticker at most once a minute, when it changed
+-- (not after every message: it can be big). It must fit what this computer
+-- has left (1 MB in all on a default server), with room to spare.
+local MAP_EVERY = 60
+local mapSavedAt = -MAP_EVERY
+local function saveMap(force)
+  if not F.mapDirty or (not force and os.clock() - mapSavedAt < MAP_EVERY) then return end
+  mapSavedAt = os.clock()
+  local ok, err = pcall(function()
+    local old = fs.exists("/oremap.db") and fs.getSize("/oremap.db") or 0
+    local budget = fs.getFreeSpace("/") + old - 64 * 1024
+    local data, dropped = oremap.encode(F.map, budget,
+      function(t) return textutils.serialize(t, { compact = true }) end)
+    if not data then error(dropped, 0) end
+    if dropped > 0 then F.note = ("Ore map full: dropped the %d blocks farthest from the base"):format(dropped) end
+    local function write(path)
+      local f = fs.open(path, "w")
       f.write(data)
       f.close()
-    end)
-    if not ok then F.note = "could not save the ore map: " .. tostring(err) end
-  end
+    end
+    -- the new file next to the old, then swap: a failed write keeps the old;
+    -- no room for both: replace it in place
+    if pcall(write, "/oremap.tmp") then
+      if fs.exists("/oremap.db") then fs.delete("/oremap.db") end
+      fs.move("/oremap.tmp", "/oremap.db")
+    else
+      if fs.exists("/oremap.tmp") then fs.delete("/oremap.tmp") end
+      if fs.exists("/oremap.db") then fs.delete("/oremap.db") end
+      write("/oremap.db")
+    end
+  end)
+  if ok then F.mapDirty = false else F.note = "could not save the ore map: " .. tostring(err) end
 end
 
 local function update()
   F.note = "Updating from GitHub..."
   M.draw(UI, out)
   persist()
+  saveMap(true)
   local ok, err = pcall(shell.run, "/bootstrap.lua")
   if ok then os.reboot() end
   F.note = "Update failed: " .. tostring(err)
@@ -536,6 +555,7 @@ local function ticker()
       end)
     end
     persist()
+    saveMap()
     os.queueEvent("factory_redraw")
     sleep(10)
   end

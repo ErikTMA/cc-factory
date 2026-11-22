@@ -120,6 +120,15 @@ local function anyOre(b)
   return false
 end
 
+-- An ore's kind from its c:ores/<kind> tag (for the base's map: a job for
+-- "osmium" finds a block named otherwise but tagged so), or nil.
+local function oreKind(b)
+  for _, t in ipairs(tagList(b)) do
+    local k = t:match("^c:ores/(.+)$")
+    if k then return k end
+  end
+end
+
 -- Filler: the ground itself, not worth a place in the base's map. Liquids
 -- too: a turtle moves through water and lava (checked in the jar).
 local FILLER_TAGS = { ["minecraft:base_stone_overworld"] = true, ["minecraft:base_stone_nether"] = true,
@@ -493,7 +502,8 @@ local function mineVisible()
     local ore = anyOre(b)
     if ore or not filler(b) then
       local o = { x = S.pos.x + math.floor(b.x + 0.5), y = S.pos.y + math.floor(b.y + 0.5),
-                  z = S.pos.z + math.floor(b.z + 0.5), name = b.name, ore = ore or nil }
+                  z = S.pos.z + math.floor(b.z + 0.5), name = b.name, ore = ore or nil,
+                  kind = ore and oreKind(b) or nil }
       seen[#seen + 1] = o
       if ore and isOre(b) then ores[#ores + 1] = o end
     end
