@@ -267,12 +267,15 @@ verify-live: furnace slot pushes with a bridge backend; real hammer durability.
   going down (outbound) digs a pocket aside, waits there until the way is
   clear, then goes on; in tunnels and lanes the outbound one yields to the one coming
   back.
-- **The ore map** (branch `oremap-wip`, reviewed; fixes before it ships):
-  every scanned block but filler and liquids, in the base's frame; scans
-  drop what they no longer list; digs remove; packed on disk and fitted to
-  free space. Open review points: verify a known ore before counting it and
-  report every block dug (tunnels too); retry mid-job sends with backoff, no
-  pending map for hand-run jobs (capped); per-cell map in memory, save on the
-  ticker; safe pruning when space is short; known ores below home only;
-  release holds of vanished jobs; tag-only ores for `only` jobs.
+- **The ore map: shipped 2026-11-22** (4e085d2, two independent reviews,
+  every finding fixed with a test that failed first): every scanned block
+  but filler and liquids, in the base's frame, kept per 16-cell; scans drop
+  what they no longer list (holds on what they still see stay); every
+  non-filler block a miner digs leaves it; a known ore counts only if what
+  was dug there was ore; jobs get known ores below home, held per job, freed
+  when the job is gone; packed on disk, saved from the ticker, fitted to
+  free space; a new build spot clears it.
+- **Next:** the shared grid (base-side points and levels, reserved per job;
+  the miner's route: home shaft, connector, grid lines), then yielding in
+  shafts, trunk and lanes, with a sim where turtles meet.
 
