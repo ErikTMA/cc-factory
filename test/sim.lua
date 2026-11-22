@@ -82,6 +82,8 @@ local function newTurtle(W, startHeading, fuel, start)
     if b == "minecraft:bedrock" or b:find("^computercraft:") or b == "minecraft:chest" then return false end
     W.set(x, y, z, nil); addItem(drops(b))
     if oreName(b) then W.mined = (W.mined or 0) + 1 end
+    W.dug = W.dug or {}
+    W.dug[b] = (W.dug[b] or 0) + 1
     return true
   end
   local function move(nx, ny, nz)
@@ -228,6 +230,8 @@ local function makeEnv(T, api, scanner, files, bus, id)
         return c
       end
       msg = copy(msg)
+      -- out of wireless reach: the base never hears it
+      if bus.deaf and bus.deaf(id, msg) then bus.log[#bus.log + 1] = { from = id, msg = msg, lost = true }; return end
       local reply = bus.base.handleMessage(bus.B, id, copy(msg))
       bus.log[#bus.log + 1] = { from = id, msg = msg, reply = copy(reply) }
       if reply then bus.inbox[id] = bus.inbox[id] or {}; table.insert(bus.inbox[id], copy(reply)) end
@@ -483,7 +487,7 @@ local function runFleet(W, homes, setup, opts)
         if not ok then f.err = err end
       end
     end
-    if opts.onTick then opts.onTick(Base, B, fleet, tick) end
+    if opts.onTick then opts.onTick(Base, B, fleet, tick, bus) end
     for k, r in pairs(Base.summary(B)) do maxBusy[k] = math.max(maxBusy[k] or 0, r.turtles) end
     local allIdle = #B.queue == 0
     for _, f in ipairs(fleet) do
@@ -621,6 +625,72 @@ do
   for _, o in ipairs(known2 or {}) do if B.map.ores[o.x .. "," .. o.y .. "," .. o.z] then left = left + 1 end end
   check(left == #(known2 or {}) - dugKnown and next(B.map.held) == nil, "the rest stays known, free for the next job: " .. left)
   check((B.totals.iron or 0) >= 100, "both jobs counted: " .. tostring(B.totals.iron))
+end
+
+print("scenario: map review: a known ore that is gone isn't counted and leaves the map; a block")
+print("          worth mapping dug in a tunnel leaves it; out of reach it backs off; hand-run keeps no map")
+do
+  local W = newWorld(41, 0, { span = 70, ymin = -40, ymax = 6 })
+  -- the base believes in iron where there is only stone (someone took it)
+  local GHOST = { x = 3, y = -20, z = -40 }
+  W.set(GHOST.x, GHOST.y, GHOST.z, "minecraft:stone")
+  local B, fleet, _, _, Base, bus = runFleet(W, { { x = 0, z = 0, h = 0 } }, function(Base, B)
+    table.insert(B.homes, { id = 1, x = 0, y = 0, z = 0, facing = "north", role = "miner", owner = 101 })
+    B.map.ores[GHOST.x .. "," .. GHOST.y .. "," .. GHOST.z] = "minecraft:iron_ore"
+    B.map.isOre["minecraft:iron_ore"] = true
+    Base.queueJob(B, { only = "iron", y = -20, quantity = 1, lanes = 1, length = 64 })
+    Base.queueJob(B, { only = "diamond", y = -20, quantity = 999, lanes = 1, length = 176 })
+  end, {
+    -- deep and far: the base hears nothing the miner says mid-job
+    onTick = function(Base, B, fleet, tick, bus) bus.deaf = function(id, msg) return msg.state == "map" end end,
+  })
+  local f = fleet[1]
+  check(not f.err, "ran without error: " .. tostring(f.err))
+  check(B.map.ores[GHOST.x .. "," .. GHOST.y .. "," .. GHOST.z] == nil, "the ghost iron left the map")
+  local job1Scans
+  for _, e in ipairs(bus.log) do
+    if e.msg.state == "done" and e.msg.job and e.msg.job.id == 1 then job1Scans = #((e.msg.map or {}).scans or {}) end
+  end
+  check(job1Scans and job1Scans > 0,
+    "the ghost (its only known iron) didn't count: job 1 went on and scanned for real iron: " .. tostring(job1Scans))
+  local tries, scans = 0, 0
+  for _, e in ipairs(bus.log) do
+    if e.msg.state == "map" then tries = tries + 1 end
+    if e.msg.map then scans = math.max(scans, #(e.msg.map.scans or {})) end
+  end
+  check(scans >= 5 and tries <= 3, ("out of reach it backed off: %d tries over %d scans"):format(tries, scans))
+  -- (its home report still brought everything: the map knows what it scanned)
+  local n = 0
+  for _ in pairs(B.map.ores) do n = n + 1 end
+  check(n > 20, "and the home report carried it all: " .. n)
+end
+
+print("scenario: a block worth mapping, seen by one scan and dug on the way to the next, leaves the map")
+do
+  local W = newWorld(43, 0, { span = 70, ymin = -40, ymax = 6 })
+  -- on lane 0 (north from home, x 0), in the cube of the scan at z 0 only
+  -- (the next one, at z -16, covers z -24..-8)
+  local AM = { x = 0, y = -20, z = -7 }
+  W.set(AM.x, AM.y, AM.z, "minecraft:amethyst_block")
+  local B, fleet = runFleet(W, { { x = 0, z = 0, h = 0 } }, function(Base, B)
+    table.insert(B.homes, { id = 1, x = 0, y = 0, z = 0, facing = "north", role = "miner", owner = 101 })
+    Base.queueJob(B, { only = "diamond", y = -20, quantity = 999, lanes = 1, length = 32 })
+  end)
+  check(not fleet[1].err, "ran without error: " .. tostring(fleet[1].err))
+  check(W.get(AM.x, AM.y, AM.z) == nil, "the amethyst was dug (tunnel)")
+  check(B.map.ores[AM.x .. "," .. AM.y .. "," .. AM.z] == nil, "and left the map")
+end
+
+print("scenario: a hand-run job keeps no map report (nobody to send it to)")
+do
+  local W = newWorld(7, 1)
+  local T, api, sc = newTurtle(W, 1, 0)
+  T.inv[1] = { name = "minecraft:coal", count = 64 }
+  local files = {}
+  local ok, err = runProgram(makeEnv(T, api, sc, files), "lanes=1", "length=16")
+  check(ok, "ran (" .. tostring(err) .. ")")
+  local p = files["oremap.pending"] and load("return " .. files["oremap.pending"])() or { scans = {}, mined = {} }
+  check(#(p.scans or {}) == 0 and #(p.mined or {}) == 0, "no pending map: " .. #(p.scans or {}) .. " scans")
 end
 
 print("scenario: STOP a working turtle from the base")

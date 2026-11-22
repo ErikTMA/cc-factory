@@ -101,13 +101,20 @@ end
 -- ---------------------------------------------------------------- scanner --
 local function scan() return nav.scan(CFG.radius) end
 
+-- A block's tags as a list: a scan lists them, inspect() maps tag -> true.
+local function tagList(b)
+  local out = {}
+  for k, v in pairs(b.tags or {}) do out[#out + 1] = type(k) == "string" and k or v end
+  return out
+end
+
 -- Any ore.
 local function anyOre(b)
   for _, pat in ipairs(CFG.skip) do
     if b.name:find(pat) then return false end
   end
   if b.name:find("_ore$") then return true end
-  for _, t in ipairs(b.tags or {}) do
+  for _, t in ipairs(tagList(b)) do
     if t == "c:ores" or t:find("^c:ores/") or t:find("^forge:ores") then return true end
   end
   return false
@@ -128,7 +135,7 @@ local FILLER = { ["minecraft:gravel"] = true, ["minecraft:sand"] = true, ["minec
                  ["minecraft:netherrack"] = true }
 local function filler(b)
   if FILLER[b.name] then return true end
-  for _, t in ipairs(b.tags or {}) do if FILLER_TAGS[t] then return true end end
+  for _, t in ipairs(tagList(b)) do if FILLER_TAGS[t] then return true end end
   return false
 end
 
@@ -138,7 +145,7 @@ local function isOre(b)
   if not ore or not S.only then return ore end
   -- restricted to one ore kind: match the block name or its c:ores/<kind> tag
   if b.name:find(S.only, 1, true) then return true end
-  for _, t in ipairs(b.tags or {}) do
+  for _, t in ipairs(tagList(b)) do
     if t == "c:ores/" .. S.only then return true end
   end
   return false
@@ -149,6 +156,41 @@ local function isProtected(name)
     if name:find(pat) then return true end
   end
   return false
+end
+
+-- ------------------------------------------------------------- map report --
+-- What it saw and dug since it last told the base: { scans = { { x, y, z, r,
+-- ores = { { x, y, z, name } } } }, mined = { { x, y, z } } }, from its home,
+-- world axes. Its own file (not the job state, which is saved every move),
+-- written only when it changes; kept across jobs until the base has it.
+local PEND, SEND_AT
+local MAPPING = false -- only for the base's jobs (serve): a hand-run job keeps no map
+local MAX_PENDING_SCANS = 200 -- the base out of reach for long: the oldest scans go
+local function loadPend()
+  PEND = readFile(CFG.mapFile) or {}
+  PEND.scans, PEND.mined = PEND.scans or {}, PEND.mined or {}
+end
+local function savePend()
+  while #PEND.scans > MAX_PENDING_SCANS do table.remove(PEND.scans, 1) end
+  writeFile(CFG.mapFile, PEND)
+end
+local function clearPend() PEND = { scans = {}, mined = {} }; savePend() end
+local function pending()
+  return PEND and (#PEND.scans > 0 or #PEND.mined > 0) and PEND or nil
+end
+
+
+-- The last block `step` dug ({ key, info }): a known ore is only counted if
+-- what was dug at its spot was ore (another miner, or a player, may have
+-- taken it since it was scanned).
+local LASTDUG
+local function noteDug(x, y, z, info)
+  LASTDUG = { key = key(x, y, z), info = info }
+  -- every block worth a place in the map that it digs (tunnels too) leaves it
+  if MAPPING and not filler(info) then
+    PEND.mined[#PEND.mined + 1] = { x = x, y = y, z = z }
+    savePend()
+  end
 end
 
 -- ---------------------------------------------------------------- movement --
@@ -190,6 +232,10 @@ local function step(kind)
       local ok, info = m.inspect()
       if ok and isProtected(info.name) then return false end
       if not m.dig() then return false end -- bedrock or unbreakable
+      if ok then
+        local d = kind == "fwd" and DIRS[S.heading] or { 0, m.dy, 0 }
+        noteDug(S.pos.x + d[1], S.pos.y + d[2], S.pos.z + d[3], info)
+      end
     else
       m.attack() -- a mob, or a falling block mid-air
       sleep(0.2)
@@ -336,21 +382,6 @@ local function unload()
 end
 
 -- -------------------------------------------------------------- base link --
--- What it saw and dug since it last told the base: { scans = { { x, y, z, r,
--- ores = { { x, y, z, name } } } }, mined = { { x, y, z } } }, from its home,
--- world axes. Its own file (not the job state, which is saved every move),
--- written only when it changes; kept across jobs until the base has it.
-local PEND
-local function loadPend()
-  PEND = readFile(CFG.mapFile) or {}
-  PEND.scans, PEND.mined = PEND.scans or {}, PEND.mined or {}
-end
-local function savePend() writeFile(CFG.mapFile, PEND) end
-local function clearPend() PEND = { scans = {}, mined = {} }; savePend() end
-local function pending()
-  return PEND and (#PEND.scans > 0 or #PEND.mined > 0) and PEND or nil
-end
-
 local function status()
   return { job = S and S.job, mined = S and S.mined or 0, map = pending() }
 end
@@ -366,11 +397,21 @@ end
 
 -- Out on a job with a wireless modem: send the map report if the base is in
 -- reach (nothing else; no reply needed to carry on).
+-- Out of reach (deep, far): the next try waits for more scans each time
+-- (3, 6, 12, 24), not every scan, as a talk that gets no answer takes ~10 s.
+local SEND_STEP = CFG.mapEvery
+SEND_AT = CFG.mapEvery
 local function sendMap()
   if not pending() or not link.hasModem() then return end
   local r = link.talk("map", { map = PEND }, false)
   link.restoreUpgrade() -- (the scanner back in)
-  if r then clearPend() end
+  if r then
+    clearPend()
+    SEND_STEP, SEND_AT = CFG.mapEvery, CFG.mapEvery
+  else
+    SEND_STEP = math.min(SEND_STEP * 2, 8 * CFG.mapEvery)
+    SEND_AT = #PEND.scans + SEND_STEP
+  end
 end
 
 -- The base counts the job (and frees its stock rule) on "done": say it until
@@ -426,11 +467,17 @@ local function mineList(ores)
     local why = needHome()
     if why then serviceTrip(why) end
     if finished() then break end
+    LASTDUG = nil
     if goTo(o) then
-      mined = mined + 1
-      S.mined = S.mined + 1
-      PEND.mined[#PEND.mined + 1] = { x = o.x, y = o.y, z = o.z }
-      save(); savePend()
+      local dug = LASTDUG and LASTDUG.key == key(o.x, o.y, o.z) and LASTDUG.info
+      if dug and isOre(dug) then
+        mined = mined + 1
+        S.mined = S.mined + 1
+      else
+        log(("No %s at %s any more"):format(o.name, key(o.x, o.y, o.z)))
+        if MAPPING then PEND.mined[#PEND.mined + 1] = { x = o.x, y = o.y, z = o.z }; savePend() end
+      end
+      save()
     else
       log("Skipped unreachable " .. o.name)
     end
@@ -451,10 +498,12 @@ local function mineVisible()
       if ore and isOre(b) then ores[#ores + 1] = o end
     end
   end
-  PEND.scans[#PEND.scans + 1] = { x = S.pos.x, y = S.pos.y, z = S.pos.z, r = CFG.radius, ores = seen }
-  savePend()
+  if MAPPING then
+    PEND.scans[#PEND.scans + 1] = { x = S.pos.x, y = S.pos.y, z = S.pos.z, r = CFG.radius, ores = seen }
+    savePend()
+  end
   local n = mineList(ores)
-  if #PEND.scans >= CFG.mapEvery then sendMap() end
+  if MAPPING and #PEND.scans >= SEND_AT then sendMap() end
   return n
 end
 
@@ -589,6 +638,7 @@ if args[1] == "resume" then
   if not resumeUnfinished() then log("Nothing to resume.") end
 
 elseif args[1] == "serve" then
+  MAPPING = true -- the base keeps the map of what it scans and digs
   -- serve [at=<Y>] [heading=<0-3>]: the agent passes both for a new turtle
   local opt = {}
   for _, a in ipairs(args) do
