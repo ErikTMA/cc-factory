@@ -111,6 +111,14 @@ then says the block is connected. A modem that isn't lit does nothing.
   2. **Plant / harvest** (every round): it plants the tree spots, fells grown
      trees (the whole tree) and replants, and sweeps up what the leaves drop
      (saplings!) around trees it felled lately.
+- **Its toolbelt.** It keeps a compass in its upgrade slot and asks the base
+  for a **Geo Scanner** and an **Environment Detector**, which it carries and
+  swaps in when needed (the base sends them from storage, or crafts them).
+  With the scanner it fells every log of a tree by its scanned position
+  (branches, logs inside the leaves, big modded trees); with the detector it
+  finds every item lying in the pen after each tree (the saplings it needs).
+  Without them it feels its way along the trunk and sweeps around felled
+  trees instead.
 - The grid of tree spots depends on the trees: spacing 3 for oak, birch,
   spruce and jungle; 4 for menril (it only grows with dirt under its 4 side
   cells); 5 for acacia, cherry and mangrove; 4 for other modded saplings.

@@ -881,8 +881,14 @@ local function unload(fuelNeed)
   if fuelNeed and level ~= "unlimited" and fuelNeed > level then
     fuelItems = math.max(fuelItems, math.ceil((fuelNeed - level) / 80)) -- (a coal or charcoal: 80)
   end
+  -- its toolbelt: a Geo Scanner (fell by the scan) and an Environment
+  -- Detector (find dropped saplings), asked for until it has them
+  local tools = {}
+  for _, item in ipairs({ C.SCANNER_ITEM, C.DETECTOR_ITEM }) do
+    if not link.findItem(function(n) return n == item end) then tools[#tools + 1] = item end
+  end
   local r = link.supply({ fuel = fuelItems, saplings = CFG.supply.saplings,
-                          bonemeal = CFG.supply.bonemeal, dirt = dirt })
+                          bonemeal = CFG.supply.bonemeal, dirt = dirt, tools = tools })
   if r and r.plant ~= nil then setAllowed(r.plant) end
   restock()
   dropHaul(math.max(CFG.keepFuel, fuelItems)) -- (what it took but doesn't keep; the fuel it asked for stays)

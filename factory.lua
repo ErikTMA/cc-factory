@@ -21,7 +21,7 @@ local M = {}
 
 M.QTY = { 8, 16, 32, 64, 128, 256, 0 } -- job sizes on the monitor; 0 = no limit
 
-local PERSIST = { "turtles", "queue", "nextJobId", "nextSector", "totals", "counted",
+local PERSIST = { "turtles", "queue", "nextJobId", "nextSector", "totals", "counted", "toolWants",
                   "orders", "nextOrderId", "homes", "nextHomeId", "buildSpot", "gpsWanted", "anchor", "ruleJobs", "lastFail", "failStreak",
                   "hammer", "tinyFuel", "craft", "nextCraftId", "crafted",
                   "saplings", "boneMeal", "dismantle" }
@@ -632,6 +632,15 @@ function M.supply(F, from, req, have)
   end
   if F.boneMeal and (req.bonemeal or 0) > 0 then want("bonemeal", "minecraft:bone_meal", req.bonemeal) end
   if (req.dirt or 0) > 0 then want("dirt", "minecraft:dirt", req.dirt) end
+  -- tools for its toolbelt: one each it lacks; none in storage: the base
+  -- crafts one if it can (M.toolsToCraft), the next ask takes it
+  for _, item in ipairs(req.tools or {}) do
+    if C.TOOLS[item] and (have[item] or 0) == 0 and give(item, 1) == 0 then
+      short[item] = 1
+      F.toolWants = F.toolWants or {}
+      F.toolWants[item] = true
+    end
+  end
   if next(sent) then
     F.held = F.held or {}
     F.held[chest] = { untilTime = now(F) + HOLD, by = from }
@@ -676,6 +685,17 @@ local function shortRoles(F)
   return short
 end
 
+-- Tools turtles asked for that storage didn't have: { { item, 1 }, ... } to
+-- craft (a want is dropped once storage has one).
+function M.toolsToCraft(F, stock)
+  local list = {}
+  for item in pairs(F.toolWants or {}) do
+    if (stock[item] or 0) > 0 then F.toolWants[item] = nil else list[#list + 1] = { item, 1 } end
+  end
+  table.sort(list, function(a, b) return a[1] < b[1] end)
+  return list
+end
+
 -- Plan the next craft for the assembler; stage its inputs; nil if nothing to do.
 local function startCraft(F, from)
   local cfgp = F.cfg.production or {}
@@ -683,6 +703,7 @@ local function startCraft(F, from)
   local stock = usableStock(F)
   local wanted = production.wantedForFleet(shortRoles(F), buildSapling(F),
     function(role) return startFor(F, role, stock) end)
+  for _, w in ipairs(M.toolsToCraft(F, stock)) do wanted[#wanted + 1] = w end
   if F.tinyFuel then -- after the turtle parts: they matter more
     for _, w in ipairs(production.wantedTiny(stock, cfgp)) do wanted[#wanted + 1] = w end
   end

@@ -1758,6 +1758,20 @@ do
   F.turtles[97] = { id = 97, role = "miner", seen = W.clock }
   check(ask(97, { fuel = 16 }).type == "nochest", "no chest known: nochest")
   F.turtles[97] = nil
+  -- tools for its toolbelt: one from storage; one storage hasn't is crafted
+  check(W.inv["minecraft:barrel_1"].insert("advancedperipherals:geo_scanner", 1) == 1, "a Geo Scanner in storage")
+  factory.handle(F, 95, { type = "status", state = "resting", role = "forester", label = "f-95" })
+  factory.serviceChests(F)
+  local tr = ask(95, { tools = { "advancedperipherals:geo_scanner", "advancedperipherals:environment_detector",
+                                 "minecraft:diamond_block" } })
+  check(has(chest, "advancedperipherals:geo_scanner") == 1, "the scanner sent to its chest")
+  check(tr.short["advancedperipherals:environment_detector"] == 1, "the detector: none in storage, says so")
+  check(has(chest, "minecraft:diamond_block") == 0 and not tr.short["minecraft:diamond_block"], "only real tools are asked for")
+  local tc = factory.toolsToCraft(F, storage.open(net).list())
+  check(#tc == 1 and tc[1][1] == "advancedperipherals:environment_detector", "the base will craft the detector")
+  F.toolWants = nil
+  factory.handle(F, 95, { type = "status", state = "resting", role = "forester", label = "f-95" })
+  factory.serviceChests(F)
 end
 
 print("scenario: a modem that only touches a turtle goes off when it leaves; one with a barrel stays on")
@@ -2046,6 +2060,23 @@ do
   check(storage.classify("ironfurnaces:wireless_energy_heater_0") == nil, "not its other blocks")
   for i = #W.furnaces, 1, -1 do if W.furnaces[i] == iron then table.remove(W.furnaces, i) end end
   W.inv["ironfurnaces:diamond_furnace_0"] = nil
+end
+
+print("scenario: an Environment Detector is planned from what storage has (any wool, sapling,")
+print("          leaves, crop) and crafted by the REAL recipe")
+do
+  local production = baseEnv.require("production")
+  local stock = { ["minecraft:red_wool"] = 4, ["minecraft:birch_sapling"] = 3, ["minecraft:oak_leaves"] = 2,
+                  ["minecraft:carrot"] = 5, ["advancedperipherals:peripheral_casing"] = 1 }
+  local job = production.plan(stock, false, { { "advancedperipherals:environment_detector", 1 } })
+  check(job and job.item == "advancedperipherals:environment_detector", "planned: " .. tostring(job and job.item))
+  local CT = newTurtleEntity(73, 330, 0, 300, 0)
+  CT.right = "minecraft:crafting_table"
+  for cell, item in pairs(job and job.grid or {}) do CT.inv[cell] = { name = item, count = 1 } end
+  local env = turtleEnv(CT)
+  env.turtle.select(1)
+  check(env.turtle.craft() and CT.inv[1] and CT.inv[1].name == "advancedperipherals:environment_detector",
+    "crafted by the real recipe: " .. textutils.serialize(CT.inv[1]))
 end
 
 print("scenario: no cobblestone, only coal (it was carried there and dropped its things): it marks")

@@ -11,7 +11,13 @@ local R = {}
 
 local WOODS = { "oak", "spruce", "birch", "jungle", "acacia", "dark_oak", "mangrove", "cherry" }
 
-R.GROUPS = { ["#planks"] = {}, ["#logs"] = {}, ["#glass_panes"] = { "minecraft:glass_pane" } }
+R.GROUPS = { ["#planks"] = {}, ["#logs"] = {}, ["#glass_panes"] = { "minecraft:glass_pane" },
+  -- (the Environment Detector's tags, from the jars: minecraft:wool, minecraft:saplings,
+  -- minecraft:leaves, c:crops)
+  ["#wool"] = { "minecraft:black_wool", "minecraft:blue_wool", "minecraft:brown_wool", "minecraft:cyan_wool", "minecraft:gray_wool", "minecraft:green_wool", "minecraft:light_blue_wool", "minecraft:light_gray_wool", "minecraft:lime_wool", "minecraft:magenta_wool", "minecraft:orange_wool", "minecraft:pink_wool", "minecraft:purple_wool", "minecraft:red_wool", "minecraft:white_wool", "minecraft:yellow_wool" },
+  ["#saplings"] = { "minecraft:acacia_sapling", "minecraft:azalea", "minecraft:birch_sapling", "minecraft:cherry_sapling", "minecraft:dark_oak_sapling", "minecraft:flowering_azalea", "minecraft:jungle_sapling", "minecraft:mangrove_propagule", "minecraft:oak_sapling", "minecraft:spruce_sapling" },
+  ["#leaves"] = { "minecraft:acacia_leaves", "minecraft:azalea_leaves", "minecraft:birch_leaves", "minecraft:cherry_leaves", "minecraft:dark_oak_leaves", "minecraft:flowering_azalea_leaves", "minecraft:jungle_leaves", "minecraft:mangrove_leaves", "minecraft:oak_leaves", "minecraft:spruce_leaves" },
+  ["#crops"] = { "minecraft:beetroot", "minecraft:cactus", "minecraft:carrot", "minecraft:cocoa_beans", "minecraft:melon", "minecraft:nether_wart", "minecraft:potato", "minecraft:pumpkin", "minecraft:sugar_cane", "minecraft:wheat" } }
 for _, w in ipairs(WOODS) do
   table.insert(R.GROUPS["#planks"], "minecraft:" .. w .. "_planks")
   table.insert(R.GROUPS["#logs"], "minecraft:" .. w .. "_log")
@@ -33,6 +39,10 @@ R.CRAFT = {
     [1] = "minecraft:iron_ingot", [2] = "minecraft:iron_bars", [3] = "minecraft:iron_ingot",
     [5] = "minecraft:iron_bars", [6] = "minecraft:redstone_block", [7] = "minecraft:iron_bars",
     [9] = "minecraft:iron_ingot", [10] = "minecraft:iron_bars", [11] = "minecraft:iron_ingot" } },
+  ["advancedperipherals:environment_detector"] = { count = 1, grid = {
+    [1] = "#wool", [2] = "#saplings", [3] = "#wool",
+    [5] = "#leaves", [6] = "advancedperipherals:peripheral_casing", [7] = "#leaves",
+    [9] = "#wool", [10] = "#crops", [11] = "#wool" } },
   ["advancedperipherals:geo_scanner"] = { count = 1, grid = {
     [1] = "minecraft:diamond", [2] = "computercraft:wired_modem_full", [3] = "minecraft:diamond",
     [5] = "minecraft:diamond", [6] = "advancedperipherals:peripheral_casing", [7] = "minecraft:diamond",

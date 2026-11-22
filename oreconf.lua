@@ -21,6 +21,9 @@ local C = {
   },
   SCANNER_ITEM = "advancedperipherals:geo_scanner",
   DETECTOR_ITEM = "advancedperipherals:environment_detector", -- scanEntities: items lying around
+  -- tools a turtle may ask the base for (sent from storage, else crafted)
+  TOOLS = { ["advancedperipherals:geo_scanner"] = true, ["advancedperipherals:environment_detector"] = true,
+            ["minecraft:compass"] = true, ["computercraft:wireless_modem_normal"] = true },
 }
 
 -- ----------------------------------------------------------------- fuel --

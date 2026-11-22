@@ -1079,6 +1079,8 @@ do
   check(tostring(err):find("END OF TEST") ~= nil, "rounds ran (" .. tostring(err) .. ")")
   check((T.looks or 0) > 0, "it looked with the detector: " .. tostring(T.looks))
   check((W.pickedOld or 0) == dropped, ("every item picked up: %d of %d"):format(W.pickedOld or 0, dropped))
+  local t = (B.asks[1] and B.asks[1].supply.tools) or {}
+  check(#t == 1 and t[1] == "advancedperipherals:geo_scanner", "it asks for the tool it lacks (the scanner), not the one it has: " .. table.concat(t, ","))
   check(T.right == "minecraft:compass", "compass back in its slot")
 end
 
