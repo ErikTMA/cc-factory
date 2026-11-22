@@ -277,6 +277,61 @@ function M.queueJob(F, job)
   return job
 end
 
+-- ORES tab: every ore in the ore map by kind ("iron": iron_ore and
+-- deepslate_iron_ore), most first: { { kind, count, held, minY, maxY, y } },
+-- y the median (where a job for it goes). The kind is the ore tag's when the
+-- scan had one, else read off the block name. Worked out again only when the
+-- map changed (it is drawn often).
+local function oreKind(map, name)
+  local tagged = map.isOre[name]
+  if type(tagged) == "string" and tagged ~= "" then return tagged end
+  local k = name:gsub("^[%w_]+:", ""):gsub("^deepslate_", ""):gsub("^nether_", ""):gsub("_ore$", "")
+  return k
+end
+function M.oreSummary(F)
+  local map = F.map
+  local held = 0
+  for _ in pairs(map.held) do held = held + 1 end
+  local stamp = map.n .. ":" .. held
+  if F.oreSummaryCache and F.oreSummaryCache.stamp == stamp then return F.oreSummaryCache.list end
+  local by = {}
+  oremap.each(map, function(x, y, z, name)
+    if map.isOre[name] then
+      local k = oreKind(map, name)
+      local e = by[k]
+      if not e then e = { kind = k, count = 0, held = 0, ys = {} }; by[k] = e end
+      e.count = e.count + 1
+      e.ys[#e.ys + 1] = y
+      if map.held[oremap.key(x, y, z)] then e.held = e.held + 1 end
+    end
+  end)
+  local list = {}
+  for _, e in pairs(by) do
+    table.sort(e.ys)
+    e.minY, e.maxY, e.y = e.ys[1], e.ys[#e.ys], e.ys[math.ceil(#e.ys / 2)]
+    e.ys = nil
+    list[#list + 1] = e
+  end
+  table.sort(list, function(a, b)
+    if a.count ~= b.count then return a.count > b.count end
+    return a.kind < b.kind
+  end)
+  F.oreSummaryCache = { stamp = stamp, list = list }
+  return list
+end
+
+-- ORES tab: mine the known `kind`: a job for that ore only, as many as are
+-- known and not held by another job, at the level most of them are.
+function M.mineOre(F, kind)
+  local e
+  for _, x in ipairs(M.oreSummary(F)) do if x.kind == kind then e = x end end
+  if not e then F.note = "No " .. tostring(kind) .. " in the ore map"; return end
+  local free = e.count - e.held
+  if free <= 0 then F.note = ("All %d known %s are being mined already"):format(e.count, kind); return end
+  local job = M.queueJob(F, { only = kind, y = e.y, quantity = free })
+  F.note = ("Queued #%d: %d known %s around Y %d (%d in queue)"):format(job.id, free, kind, e.y, #F.queue)
+end
+
 function M.selectOre(F, name) F.sel.ore, F.sel.y = name, presetY(name) end
 function M.toggleOnly(F) F.sel.onlyThis = not F.sel.onlyThis end
 function M.addY(F, d) F.sel.y = math.max(-64, math.min(319, F.sel.y + d)) end

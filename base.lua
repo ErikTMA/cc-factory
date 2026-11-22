@@ -38,7 +38,7 @@ local STATE_COLOR = { idle = colors.lightGray, done = colors.lightGray, resting 
                       assigned = colors.yellow, unloading = colors.cyan, new = colors.magenta }
 
 -- GATHERING has a sub-tab per way of getting raw materials (farming next)
-local TABS = { "TURTLES", "GATHERING", "FACTORY" }
+local TABS = { "TURTLES", "GATHERING", "ORES", "FACTORY" }
 local GATHERING = { "MINING", "FORESTRY" }
 
 local function drawTurtles(UI, out, w, row)
@@ -187,6 +187,46 @@ local function drawGathering(UI, out, w, row)
   return drawJobs(UI, out, w, row)
 end
 
+-- ORES: what the miners' scans found and nobody has mined yet, by kind,
+-- most first; MINE queues a job for the known ones of a kind.
+local function drawOres(UI, out, w, row, h)
+  local F = UI.F
+  local list = factory.oreSummary(F)
+  local scans = 0
+  for _ in pairs(F.map.scans) do scans = scans + 1 end
+  put(out, 1, row, ("ORE MAP  %d ore kinds, %d blocks known, %d scans"):format(#list, F.map.n, scans), colors.yellow)
+  row = row + 1
+  put(out, 1, row, ("%-18s %6s %6s  %-11s"):format("ore", "known", "held", "Y"), colors.lightGray)
+  row = row + 1
+  if #list == 0 then
+    put(out, 1, row, "Nothing yet: miners report every scan when they come home.", colors.lightGray)
+    return row + 2
+  end
+  local per = math.max(1, h - row - 2)
+  local pages = math.ceil(#list / per)
+  UI.orePage = math.max(1, math.min(UI.orePage or 1, pages))
+  local first = (UI.orePage - 1) * per + 1
+  for i = first, math.min(#list, first + per - 1) do
+    local e = list[i]
+    local free = e.count - e.held
+    put(out, 1, row, ("%-18s %6d %6s  %4d..%-5d"):format(e.kind:sub(1, 18), e.count,
+      e.held > 0 and tostring(e.held) or "-", e.minY, e.maxY):sub(1, w - 12),
+      free > 0 and colors.white or colors.gray)
+    if free > 0 then
+      local label = "MINE " .. free
+      button(UI, out, w - #label - 1, row, #label + 2, label, false, function() factory.mineOre(F, e.kind) end)
+    end
+    row = row + 1
+  end
+  if pages > 1 then
+    put(out, 1, row, ("page %d/%d"):format(UI.orePage, pages), colors.lightGray)
+    button(UI, out, 13, row, 3, "<", false, function() UI.orePage = UI.orePage - 1 end)
+    button(UI, out, 17, row, 3, ">", false, function() UI.orePage = UI.orePage + 1 end)
+    row = row + 1
+  end
+  return row + 1
+end
+
 local function drawFactory(UI, out, w, row)
   local F = UI.F
   local stock = UI.stock or {}
@@ -324,6 +364,7 @@ function M.draw(UI, out)
   local row = 3
   if UI.tab == "TURTLES" then row = drawTurtles(UI, out, w, row)
   elseif UI.tab == "GATHERING" then row = drawGathering(UI, out, w, row)
+  elseif UI.tab == "ORES" then row = drawOres(UI, out, w, row, h)
   else row = drawFactory(UI, out, w, row) end
   put(out, 1, h, UI.F.note:sub(1, w), colors.orange)
 end

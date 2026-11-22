@@ -2280,6 +2280,52 @@ do
   check(not (T.files["surveyor.state"] or ""):find("done"), "not marked done: it carries on after it gets fuel")
 end
 
+print("scenario: ORES tab: every ore the scans found, by kind, most first; MINE queues a job for them")
+do
+  local oremap = baseEnv.require("oremap")
+  local keepMap = F.map
+  F.map = oremap.new()
+  F.oreSummaryCache = nil
+  -- what miners reported: iron as two block kinds, gold, one amethyst (not an ore)
+  local ores = {}
+  for i = 1, 5 do ores[#ores + 1] = { x = i, y = -20 - i, z = 3, name = "minecraft:iron_ore", ore = true } end
+  for i = 1, 4 do ores[#ores + 1] = { x = i, y = -40 - i, z = 5, name = "minecraft:deepslate_iron_ore", ore = true } end
+  for i = 1, 2 do ores[#ores + 1] = { x = i, y = -50, z = 7, name = "minecraft:gold_ore", ore = true, kind = "gold" } end
+  ores[#ores + 1] = { x = 9, y = -30, z = 9, name = "minecraft:amethyst_block" }
+  oremap.scan(F.map, { x = 4, y = -30, z = 5 }, 30, ores)
+  -- two iron already held by a running job
+  F.map.held[oremap.key(1, -21, 3)] = 99
+  F.map.held[oremap.key(2, -22, 3)] = 99
+  local UIlib = assert(load(baseFiles["base.lua"], "base", "t", baseEnv))("--lib")
+  local UI = { F = F, buttons = {}, stock = {}, tab = "ORES" }
+  local screen = {}
+  local mon = { getSize = function() return 57, 30 end, clear = function() end,
+                setCursorPos = function(_, y) screen.y = y end, setTextColor = function() end,
+                setBackgroundColor = function() end,
+                write = function(t) screen[screen.y] = (screen[screen.y] or "") .. t end }
+  local ok, err = pcall(UIlib.draw, UI, mon)
+  local text = ""
+  for i = 1, 30 do text = text .. (screen[i] or "") .. "\n" end
+  if os.getenv("DUMP") then print(text) end
+  check(ok, "ORES tab draws (" .. tostring(err) .. ")")
+  check(text:find("iron%s+9%s+2") ~= nil, "iron: 9 known (both block kinds), 2 held")
+  check(text:find("gold%s+2%s+%-") ~= nil, "gold: 2 known")
+  check(not text:find("amethyst"), "only ores listed")
+  local ironRow = text:find("iron") and text:find("gold") and text:find("iron") < text:find("gold")
+  check(ironRow, "most first")
+  local mine
+  for _, b in ipairs(UI.buttons) do if b.label == "MINE 7" then mine = b end end
+  check(mine ~= nil, "a MINE 7 button for the 7 free iron")
+  local before = #F.queue
+  if mine then mine.action() end
+  local job = F.queue[#F.queue]
+  check(#F.queue == before + 1 and job.only == "iron" and job.quantity == 7 and job.y <= -21 and job.y >= -44,
+    ("queued: only iron, 7, at a Y where they are (%s)"):format(tostring(F.note)))
+  if #F.queue > before then table.remove(F.queue) end
+  F.map = keepMap
+  F.oreSummaryCache = nil
+end
+
 print("scenario: SHEAR for one forester: its supply brings shears and a Weak Automata Core and says so;")
 print("          off again: nothing sent, it is told to stop")
 do
