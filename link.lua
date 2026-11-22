@@ -207,9 +207,10 @@ function L.talk(state, extra, updates)
 end
 
 -- ------------------------------------------------------------ mailbox --
--- The home chest is a mailbox: the base keeps supplies in it for the turtle
--- (fuel; saplings and bone meal for a forester) and empties everything else.
--- Both functions expect the turtle to FACE its home chest.
+-- The home chest is a mailbox: at home the turtle asks the base for what it
+-- wants to carry (L.supply), the base sends it into the chest, the turtle
+-- takes it; the base empties everything else. Several turtles may share one
+-- chest. These functions expect the turtle to FACE its home chest.
 
 -- Take what is in the chest (the caller drops back what it doesn't keep).
 function L.takeSupplies(maxStacks)
@@ -217,6 +218,35 @@ function L.takeSupplies(maxStacks)
     local free = false
     for i = 1, 16 do if turtle.getItemCount(i) == 0 then free = true; break end end
     if not free or not turtle.suck() then break end
+  end
+end
+
+local function carried()
+  local have = {}
+  for i = 1, 16 do
+    local d = turtle.getItemDetail(i)
+    if d then have[d.name] = (have[d.name] or 0) + d.count end
+  end
+  return have
+end
+
+-- Ask the base for supplies: `want` = { fuel = items, saplings = per kind,
+-- bonemeal = n, dirt = n } (what it wants to carry), then take what is in the
+-- chest (the caller drops back what it doesn't keep). Returns the base's
+-- reply ({ sent, short, plant }) or nil (no base: it still takes what a
+-- player put in the chest).
+function L.supply(want)
+  local r = L.talk("supply", { supply = want, have = carried() }, false)
+  if r and r.type == "nochest" and L.claimChest() then
+    r = L.talk("supply", { supply = want, have = carried() }, false)
+  end
+  L.takeSupplies()
+  if r and r.type == "supplied" then
+    local miss = {}
+    for k, n in pairs(r.short or {}) do miss[#miss + 1] = ("%d %s"):format(n, k) end
+    table.sort(miss)
+    if #miss > 0 then print("The base could not send: " .. table.concat(miss, ", ")) end
+    return r
   end
 end
 

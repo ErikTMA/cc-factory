@@ -165,9 +165,7 @@ local function drawForestry(UI, out, w, row)
   button(UI, out, 1, row, 16, "BONE MEAL " .. (F.boneMeal and "ON" or "OFF"), F.boneMeal == true,
     function() factory.toggleBoneMeal(F) end)
   row = row + 2
-  local mb = F.cfg.mailbox or {}
-  put(out, 1, row, ("Home chest keeps: %d per kind, %d bone meal, %d fuel")
-    :format(mb.saplings or 0, F.boneMeal and (mb.bonemeal or 0) or 0, mb.fuel or 0):sub(1, w), colors.gray)
+  put(out, 1, row, ("Foresters ask at their chest: saplings, bone meal, fuel, dirt"):sub(1, w), colors.gray)
   return row + 2
 end
 

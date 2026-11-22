@@ -52,11 +52,6 @@ M.DEFAULT_CONFIG = {
     -- { item = "minecraft:raw_iron", min = 256, job = { only = "iron", y = 16, quantity = 64 } },
   },
   forester = { sapling = "minecraft:oak_sapling", trees = 6, wait = 300 },
-  -- what the base keeps in each home chest (the mailbox) for its turtle:
-  -- fuel items for every turtle; per selected sapling kind and bone meal
-  -- (GATHERING > FORESTRY on the monitor) and the dirt it is short of (at
-  -- most `dirt`) for a forester
-  mailbox = { fuel = 16, saplings = 16, bonemeal = 32, dirt = 64 },
   -- furnaces, crafting turtle parts, ore doubling (see production.lua)
   production = production.DEFAULTS,
   -- lanes per job; sectors reuse lanes from 0 after maxLanes (bounds how far
@@ -556,76 +551,90 @@ function M.toggleBoneMeal(F)
   F.note = "Bone meal for foresters: " .. (F.boneMeal and "ON" or "OFF")
 end
 
--- What the base keeps in a home chest for the turtle that lives there:
--- { [item] = count }, or nil for a chest no turtle has claimed (emptied).
--- Selected sapling kinds get the same amount each, so they alternate.
-function M.suppliesFor(F, chest, stock)
-  -- whose: the home it belongs to (surveyed, registered), else the turtle's
-  -- own claim (the marker trick)
-  local t = F.turtles[homes.ownerOfChest(F, chest) or false]
-  if not t then
-    for _, tt in pairs(F.turtles) do if tt.chest == chest then t = tt end end
-  end
-  if not t then return nil end
-  local mb = F.cfg.mailbox or M.DEFAULT_CONFIG.mailbox
-  local want = {}
-  for _, f in ipairs(C.FUEL_ORDER) do
-    if (stock[f] or 0) > 0 then want[f] = mb.fuel; break end
-  end
-  if t.role == "forester" then
-    local kinds = F.saplings or {}
-    if #kinds == 0 then -- auto: the kind storage has most of
-      local best
-      for item, n in pairs(stock) do
-        if isSaplingItem(item) and not C.tree(item).twoByTwo and n > 0
-           and (not best or n > stock[best] or (n == stock[best] and item < best)) then
-          best = item
-        end
-      end
-      kinds = { best }
+-- The sapling kinds foresters plant: the ones selected on the monitor, else
+-- (auto) the kind storage has most of. { item, ... }, maybe empty.
+local function plantKinds(F, stock)
+  if F.saplings and #F.saplings > 0 then return F.saplings end
+  local best
+  for item, n in pairs(stock) do
+    if isSaplingItem(item) and not C.tree(item).twoByTwo and n > 0
+       and (not best or n > stock[best] or (n == stock[best] and item < best)) then
+      best = item
     end
-    for _, k in ipairs(kinds) do want[k] = mb.saplings end
-    if F.boneMeal then want["minecraft:bone_meal"] = mb.bonemeal end
-    -- the dirt it is short of for its pen's floor (a stack at a time)
-    if (t.needDirt or 0) > 0 then want["minecraft:dirt"] = math.min(t.needDirt, mb.dirt or 64) end
   end
-  return want
+  return { best }
 end
 
--- Every 10 s: empty the home chests into storage, except the supplies kept
--- for their turtles (up to the target), and top the supplies up.
-function M.serviceChests(F)
+-- The home chest of turtle `id`: its home's (surveyed, registered), else the
+-- one it claimed itself (the marker trick). Several homes may share a chest.
+local function chestOf(F, id)
+  for _, h in ipairs(F.homes) do if h.owner == id and h.chest then return h.chest end end
+  return F.turtles[id] and F.turtles[id].chest
+end
+M.chestOf = chestOf
+
+-- A chest with a delivery in it is not emptied until the turtle that asked
+-- talks again (it has taken it by then), or HOLD s at most.
+local HOLD = 30
+
+-- Supplies on request. A turtle at home, facing its chest, asks for what it
+-- wants to carry: `req` = { fuel = items, saplings = per kind, bonemeal = n,
+-- dirt = n } and says what it carries (`have` = { [item] = count }). The base
+-- sends the difference into its chest and says what it could not get.
+function M.supply(F, from, req, have)
+  local chest = chestOf(F, from)
+  if not chest then return { type = "nochest" } end
   local S = F.deps.storage
   local stock = S.list()
-  for _, name in ipairs(S.inputs and S.inputs() or {}) do
-    local want = M.suppliesFor(F, name, stock)
-    if not want then
-      S.store(name)
-    else
-      local kept, slots = {}, S.slots(name)
-      local order = {}
-      for slot in pairs(slots) do order[#order + 1] = slot end
-      table.sort(order)
-      for _, slot in ipairs(order) do
-        local it = slots[slot]
-        local n = want[it.name] or 0
-        if (kept[it.name] or 0) + it.count <= n then
-          kept[it.name] = (kept[it.name] or 0) + it.count
-        else
-          S.storeSlot(name, slot)
-        end
-      end
-      local items = {}
-      for item in pairs(want) do items[#items + 1] = item end
-      table.sort(items)
-      for _, item in ipairs(items) do
-        local short = want[item] - (kept[item] or 0)
-        if short > 0 and (stock[item] or 0) > 0 then
-          local moved = S.send(name, item, math.min(short, stock[item]))
-          stock[item] = stock[item] - moved
-        end
-      end
+  have = have or {}
+  local sent, short = {}, {}
+  local function give(item, n)
+    if n <= 0 or (stock[item] or 0) <= 0 then return 0 end
+    local m = S.send(chest, item, math.min(n, stock[item]))
+    stock[item] = stock[item] - m
+    if m > 0 then sent[item] = (sent[item] or 0) + m end
+    return m
+  end
+  local function want(key, item, n)
+    local left = n - (have[item] or 0)
+    left = left - give(item, left)
+    if left > 0 then short[key] = (short[key] or 0) + left end
+  end
+  if (req.fuel or 0) > 0 then
+    local left = req.fuel
+    for _, f in ipairs(C.FUEL_ORDER) do left = left - (have[f] or 0) end
+    for _, f in ipairs(C.FUEL_ORDER) do
+      if left <= 0 then break end
+      left = left - give(f, left)
     end
+    if left > 0 then short.fuel = left end
+  end
+  if (req.saplings or 0) > 0 then
+    local kinds = plantKinds(F, stock)
+    if #kinds == 0 then short.saplings = req.saplings end
+    for _, k in ipairs(kinds) do want("saplings", k, req.saplings) end
+  end
+  if F.boneMeal and (req.bonemeal or 0) > 0 then want("bonemeal", "minecraft:bone_meal", req.bonemeal) end
+  if (req.dirt or 0) > 0 then want("dirt", "minecraft:dirt", req.dirt) end
+  if next(sent) then
+    F.held = F.held or {}
+    F.held[chest] = { untilTime = now(F) + HOLD, by = from }
+  end
+  local reply = { type = "supplied", chest = chest, sent = sent, short = short }
+  if F.turtles[from] and F.turtles[from].role == "forester" then
+    reply.plant = (F.saplings and #F.saplings > 0) and F.saplings or false
+  end
+  return reply
+end
+
+-- Every 10 s: empty the home chests into storage, except one a turtle is
+-- taking a delivery from.
+function M.serviceChests(F)
+  local S = F.deps.storage
+  for _, name in ipairs(S.inputs and S.inputs() or {}) do
+    local held = F.held and F.held[name]
+    if held and now(F) >= held.untilTime then F.held[name] = nil; held = nil end
+    if not held then S.store(name) end
   end
 end
 
@@ -942,10 +951,12 @@ function M.handle(F, from, msg)
                       job = msg.job, seen = now(F), version = msg.version,
                       delivered = msg.total or prev.delivered,
                       inv = msg.inv or prev.inv, -- (the assembler's slots)
-                      chest = msg.chest or prev.chest, -- its home chest (mailbox)
-                      needDirt = msg.needDirt or prev.needDirt } -- (a forester: dirt it is short of)
+                      chest = msg.chest or prev.chest } -- the chest it claimed itself
   local t = F.turtles[from]
   local reply = { type = "ok" }
+  if msg.state ~= "supply" then -- it has taken its delivery: its chest may be emptied
+    for chest, h in pairs(F.held or {}) do if h.by == from then F.held[chest] = nil end end
+  end
 
   -- a built turtle reporting for the first time: its order is done, and its
   -- reserved home slot now belongs to it. (`buildOrder` is the order a turtle
@@ -978,6 +989,8 @@ function M.handle(F, from, msg)
   end
   if msg.wantFuel then
     reply = M.deliverFuel(F, from, msg.wantFuel)
+  elseif msg.state == "supply" then
+    reply = M.supply(F, from, msg.supply or {}, msg.have)
   elseif (msg.state == "mark1" or msg.state == "mark2") and t.role ~= "surveyor" then
     -- a turtle tells which chest is its home's (the mailbox)
     if msg.state == "mark1" then

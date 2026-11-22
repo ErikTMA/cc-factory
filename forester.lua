@@ -26,8 +26,9 @@
 --
 -- Each round it walks to every tree spot: plants empty ones, fells grown trees
 -- (sideways branches too) and replants, then goes home. The home chest is a
--- mailbox: it first takes what the base put there for it (saplings, bone
--- meal, fuel), then empties wood and drops into it (keeping saplings, bone
+-- mailbox: it asks the base for what it wants to carry (saplings, bone meal,
+-- fuel, dirt for the floor) and takes what the base sends there, then empties
+-- wood and drops into it (keeping saplings, bone
 -- meal, fuel and a few logs) and reports to the base.
 --
 -- Saplings: it plants every kind it carries, taking turns (round-robin), so a
@@ -51,6 +52,7 @@ local CFG = {
   keepLogs = 16,       -- logs it keeps for fuel when unloading
   keepSaplings = 64,   -- saplings it keeps of each kind when unloading
   keepFuel = 64,       -- fuel items (charcoal...) it keeps when unloading
+  supply = { fuel = 16, saplings = 16, bonemeal = 32 }, -- what it asks the base for at home
   treeFuel = 2 * 40 + 10, -- fuel one tree may take (climb up and down, maxHeight)
   minRoundFuel = 60,   -- below this (after filling up at home) it waits at home
   boneMealTries = 8,   -- bone meal uses per sapling before giving up
@@ -319,6 +321,14 @@ local function allowed(name) return not S.allowed or S.allowed[name] == true end
 local function reserved(i, d)
   return (i ~= BONEMEAL_SLOT and isSaplingItem(d.name) and allowed(d.name))
       or (i == BONEMEAL_SLOT and d.name == "minecraft:bone_meal")
+end
+
+-- the kinds selected on the monitor (false: any)
+local function setAllowed(plant)
+  local set
+  if plant then set = {}; for _, n in ipairs(plant) do set[n] = true end end
+  S.allowed = set
+  save()
 end
 
 -- dirt stays too: it lays the pen's floor with it
@@ -618,7 +628,13 @@ local function unload()
   if not (ok and b.name:find("chest")) then
     error("No chest behind me: I'm not where I think home is. Not unloading.", 0)
   end
-  link.takeSupplies()   -- what the base left for us (saplings, bone meal, fuel)
+  -- ask the base for what we want to carry; it sends it into the chest
+  local _, soilAround = treeNeeds()
+  local dirt = 0
+  if AREA and AREA.cells then for _ in pairs(cellsNeedingDirt(soilAround)) do dirt = dirt + 1 end end
+  local r = link.supply({ fuel = CFG.supply.fuel, saplings = CFG.supply.saplings,
+                          bonemeal = CFG.supply.bonemeal, dirt = dirt })
+  if r and r.plant ~= nil then setAllowed(r.plant) end
   restock()
   -- keep: saplings it may plant (CFG.keepSaplings of each), bone meal in
   -- slot 2, fuel, a few logs, dirt; the rest goes into the chest
@@ -775,25 +791,17 @@ local function round()
   S.delivered = (S.delivered or 0) + delivered
   save()
   -- tell the base (if it can); code updates apply here
-  -- the dirt it is short of: the base keeps that much in the mailbox
   local cells = 0
   for _ in pairs(cellsNeedingDirt(soilAround)) do cells = cells + 1 end
-  local needDirt = math.max(0, cells - dirtCount())
-  if needDirt > 0 then log(("%d cells of the pen need dirt, %d more than I carry"):format(cells, needDirt)) end
+  if cells > dirtCount() then log(("%d cells of the pen need dirt, I carry %d"):format(cells, dirtCount())) end
   refuel()
   local f = turtle.getFuelLevel()
   if f ~= "unlimited" and f < CFG.fuelLow then
     local got, why = link.requestFuel(CFG.fuelTarget - f)
     log(got and ("The base gave me %d fuel"):format(got) or ("Low on fuel, none from the base: " .. tostring(why)))
   end
-  local r = link.talk("resting", { delivered = delivered, total = S.delivered, needDirt = needDirt })
-  -- the kinds selected on the monitor (false: any)
-  if type(r) == "table" and r.plant ~= nil then
-    local set
-    if r.plant then set = {}; for _, n in ipairs(r.plant) do set[n] = true end end
-    S.allowed = set
-    save()
-  end
+  local r = link.talk("resting", { delivered = delivered, total = S.delivered })
+  if type(r) == "table" and r.plant ~= nil then setAllowed(r.plant) end
 end
 
 -- ------------------------------------------------------------------- main --

@@ -901,6 +901,14 @@ if M then
 end
 check((stock()["minecraft:raw_iron"] or 0) >= 6, "raw iron drained into storage: " .. tostring(stock()["minecraft:raw_iron"]))
 check(W.inv["minecraft:chest_0"].count("minecraft:raw_iron") == 0, "home chest emptied by the base")
+do
+  local asked
+  for _, e in ipairs(bus.sent) do
+    if e.msg.state == "supply" and e.msg.role == "miner" then asked = e end
+  end
+  check(asked and asked.msg.supply.fuel == 16 and asked.reply.type == "supplied",
+    "at its chest the miner asked the base for fuel: " .. tostring(asked and asked.reply.type))
+end
 check(stock()["minecraft:gold_ingot"] == 40 - 14, "14 gold used: " .. tostring(stock()["minecraft:gold_ingot"]))
 check(stock()["advancedperipherals:geo_scanner"] == nil, "geo scanner used")
 local aLeft = 0
@@ -1642,8 +1650,8 @@ do
   factory.removeHome(F, h.id)
 end
 
-print("scenario: the home chest is a mailbox: a turtle claims it, the base keeps its supplies")
-print("          in it (selected saplings in equal amounts, bone meal, fuel) and empties the rest")
+print("scenario: the home chest is a mailbox: a turtle claims it (or the survey found it), the base")
+print("          sends what a turtle asks for at its chest, says what it could not, and empties the rest")
 do
   local barrel = W.inv["minecraft:barrel_0"]
   for _, p in ipairs({ { "minecraft:charcoal", 64 }, { "minecraft:oak_sapling", 64 }, { "minecraft:birch_sapling", 64 },
@@ -1670,53 +1678,58 @@ do
     "claimed: " .. tostring(r2.chest))
   factory.handle(F, 95, { type = "status", state = "resting", role = "forester", label = "f-95" }) -- (keeps it)
   check(F.turtles[95].chest == "minecraft:chest_95", "the claim survives its next status")
-  -- its haul, plus too many oak saplings from its own trees
+  local function has(I, item) return I.count(item) end
+  local function ask(id, req, have) return factory.handle(F, id, { type = "status", state = "supply", role = F.turtles[id].role,
+                                                                   label = "t-" .. id, supply = req, have = have or {} }) end
+  -- its haul is emptied into storage; nothing is kept in the chest unasked
   chest.insert("minecraft:oak_log", 40); chest.insert("minecraft:oak_sapling", 100)
   other.insert("minecraft:oak_log", 5) -- nobody's chest: just emptied
+  factory.serviceChests(F)
+  check(has(chest, "minecraft:oak_log") == 0 and has(chest, "minecraft:oak_sapling") == 0
+    and has(chest, "minecraft:cobblestone") == 0, "its haul went to storage, nothing kept unasked")
+  check(has(other, "minecraft:oak_log") == 0, "an unclaimed chest is just emptied")
+  -- at its chest the forester asks; the base sends what it lacks, per selected kind
   F.saplings = {}
   factory.toggleSapling(F, "minecraft:oak_sapling"); factory.toggleSapling(F, "minecraft:birch_sapling")
   F.boneMeal = false; factory.toggleBoneMeal(F)
-  factory.serviceChests(F)
-  local function has(I, item) return I.count(item) end
-  check(has(chest, "minecraft:oak_log") == 0 and has(chest, "minecraft:cobblestone") == 0, "its haul went to storage")
-  check(has(chest, "minecraft:oak_sapling") == 16 and has(chest, "minecraft:birch_sapling") == 16,
-    ("selected kinds, 16 each: oak %d, birch %d"):format(has(chest, "minecraft:oak_sapling"), has(chest, "minecraft:birch_sapling")))
+  check(W.inv["minecraft:barrel_1"].insert("minecraft:dirt", 30) == 30, "30 dirt in storage")
+  local r = ask(95, { fuel = 16, saplings = 16, bonemeal = 32, dirt = 50 }, { ["minecraft:oak_sapling"] = 10, ["minecraft:charcoal"] = 4 })
+  check(r.type == "supplied" and r.chest == "minecraft:chest_95", "supplied into its chest: " .. tostring(r.chest))
+  check(has(chest, "minecraft:oak_sapling") == 6 and has(chest, "minecraft:birch_sapling") == 16,
+    ("what it lacks per selected kind: oak %d (has 10), birch %d"):format(has(chest, "minecraft:oak_sapling"), has(chest, "minecraft:birch_sapling")))
   check(has(chest, "minecraft:spruce_sapling") == 0, "not the unselected spruce")
-  check(has(chest, "minecraft:bone_meal") == 32 and has(chest, "minecraft:charcoal") == 16, "bone meal 32 and charcoal 16")
-  check(has(other, "minecraft:oak_log") == 0, "an unclaimed chest is just emptied")
+  check(has(chest, "minecraft:bone_meal") == 32 and has(chest, "minecraft:charcoal") == 12, "bone meal 32, charcoal 12 (has 4)")
+  check(has(chest, "minecraft:dirt") == 30 and r.short.dirt == 20, "all 30 dirt there is, and it says 20 are short: " .. tostring(r.short.dirt))
+  check(r.plant and #r.plant == 2, "and which kinds to plant")
+  factory.serviceChests(F)
+  check(has(chest, "minecraft:dirt") == 30, "a delivery waits for the turtle to take it")
+  factory.handle(F, 95, { type = "status", state = "resting", role = "forester", label = "f-95" }) -- (it took it)
+  factory.serviceChests(F)
+  check(has(chest, "minecraft:dirt") == 0, "after its next status the chest is emptied again")
   -- auto (nothing selected): the kind storage has most of
   F.saplings = {}
+  ask(95, { saplings = 16 })
+  check(has(chest, "minecraft:spruce_sapling") == 16 and has(chest, "minecraft:oak_sapling") == 0, "auto: spruce (most in storage)")
+  factory.handle(F, 95, { type = "status", state = "resting", role = "forester", label = "f-95" })
   factory.serviceChests(F)
-  check(has(chest, "minecraft:spruce_sapling") == 16 and has(chest, "minecraft:oak_sapling") == 0,
-    "auto: spruce (most in storage), the others back to storage")
-  -- the forester is short of dirt: the base keeps that much in its mailbox (capped)
-  check(W.inv["minecraft:barrel_1"].insert("minecraft:dirt", 200) == 200, "200 dirt in storage")
-  factory.handle(F, 95, { type = "status", state = "resting", role = "forester", label = "f-95", needDirt = 20 })
-  factory.handle(F, 95, { type = "status", state = "idle", role = "forester", label = "f-95" }) -- (no needDirt: kept)
-  factory.serviceChests(F)
-  check(has(chest, "minecraft:dirt") == 20, "short of 20 dirt: 20 dirt in its mailbox: " .. has(chest, "minecraft:dirt"))
-  factory.handle(F, 95, { type = "status", state = "resting", role = "forester", label = "f-95", needDirt = 500 })
-  factory.serviceChests(F)
-  check(has(chest, "minecraft:dirt") == 64, "short of 500: a stack at a time: " .. has(chest, "minecraft:dirt"))
-  factory.handle(F, 95, { type = "status", state = "resting", role = "forester", label = "f-95", needDirt = 0 })
-  factory.serviceChests(F)
-  check(has(chest, "minecraft:dirt") == 0, "its floor is done: the dirt goes back to storage")
-  -- the live forester-4: the surveyor recorded its home's chest, its own claim
-  -- never went through: the chest is still its mailbox, not emptied
+  -- the live forester-4: the surveyor recorded its home's chest, its own claim never went through
   local hc = newInv("minecraft:chest_98", 830, 0, 800)
-  hc.insert("minecraft:oak_sapling", 5)
   F.turtles[98] = { id = 98, role = "forester", seen = W.clock } -- (no chest of its own)
   table.insert(F.homes, { id = 998, x = 830, y = 0, z = 801, facing = "north", role = "forester",
                           source = "survey", chest = "minecraft:chest_98", owner = 98 })
-  factory.serviceChests(F)
-  check(has(hc, "minecraft:charcoal") == 16, "home chest from the survey: 16 charcoal: " .. has(hc, "minecraft:charcoal"))
-  check(has(hc, "minecraft:spruce_sapling") == 16, "and its saplings: " .. has(hc, "minecraft:spruce_sapling"))
-  table.remove(F.homes); F.turtles[98] = nil
-  -- a miner's chest gets fuel only
-  local mc = newInv("minecraft:chest_97", 820, 0, 800)
-  F.turtles[97] = { id = 97, role = "miner", chest = "minecraft:chest_97", seen = W.clock }
-  factory.serviceChests(F)
-  check(has(mc, "minecraft:charcoal") == 16 and has(mc, "minecraft:bone_meal") == 0, "a miner's mailbox: 16 charcoal, nothing else")
+  r = ask(98, { fuel = 16 })
+  check(r.chest == "minecraft:chest_98" and has(hc, "minecraft:charcoal") == 16, "its home's chest from the survey: 16 charcoal")
+  -- one chest, home to several turtles: each asks for itself, at its own turn
+  F.turtles[99] = { id = 99, role = "miner", seen = W.clock }
+  table.insert(F.homes, { id = 999, x = 831, y = 0, z = 801, facing = "north", role = "miner",
+                          source = "survey", chest = "minecraft:chest_98", owner = 99 })
+  r = ask(99, { fuel = 16 })
+  check(r.chest == "minecraft:chest_98" and has(hc, "minecraft:charcoal") == 32, "the miner sharing it gets its own 16 there too")
+  table.remove(F.homes); table.remove(F.homes); F.turtles[98] = nil; F.turtles[99] = nil
+  -- a turtle whose chest the base doesn't know: it is told so (and claims it)
+  F.turtles[97] = { id = 97, role = "miner", seen = W.clock }
+  check(ask(97, { fuel = 16 }).type == "nochest", "no chest known: nochest")
+  F.turtles[97] = nil
 end
 
 print("scenario: a modem that only touches a turtle goes off when it leaves; one with a barrel stays on")

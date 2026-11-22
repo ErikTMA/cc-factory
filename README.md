@@ -196,8 +196,8 @@ rules are about the drops: `raw_iron`, `raw_gold`, `raw_copper`, `diamond`,
   <ore>" or "all ores", then START. Every press queues one job; idle miners
   take them.
 - **GATHERING > FORESTRY**: the foresters, which sapling kinds they plant
-  (selected kinds take turns; none = auto) and bone meal on/off. The base
-  keeps those, and fuel, in each home chest (the mailbox).
+  (selected kinds take turns; none = auto) and bone meal on/off. A turtle at
+  home asks for those, fuel and dirt; the base sends them to its chest.
 - **FACTORY**: storage kind, code version, UPDATE, stock rules, fleet and
   builds.
 

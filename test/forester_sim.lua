@@ -491,7 +491,7 @@ do
 end
 
 print("scenario: no dirt while measuring: the holes in the path wait, and get filled once it has dirt;")
-print("          it tells the base how much dirt it is short of")
+print("          at its chest it asks the base for the dirt the pen still needs")
 do
   local W = newWorld({ rough = true })
   local T, api = newTurtle(W, 3000)
@@ -499,16 +499,18 @@ do
   T.inv[4] = { name = "computercraft:wireless_modem_normal", count = 1 } -- (to report)
   W.chest["minecraft:dirt"] = 2 -- the base put some in the mailbox (taken at the end of round 1)
   local rounds, need1 = 0, nil
-  local function lastResting()
-    for i = #(T.sent or {}), 1, -1 do if T.sent[i].state == "resting" then return T.sent[i] end end
+  local function lastAsk()
+    for i = #(T.sent or {}), 1, -1 do if T.sent[i].state == "supply" then return T.sent[i] end end
   end
   local function sl()
     rounds = rounds + 1
     if rounds == 1 then
       check(W.get(1, -1, -1) == nil and W.get(-1, -1, -8) == "minecraft:water", "round 1: no dirt, holes and puddle still open")
-      need1 = (lastResting() or {}).needDirt
-      -- 2 holes + the puddle + the stone spot, minus the 2 dirt it took from the mailbox
-      check(need1 == 2, "round 1: 4 cells need dirt, it carries 2: short of 2: " .. tostring(need1))
+      local a = lastAsk() or { supply = {}, have = {} }
+      -- 2 holes + the puddle + the stone spot; the 2 in the chest came after it asked
+      check(a.supply.dirt == 4 and (a.have["minecraft:dirt"] or 0) == 0,
+        "round 1: at its chest it asks for dirt for 4 cells, carrying none: " .. tostring(a.supply.dirt))
+      check(a.supply.fuel and a.supply.saplings and a.supply.bonemeal, "and for fuel, saplings, bone meal")
       T.inv[6] = { name = "minecraft:dirt", count = 1 } -- one more (still not enough)
       return
     end
@@ -521,8 +523,8 @@ do
     if W.get(c[1], -1, c[2]) == "minecraft:dirt" then filled = filled + 1 end
   end
   check(filled == 3, "round 2: its 3 dirt went into 3 of the 4 cells: " .. filled)
-  local need2 = (lastResting() or {}).needDirt
-  check(need2 == 1, "round 2: short of dirt for 1 cell: " .. tostring(need2))
+  local a2 = lastAsk() or { supply = {} }
+  check(a2.supply.dirt == 1, "round 2: it asks for dirt for the 1 cell left: " .. tostring(a2.supply.dirt))
 end
 
 print("scenario: starts without saplings and takes them from its home chest (the mailbox)")

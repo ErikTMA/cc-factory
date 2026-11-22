@@ -108,19 +108,22 @@ then says the block is connected. A modem that isn't lit does nothing.
   cherry and mangrove (their branches reach sideways); 4 for other modded
   saplings. Mixed kinds share the widest spacing; dark oak (needs 2x2) isn't
   planted. It keeps its dirt (never unloads it). Holes and tree spots it had
-  no dirt for are filled in later rounds: each round it tells the base how
-  much dirt it is short of, and the base keeps that much (a stack at a time)
-  in its home chest from storage. Other solid blocks
+  no dirt for are filled in later rounds, with dirt it asks the base for at
+  its chest (below). Other solid blocks
   inside the pen count as walls. Run `forester rescan` after changing the
   fence.
-- **The home chest is a mailbox.** Once the forester has unloaded there, the
-  base knows the chest is its home and keeps **saplings, bone meal and fuel**
-  in it; the forester takes them when it comes home, then drops its wood. On
-  the monitor, **GATHERING > FORESTRY**: tap the sapling kinds to plant
-  (several: the base puts the same amount of each in the chest and the
-  forester plants them **in turn**, so you get a mix; none selected: the kind
-  storage has most of), and switch **BONE MEAL** on or off. Miners' home
-  chests get fuel the same way. Amounts: `mailbox` in `factory.cfg`.
+- **The home chest is a mailbox.** Each time the forester comes home it asks
+  the base, facing its chest, for what it wants to carry: **saplings, bone
+  meal, fuel and the dirt its pen still needs**. The base sends what it lacks
+  into the chest and tells it what it couldn't get (shown on the turtle);
+  the forester takes it, then drops its wood. The base knows the chest from
+  the survey (or the turtle's own marker claim), and several homes can share
+  one chest: each turtle asks for itself. Between deliveries the base empties
+  home chests into storage. On the monitor, **GATHERING > FORESTRY**: tap the
+  sapling kinds to plant (several: the base sends the same amount of each and
+  the forester plants them **in turn**, so you get a mix; none selected: the
+  kind storage has most of), and switch **BONE MEAL** on or off. Miners ask
+  for fuel the same way. Amounts: `supply` in `forester.lua`.
 
 ## 5. The surveyor: let the base find the homes
 

@@ -256,9 +256,9 @@ local function unload()
   if not (ok and b.name:find("chest")) then
     error("No chest behind me: I'm not where I think home is. Not unloading.", 0)
   end
-  -- the chest is a mailbox: first take the fuel the base left there (what
-  -- isn't fuel goes straight back below)
-  link.takeSupplies()
+  -- the chest is a mailbox: ask the base for fuel and take it (what isn't
+  -- ours goes straight back below)
+  link.supply({ fuel = 16 })
   -- drop everything but the kept items and one stack of fuel; if the chest is
   -- full, wait here (going back out full would just bring us straight back)
   local waited = 0
