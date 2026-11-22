@@ -25,7 +25,7 @@
 -- the pen is not closed it stops exploring and says so.
 --
 -- Each round it walks to every tree spot: plants empty ones, fells grown trees
--- (sideways branches too) and replants, then goes home. The home chest is a
+-- (the whole tree: bent trunks, branches, 2x2 trunks) and replants, then goes home. The home chest is a
 -- mailbox: it asks the base for what it wants to carry (saplings, bone meal,
 -- fuel, dirt for the floor) and takes what the base sends there, then empties
 -- wood and drops into it (keeping saplings, bone
@@ -474,37 +474,76 @@ local function plant(withBoneMeal)
   return ok
 end
 
-local function digLogsAround()
-  -- branches (acacia, cherry, ...) that grow out sideways next to the trunk
-  for _ = 1, 4 do
-    local ok, b = turtle.inspect()
-    if ok and isLog(b) then turtle.dig() end
-    turtle.turnRight()
+-- Whole trees, from the inside: dig and visit every log touching the cell it
+-- is in (up and the 4 sides); where a run of logs ends at the top, look one
+-- cell aside and up for the trunk going on diagonally (acacia, cherry). A
+-- 2x2 trunk is 4 logs side by side: all visited. It only ever moves over
+-- the pen's cells, so a restart can always get it down and home; a log over
+-- the fence is dug from where it is, not followed.
+local chop
+local function overPen(h)
+  local d = DIRS[h]
+  return AREA.cells[key(S.pos.x + d[1], S.pos.z + d[3])] ~= nil
+end
+
+-- One cell over (heading h) and back, running `fn` there. False if it
+-- couldn't get there.
+local function visit(h, fn)
+  turnTo(h)
+  if not move("fwd", turtle.forward) then return false end
+  fn()
+  turnTo(h)
+  if not move("back", turtle.back) then
+    turnTo((h + 2) % 4); step(); turnTo(h)
+  end
+  return true
+end
+
+chop = function()
+  -- the run of logs above
+  local ok, b = turtle.inspectUp()
+  if ok and isLog(b) and S.up < CFG.maxHeight then
+    turtle.digUp()
+    if forceUp() then chop(); forceDown() end
+  end
+  for h = 0, 3 do
+    turnTo(h)
+    ok, b = turtle.inspect()
+    if ok and isLog(b) then
+      turtle.dig()
+      if overPen(h) then visit(h, chop) end
+    elseif S.up > 0 and overPen(h) and (not ok or isLeaves(b)) then
+      -- the top of a run (no log above; air or leaves): is the trunk going on
+      -- one aside and up?
+      local okU, bU = turtle.inspectUp()
+      if not (okU and isLog(bU)) then
+        if ok then turtle.dig() end -- (leaves)
+        visit(h, function()
+          local ok2, b2 = turtle.inspectUp()
+          if ok2 and isLog(b2) and S.up < CFG.maxHeight then
+            turtle.digUp()
+            if forceUp() then chop(); forceDown() end
+          end
+        end)
+      end
+    end
   end
 end
 
--- Facing a log from a path cell: step into the trunk, fell it upwards, come
--- back down and out, facing the cell again; replant if asked.
+-- Facing a log from a path cell: step into the trunk, fell the whole tree,
+-- come back out, facing the cell again; replant if asked.
 fell = function(replant)
   local facing = S.heading
   turtle.dig()
   if not move("fwd", turtle.forward) then return end
-  while S.up < CFG.maxHeight do
-    local ok, b = turtle.inspectUp()
-    if not (ok and isLog(b)) then break end
-    turtle.digUp()
-    if not forceUp() then break end
-    digLogsAround()
-  end
+  chop()
   while S.up > 0 do
     if not forceDown() then error("Cannot get back down", 0) end
   end
-  turtle.suck(); turtle.suckDown()
   turnTo(facing)
   if not move("back", turtle.back) then
     turnTo((facing + 2) % 4); step(); turnTo(facing)
   end
-  turtle.suck()
   if replant then plant(false) end
 end
 

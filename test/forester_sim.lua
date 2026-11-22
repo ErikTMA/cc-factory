@@ -81,16 +81,37 @@ local function newWorld(opts)
   -- grow every sapling into a 5-high oak with a leaf crown; every third tree
   -- also gets a sideways branch log (acacia-style)
   W.trees = 0
+  -- its leaves are of the sapling's kind (they drop that sapling, like the game)
   function W.growAt(x, y, z)
+    local kind = W.get(x, y, z)
+    local leaf = isSap(kind) and kind:gsub("_sapling$", "_leaves") or LEAF
     W.trees = W.trees + 1
     for h = 0, 4 do W.set(x, y + h, z, LOG) end
     for dx = -1, 1 do for dz = -1, 1 do
       if not (dx == 0 and dz == 0) then
-        if not W.get(x + dx, y + 4, z + dz) then W.set(x + dx, y + 4, z + dz, LEAF) end
+        if not W.get(x + dx, y + 4, z + dz) then W.set(x + dx, y + 4, z + dz, leaf) end
       end
     end end
-    W.set(x, y + 5, z, LEAF)
+    W.set(x, y + 5, z, leaf)
     if W.trees % 3 == 0 then W.set(x + 1, y + 3, z, LOG) end
+  end
+  -- a bent tree like acacia/cherry: 3 logs up, then the trunk steps one cell
+  -- east AND one up (only edge-touching), 3 more up, a branch; leaves on top
+  function W.growBent(x, y, z)
+    for h = 0, 2 do W.set(x, y + h, z, LOG) end
+    W.set(x, y + 3, z, LEAF) -- (leaves over the bend, like the game)
+    for h = 3, 5 do W.set(x + 1, y + h, z, LOG) end
+    W.set(x + 1, y + 4, z - 1, LOG) -- a side branch, face-touching
+    for dx = 0, 2 do for dz = -1, 1 do
+      if not W.get(x + dx, y + 6, z + dz) then W.set(x + dx, y + 6, z + dz, LEAF) end
+    end end
+  end
+  -- a 2x2 trunk (dark oak, giant spruce): the spot and the cells east, south, south-east
+  function W.grow2x2(x, y, z)
+    for h = 0, 4 do for _, d in ipairs({ { 0, 0 }, { 1, 0 }, { 0, 1 }, { 1, 1 } }) do
+      W.set(x + d[1], y + h, z + d[2], LOG)
+    end end
+    W.set(x, y + 5, z, LEAF)
   end
   function W.growAll()
     local list = {}
@@ -141,9 +162,9 @@ local function newTurtle(W, fuel)
     local b = W.get(x, y, z)
     if not b or b == "minecraft:chest" then return false end
     W.set(x, y, z, nil)
-    if b == LEAF then
+    if b:find("_leaves$") then
       leafDigs = leafDigs + 1
-      if leafDigs % 4 == 0 then add(SAP) end
+      if leafDigs % 4 == 0 then add((b:gsub("_leaves$", "_sapling"))) end
     elseif b == "minecraft:grass_block" then add("minecraft:dirt")
     else add(b) end
     return true
@@ -717,6 +738,39 @@ do
   check(tostring(err):find("END OF TEST") ~= nil, "two rounds (" .. tostring(err) .. ")")
   check(W.ground() == 0, "nothing dropped on the ground: " .. W.ground())
   check(W.count(LOG) == 0, "every tree felled")
+end
+
+print("scenario: bent trees (acacia, cherry) and 2x2 trunks: it fells every log, no stumps,")
+print("          nothing left floating")
+do
+  local W = newWorld()
+  local fences = W.fences()
+  local T, api = newTurtle(W, 5000)
+  T.inv[1] = { name = SAP, count = 64 }
+  local n = 0
+  local function sl()
+    n = n + 1
+    if n == 1 then
+      local i = 0
+      for key, v in pairs(W.b) do
+        if isSap(v) then
+          local x, y, z = key:match("^(-?%d+),(-?%d+),(-?%d+)$")
+          x, y, z = tonumber(x), tonumber(y), tonumber(z)
+          W.set(x, y, z, nil)
+          i = i + 1
+          if i % 2 == 0 then W.grow2x2(x, y, z) else W.growBent(x, y, z) end
+        end
+      end
+      check(W.count(LOG) > 30, "round 1 grew bent and 2x2 trees: " .. W.count(LOG) .. " logs")
+      return
+    end
+    error("END OF TEST")
+  end
+  local ok, err = run(makeEnv(T, api, {}, sl), "10")
+  check(tostring(err):find("END OF TEST") ~= nil, "two rounds (" .. tostring(err) .. ")")
+  check(W.count(LOG) == 0, "every log felled: " .. W.count(LOG) .. " left")
+  check(T.x == 0 and T.y == 0 and T.z == 0, ("home again (%d,%d,%d)"):format(T.x, T.y, T.z))
+  check(W.fences() == fences, "no fence touched")
 end
 
 print("scenario: starts without saplings, asks the base and takes them from its home chest")
