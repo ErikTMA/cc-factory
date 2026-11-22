@@ -1701,6 +1701,17 @@ do
   factory.handle(F, 95, { type = "status", state = "resting", role = "forester", label = "f-95", needDirt = 0 })
   factory.serviceChests(F)
   check(has(chest, "minecraft:dirt") == 0, "its floor is done: the dirt goes back to storage")
+  -- the live forester-4: the surveyor recorded its home's chest, its own claim
+  -- never went through: the chest is still its mailbox, not emptied
+  local hc = newInv("minecraft:chest_98", 830, 0, 800)
+  hc.insert("minecraft:oak_sapling", 5)
+  F.turtles[98] = { id = 98, role = "forester", seen = W.clock } -- (no chest of its own)
+  table.insert(F.homes, { id = 998, x = 830, y = 0, z = 801, facing = "north", role = "forester",
+                          source = "survey", chest = "minecraft:chest_98", owner = 98 })
+  factory.serviceChests(F)
+  check(has(hc, "minecraft:charcoal") == 16, "home chest from the survey: 16 charcoal: " .. has(hc, "minecraft:charcoal"))
+  check(has(hc, "minecraft:spruce_sapling") == 16, "and its saplings: " .. has(hc, "minecraft:spruce_sapling"))
+  table.remove(F.homes); F.turtles[98] = nil
   -- a miner's chest gets fuel only
   local mc = newInv("minecraft:chest_97", 820, 0, 800)
   F.turtles[97] = { id = 97, role = "miner", chest = "minecraft:chest_97", seen = W.clock }

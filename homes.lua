@@ -74,6 +74,13 @@ function H.remove(F, id)
   return nil, "no such home"
 end
 
+-- The turtle living at the home whose chest is `chest` (network name), or nil.
+function H.ownerOfChest(F, chest)
+  for _, h in ipairs(F.homes) do
+    if h.chest == chest and type(h.owner) == "number" then return h.owner end
+  end
+end
+
 -- First free home for `role`, claimed for `owner`; nil if none.
 function H.claim(F, role, owner)
   for _, h in ipairs(F.homes) do

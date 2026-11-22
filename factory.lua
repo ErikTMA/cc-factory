@@ -560,8 +560,12 @@ end
 -- { [item] = count }, or nil for a chest no turtle has claimed (emptied).
 -- Selected sapling kinds get the same amount each, so they alternate.
 function M.suppliesFor(F, chest, stock)
-  local t
-  for _, tt in pairs(F.turtles) do if tt.chest == chest then t = tt end end
+  -- whose: the home it belongs to (surveyed, registered), else the turtle's
+  -- own claim (the marker trick)
+  local t = F.turtles[homes.ownerOfChest(F, chest) or false]
+  if not t then
+    for _, tt in pairs(F.turtles) do if tt.chest == chest then t = tt end end
+  end
   if not t then return nil end
   local mb = F.cfg.mailbox or M.DEFAULT_CONFIG.mailbox
   local want = {}
