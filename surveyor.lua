@@ -29,6 +29,7 @@
 local tmove = require("tmove")
 local link = require("link")
 local nav = require("nav")
+local C = require("oreconf")
 
 local CFG = {
   reserve = 20,      -- fuel kept on top of what the way home needs
@@ -557,15 +558,22 @@ homeSpots = function()
   return spots
 end
 
--- the slot with the most of something to use as markers (not fuel)
+-- A marker: anything the base can spot in the chest (it empties it again).
+-- Something that isn't fuel first (cobblestone...); else a piece of fuel, as
+-- long as more than one is left.
 local function markerSlot()
-  local best, bestN
+  local best, bestN, fuelSlot, fuelN
   for i = 1, 16 do
     local d = turtle.getItemDetail(i)
-    if d and d.name ~= "minecraft:coal" and d.name ~= "minecraft:charcoal" and not link.isKeptItem(d.name)
-       and (not bestN or d.count > bestN) then best, bestN = i, d.count end
+    if d and not link.isKeptItem(d.name) then
+      if C.isFuel(d.name) then
+        if d.count > 1 and (not fuelN or d.count > fuelN) then fuelSlot, fuelN = i, d.count end
+      elseif not bestN or d.count > bestN then
+        best, bestN = i, d.count
+      end
+    end
   end
-  return best
+  return best or fuelSlot
 end
 
 local function registerHomes()
@@ -601,7 +609,7 @@ local function registerHomes()
         if not link.hasModem() then
           log("No modem reachable at " .. id .. "; skipped")
         elseif not slot then
-          log("Out of marker items; put a few cobblestone in me")
+          log("Nothing to mark the home chests with: put a few cobblestone (or coal) in me")
           break
         else
           local r1 = link.talk("mark1", { home = home }, false)

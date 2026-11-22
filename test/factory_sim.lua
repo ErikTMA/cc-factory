@@ -1727,6 +1727,17 @@ do
     "crafted by the real Utilitarian recipe: " .. textutils.serialize(CT.inv[1]))
 end
 
+print("scenario: no cobblestone, only coal (it was carried there and dropped its things): it marks")
+print("          the home chest with a piece of coal")
+do
+  topLayout(340, 40, "minecraft:chest_93")
+  local T = surveyorOnTop(93, 340, 40, 32)
+  T.inv[1] = nil -- no cobblestone
+  bootTurtle(T)
+  local ok = runUntil(function() return T.files["surveyor.state"] and T.files["surveyor.state"]:find("done") end, 400000)
+  check(ok and homeAt("minecraft:chest_93") ~= nil, "home registered with a coal marker")
+end
+
 print("scenario: stranded away from its start: 'surveyor survey' refuses, 'surveyor home' brings it back")
 do
   W.set(200, 0, 40, "computercraft:computer_advanced")
