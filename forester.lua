@@ -44,6 +44,7 @@ local nav = require("nav")
 
 local CFG = {
   spacing = 3,         -- tree spots when it has no saplings yet (else oreconf.TREES)
+  reach = 2,           -- ... and their distance to the fence
   wait = 300,
   maxHeight = 40,      -- never climb higher than this when felling
   maxArea = 1024,      -- more open cells than this: the pen is not closed
@@ -253,34 +254,46 @@ end
 
 -- Spacing for the kinds in play: the widest one decides (mixed kinds share
 -- one grid). And whether any needs grass/dirt under its 4 side cells.
+-- Spacing and reach for the kinds in play: the widest one decides (mixed
+-- kinds share one grid). And whether any needs grass/dirt under its 4 side
+-- cells.
 local function treeNeeds()
-  local spacing, around = nil, false
+  local spacing, around, reach = nil, false, nil
   for k in pairs(kindsInPlay()) do
     local t = C.tree(k)
     spacing = math.max(spacing or 0, t.spacing)
+    reach = math.max(reach or 0, t.reach or 1)
     around = around or t.soilAround == true
   end
-  return spacing or CFG.spacing, around
+  return spacing or CFG.spacing, around, reach or CFG.reach
 end
 
--- Tree spots: every `spacing` cells, counted from the pen's corner (its
--- lowest x and z), starting one cell in so a path runs along the fence.
--- Spots still without soil get dirt in the rounds.
+-- Tree spots: every `spacing` cells, counted from `reach` cells in from the
+-- pen's corner (its lowest x and z); a spot keeps `reach` open cells all
+-- around (the canopy, and the saplings it drops, stay inside the fence).
 placeSpots = function()
-  local spacing = treeNeeds()
+  local spacing, _, reach = treeNeeds()
   local minX, minZ
   for k in pairs(AREA.cells) do
     local x, z = unkey(k)
     minX, minZ = math.min(minX or x, x), math.min(minZ or z, z)
   end
-  local ax, az = minX + 1, minZ + 1
+  local ax, az = minX + reach, minZ + reach
+  local function roomy(x, z)
+    for dx = -reach, reach do for dz = -reach, reach do
+      if not AREA.cells[key(x + dx, z + dz)] then return false end
+    end end
+    return true
+  end
   local spots = {}
   for k in pairs(AREA.cells) do
     local x, z = unkey(k)
-    if (x ~= 0 or z ~= 0) and (x - ax) % spacing == 0 and (z - az) % spacing == 0 then spots[#spots + 1] = k end
+    if (x ~= 0 or z ~= 0) and (x - ax) % spacing == 0 and (z - az) % spacing == 0 and roomy(x, z) then
+      spots[#spots + 1] = k
+    end
   end
   table.sort(spots)
-  AREA.spots, AREA.spacing = spots, spacing
+  AREA.spots, AREA.spacing, AREA.reach = spots, spacing, reach
   saveArea()
   indexSpots()
 end
@@ -656,7 +669,7 @@ local function explore()
   end
   AREA.done = true
   placeSpots()
-  log(("Pen: %d cells, %d tree spots %d apart."):format(cellCount(), #AREA.spots, AREA.spacing))
+  log(("Pen: %d cells, %d tree spots %d apart, %d from the fence."):format(cellCount(), #AREA.spots, AREA.spacing, AREA.reach))
 end
 
 -- ------------------------------------------------------------- the round --
@@ -854,10 +867,10 @@ local function round()
   end
   sweep()
   -- the kinds changed (the base's selection, what it carries): new grid
-  local spacing, soilAround = treeNeeds()
-  if spacing ~= AREA.spacing then
+  local spacing, soilAround, reach = treeNeeds()
+  if spacing ~= AREA.spacing or reach ~= AREA.reach then
     placeSpots()
-    log(("Tree spots now %d apart: %d spots"):format(spacing, #AREA.spots))
+    log(("Tree spots now %d apart, %d from the fence: %d spots"):format(spacing, reach, #AREA.spots))
   end
   -- visit the spots nearest first, and the path cells whose floor needs dirt
   -- (skipped while it has none: it may get some mid-round, at home)

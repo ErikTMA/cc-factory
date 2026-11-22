@@ -54,15 +54,17 @@ function C.isFuel(name) return C.FUEL[name] ~= nil end
 --     (branches and roots): 5
 --   dark oak only grows from 4 saplings in a square (`twoByTwo`): not planted
 -- Unknown (modded) kinds: 4.
+-- `reach`: how far its canopy reaches from the trunk; a spot keeps that many
+-- open cells to the fence, so the leaves (and the saplings they drop) stay in.
 C.TREES = {
-  ["minecraft:oak_sapling"] = { spacing = 3 }, ["minecraft:birch_sapling"] = { spacing = 3 },
-  ["minecraft:spruce_sapling"] = { spacing = 3 }, ["minecraft:jungle_sapling"] = { spacing = 3 },
-  ["integrateddynamics:menril_sapling"] = { spacing = 4, soilAround = true },
-  ["minecraft:acacia_sapling"] = { spacing = 5 }, ["minecraft:cherry_sapling"] = { spacing = 5 },
-  ["minecraft:mangrove_propagule"] = { spacing = 5 },
+  ["minecraft:oak_sapling"] = { spacing = 3, reach = 2 }, ["minecraft:birch_sapling"] = { spacing = 3, reach = 2 },
+  ["minecraft:spruce_sapling"] = { spacing = 3, reach = 2 }, ["minecraft:jungle_sapling"] = { spacing = 3, reach = 2 },
+  ["integrateddynamics:menril_sapling"] = { spacing = 4, reach = 3, soilAround = true },
+  ["minecraft:acacia_sapling"] = { spacing = 5, reach = 4 }, ["minecraft:cherry_sapling"] = { spacing = 5, reach = 4 },
+  ["minecraft:mangrove_propagule"] = { spacing = 5, reach = 4 },
   ["minecraft:dark_oak_sapling"] = { twoByTwo = true },
 }
-local UNKNOWN_TREE = { spacing = 4 }
+local UNKNOWN_TREE = { spacing = 4, reach = 3 }
 function C.tree(name) return C.TREES[name] or UNKNOWN_TREE end
 
 -- ------------------------------------------------------------- building --

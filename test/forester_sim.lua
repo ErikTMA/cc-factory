@@ -74,10 +74,10 @@ local function newWorld(opts)
     W.set(x, -1, z, "minecraft:grass_block")
     W.set(x, -2, z, "minecraft:dirt")
   end end
-  for z = -10, 1 do W.set(-5, 0, z, FENCE); W.set(5, 0, z, FENCE) end
-  for x = -5, 5 do W.set(x, 0, -10, FENCE); W.set(x, 0, 1, FENCE) end
-  for x = -4, 2 do W.set(x, 0, -5, FENCE) end
-  if opts.gap then W.set(5, 0, -3, nil) end
+  for z = -19, 1 do W.set(-9, 0, z, FENCE); W.set(9, 0, z, FENCE) end
+  for x = -9, 9 do W.set(x, 0, -19, FENCE); W.set(x, 0, 1, FENCE) end
+  for x = -8, 4 do W.set(x, 0, -9, FENCE) end
+  if opts.gap then W.set(9, 0, -3, nil) end
   W.set(0, 0, 1, "minecraft:chest")
   W.set(2, 0, -2, "minecraft:poppy") -- a flower in the way
   function W.fences() return W.count(FENCE) end
@@ -163,7 +163,7 @@ local function newWorld(opts)
   if opts.rough then
     W.set(1, -1, -1, nil); W.set(-2, -1, -7, nil)        -- holes in the floor
     W.set(-1, -1, -8, "minecraft:water")                 -- a puddle
-    W.set(3, -1, -2, "minecraft:stone")                  -- a tree spot on stone
+    W.set(3, -1, -4, "minecraft:stone")                  -- a tree spot on stone
     W.set(-4, 0, -2, "minecraft:short_grass")
     W.set(4, 0, -7, "minecraft:red_mushroom")
     W.set(1, 0, -7, SAP); W.growAt(1, 0, -7); W.trees = 0            -- an old tree, off the grid
@@ -460,19 +460,24 @@ local function sleeper(W, rounds)
   end
 end
 
--- tree spots: every 3rd cell from home inside the pen
--- Tree spots: every `spacing` cells from the pen's corner (x -4, z -9),
--- starting one cell in: x -3, 0, 3 and z -8, -5, -2 for oak (3), minus the
--- inner fence (z -5, x -4..2).
-local function spotsFor(spacing)
+-- The pen: cells x -8..8, z -18..0, minus the inner fence (z -9, x -8..4;
+-- its gap at x 5..8). Tree spots: every `spacing` cells from `reach` cells in
+-- from the corner (x -8, z -18), each with `reach` open cells all around
+-- (canopy inside the fence). Oak (3, 2): x -6, -3, 0, 3, 6 at z -16, -13, -4.
+local function openCell(x, z) return x >= -8 and x <= 8 and z >= -18 and z <= 0 and not (z == -9 and x <= 4) end
+local function spotsFor(spacing, reach)
+  reach = reach or 2
   local list = {}
-  for x = -3, 4, spacing do for z = -8, 0, spacing do
-    local fence = (z == -5 and x <= 2)
-    if not fence and not (x == 0 and z == 0) then list[#list + 1] = { x, z } end
+  for x = -8 + reach, 8, spacing do for z = -18 + reach, 0, spacing do
+    local ok = not (x == 0 and z == 0)
+    for dx = -reach, reach do for dz = -reach, reach do
+      if not openCell(x + dx, z + dz) then ok = false end
+    end end
+    if ok then list[#list + 1] = { x, z } end
   end end
   return list
 end
-local SPOTS = spotsFor(3)
+local SPOTS = spotsFor(3, 2)
 
 local function plantedSpots(W)
   local n = 0
@@ -493,12 +498,18 @@ do
   check(W.fences() == fences, "no fence touched (" .. W.fences() .. " of " .. fences .. ")")
   check(W.count(LOG) == 0, "no logs left standing (branches included): " .. W.count(LOG))
   check(plantedSpots(W) == #SPOTS, ("all %d spots replanted: %d"):format(#SPOTS, plantedSpots(W)))
-  check(isSap(W.get(3, 0, -8)) and isSap(W.get(-3, 0, -8)), "spots behind the inner fence reached")
+  check(isSap(W.get(3, 0, -13)) and isSap(W.get(-3, 0, -13)), "spots behind the inner fence reached")
   local outside = 0
   for x = -12, 12 do for z = -40, 6 do
-    if W.get(x, 0, z) == SAP and (x < -4 or x > 4 or z < -9 or z > 0) then outside = outside + 1 end
+    if W.get(x, 0, z) == SAP and not openCell(x, z) then outside = outside + 1 end
   end end
   check(outside == 0, "nothing planted outside the pen: " .. outside)
+  local isSpotXZ, offGrid = {}, 0
+  for _, p in ipairs(SPOTS) do isSpotXZ[p[1] .. "," .. p[2]] = true end
+  for x = -12, 12 do for z = -40, 6 do
+    if isSap(W.get(x, 0, z)) and not isSpotXZ[x .. "," .. z] then offGrid = offGrid + 1 end
+  end end
+  check(offGrid == 0, "no tree closer than 2 to a fence (oak's reach), nothing off the grid: " .. offGrid)
   check((W.chest[LOG] or 0) > 40, "logs delivered to the chest: " .. tostring(W.chest[LOG]))
   local carried = 0
   for i = 1, 16 do if T.inv[i] and isSap(T.inv[i].name) then carried = carried + T.inv[i].count end end
@@ -506,7 +517,7 @@ do
   local area = load("return " .. files["forester.area"])()
   local cells = 0
   for _ in pairs(area.cells) do cells = cells + 1 end
-  check(area.done and cells == 9 * 10 - 7, "cached the pen: " .. cells .. " open cells")
+  check(area.done and cells == 17 * 19 - 13, "cached the pen: " .. cells .. " open cells")
 end
 
 print("scenario: second start uses the cached pen")
@@ -558,7 +569,7 @@ end
 print("scenario: restart in the middle of felling a tree")
 do
   local W = newWorld()
-  W.set(-3, 0, -2, SAP) -- a grown tree on a spot when it starts
+  W.set(-3, 0, -4, SAP) -- a grown tree on a spot when it starts
   W.growAll()
   local T, api = newTurtle(W, 2000)
   T.inv[1] = { name = SAP, count = 64 }
@@ -569,7 +580,7 @@ do
   ok, err = run(makeEnv(T, api, files, function() error("END OF TEST") end))
   check(tostring(err):find("END OF TEST") ~= nil, "resumed and finished the round (" .. tostring(err) .. ")")
   check(T.x == 0 and T.y == 0 and T.z == 0, ("home after resume (%d,%d,%d)"):format(T.x, T.y, T.z))
-  check(isSap(W.get(-3, 0, -2)) and plantedSpots(W) == #SPOTS, "all spots planted after resume")
+  check(isSap(W.get(-3, 0, -4)) and plantedSpots(W) == #SPOTS, "all spots planted after resume")
 end
 
 print("scenario: restart right after a turn, before it was saved")
@@ -627,12 +638,12 @@ do
   check(tostring(err):find("END OF TEST") ~= nil, "one round (" .. tostring(err) .. ")")
   check(W.get(1, -1, -1) == "minecraft:dirt" and W.get(-2, -1, -7) == "minecraft:dirt", "holes filled with dirt")
   check(W.get(-1, -1, -8) == "minecraft:dirt", "the puddle filled with dirt")
-  check(W.get(3, -1, -2) == "minecraft:dirt", "stone under a tree spot swapped for dirt")
+  check(W.get(3, -1, -4) == "minecraft:dirt", "stone under a tree spot swapped for dirt")
   check(W.get(-3, -1, -3) == "minecraft:dirt" and W.get(2, -1, -4) == "minecraft:dirt"
     and W.get(-1, -1, -3) == "minecraft:dirt", "stone, sand and podzol under paths swapped for dirt")
   check(W.get(0, -1, 0) == "computercraft:wired_modem_full" and W.get(2, -1, -1) == "computercraft:cable",
     "the modem under home and a cable under a path left alone")
-  check(isSap(W.get(3, 0, -2)) and plantedSpots(W) == #SPOTS, "every spot planted, the fixed one too")
+  check(isSap(W.get(3, 0, -4)) and plantedSpots(W) == #SPOTS, "every spot planted, the fixed one too")
   check(W.get(1, 0, -7) == nil and W.get(1, 4, -7) == nil and W.count(LOG) == 0, "the old tree is gone")
   check(W.get(-4, 0, -2) == nil and W.get(4, 0, -7) == nil, "grass and mushroom cleared")
   check(W.fences() == fences, "no fence touched")
@@ -650,7 +661,7 @@ do
   local function sl()
     rounds = rounds + 1
     if rounds == 1 then
-      check(not isSap(W.get(3, 0, -2)) and W.get(3, -1, -2) == "minecraft:stone", "round 1: no dirt, the stone spot is left alone")
+      check(not isSap(W.get(3, 0, -4)) and W.get(3, -1, -4) == "minecraft:stone", "round 1: no dirt, the stone spot is left alone")
       T.inv[6] = { name = "minecraft:dirt", count = 8 } -- someone gives it dirt
       return
     end
@@ -658,7 +669,7 @@ do
   end
   local ok, err = run(makeEnv(T, api, files, sl), "10")
   check(tostring(err):find("END OF TEST") ~= nil, "two rounds (" .. tostring(err) .. ")")
-  check(W.get(3, -1, -2) == "minecraft:dirt" and isSap(W.get(3, 0, -2)), "round 2: dirt laid and the spot planted")
+  check(W.get(3, -1, -4) == "minecraft:dirt" and isSap(W.get(3, 0, -4)), "round 2: dirt laid and the spot planted")
 end
 
 print("scenario: no dirt while measuring: the holes in the path wait, and get filled once it has dirt;")
@@ -690,7 +701,7 @@ do
   local ok, err = run(makeEnv(T, api, {}, sl), "10")
   check(tostring(err):find("END OF TEST") ~= nil, "two rounds (" .. tostring(err) .. ")")
   local filled = 0
-  for _, c in ipairs({ { 1, -1 }, { -2, -7 }, { -1, -8 }, { 3, -2 } }) do
+  for _, c in ipairs({ { 1, -1 }, { -2, -7 }, { -1, -8 }, { 3, -4 } }) do
     if W.get(c[1], -1, c[2]) == "minecraft:dirt" then filled = filled + 1 end
   end
   check(filled == 3, "round 2: its 3 dirt went into 3 of the 4 cells: " .. filled)
@@ -727,7 +738,7 @@ do
   check(tostring(err):find("END OF TEST") ~= nil, "one round (" .. tostring(err) .. ")")
   check(asked and asked.dirt == 4, "it asked for dirt for 4 cells: " .. tostring(asked and asked.dirt))
   local fixed = 0
-  for _, c in ipairs({ { 1, -1 }, { -2, -7 }, { -1, -8 }, { 3, -2 } }) do
+  for _, c in ipairs({ { 1, -1 }, { -2, -7 }, { -1, -8 }, { 3, -4 } }) do
     if W.get(c[1], -1, c[2]) == "minecraft:dirt" then fixed = fixed + 1 end
   end
   check(fixed == 4, "it took the dirt and laid it: " .. fixed .. "/4 cells")
@@ -841,16 +852,16 @@ do
   local function sl()
     n = n + 1
     if n == 1 then                                    -- round 2 fells it
-      -- ONE tree, at the spot (0,-2), with a wide canopy (cherry, acacia):
+      -- ONE tree, at the spot (0,-4), with a wide canopy (cherry, acacia):
       -- leaves out to 4 cells from the trunk
       for key, v in pairs(W.b) do
         local x, y, z = key:match("^(-?%d+),(-?%d+),(-?%d+)$")
-        if isSap(v) and not (tonumber(x) == 0 and tonumber(z) == -2) then W.b[key] = nil end
+        if isSap(v) and not (tonumber(x) == 0 and tonumber(z) == -4) then W.b[key] = nil end
       end
       W.growAll()
       for dx = -4, 4 do for dz = -4, 4 do
-        local lx, lz = dx, -2 + dz
-        if lx >= -4 and lx <= 4 and lz >= -9 and lz <= 0 and not W.get(lx, 4, lz) then W.set(lx, 4, lz, LEAF) end
+        local lx, lz = dx, -4 + dz
+        if openCell(lx, lz) and not W.get(lx, 4, lz) then W.set(lx, 4, lz, LEAF) end
       end end
       return
     end
@@ -978,8 +989,8 @@ end
 print("scenario: menril needs more room: spots 4 apart from the corner, dirt under its side cells")
 do
   local W = newWorld()
-  local M4 = spotsFor(4)
-  W.set(1, -1, -7, "minecraft:stone") -- the floor north... south of spot (1,-8): a side cell on stone
+  local M4 = spotsFor(4, 3)
+  W.set(-1, -1, -2, "minecraft:stone") -- south of the spot (-1,-3): a side cell on stone
   local T, api = newTurtle(W, 3000)
   T.inv[1] = { name = MENRIL, count = 32 }
   T.inv[5] = { name = "minecraft:dirt", count = 8 }
@@ -992,10 +1003,10 @@ do
   for key, v in pairs(W.b) do
     local x, y, z = key:match("^(-?%d+),(-?%d+),(-?%d+)$")
     x, y, z = tonumber(x), tonumber(y), tonumber(z)
-    if y == 0 and isSap(v) and not ((x + 3) % 4 == 0 and (z + 8) % 4 == 0) then off = off + 1 end
+    if y == 0 and isSap(v) and not ((x + 5) % 4 == 0 and (z + 15) % 4 == 0) then off = off + 1 end
   end
   check(off == 0, "nothing planted off the 4-grid: " .. off)
-  check(W.get(1, -1, -7) == "minecraft:dirt", "the stone under a menril spot's side cell became dirt")
+  check(W.get(-1, -1, -2) == "minecraft:dirt", "the stone under a menril spot's side cell became dirt")
 end
 
 print("scenario: the base selects menril instead of oak: the next round lays out a new grid")
