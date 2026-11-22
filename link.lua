@@ -242,7 +242,7 @@ end
 -- ------------------------------------------------------------ mailbox --
 -- The home chest is a mailbox: at home the turtle asks the base for what it
 -- wants to carry (L.supply), the base sends it into the chest, the turtle
--- takes it; the base empties everything else. Several turtles may share one
+-- takes it; the base empties everything else. One turtle, one home, one
 -- chest. These functions expect the turtle to FACE its home chest.
 
 -- Take what is in the chest, until it is empty or nothing more fits (CC's

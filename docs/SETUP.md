@@ -132,8 +132,8 @@ then says the block is connected. A modem that isn't lit does nothing.
   meal, fuel and the dirt its pen still needs**. The base sends what it lacks
   into the chest and tells it what it couldn't get (shown on the turtle);
   the forester takes it, then drops its wood. The base knows the chest from
-  the survey (or the turtle's own marker claim), and several homes can share
-  one chest: each turtle asks for itself. Between deliveries the base empties
+  the survey (or the turtle's own marker claim): one turtle, one home, one
+  chest. Between deliveries the base empties
   home chests into storage. On the monitor, **GATHERING > FORESTRY**: tap the
   sapling kinds to plant (several: the base sends the same amount of each and
   the forester plants them **in turn**, so you get a mix; none selected: the

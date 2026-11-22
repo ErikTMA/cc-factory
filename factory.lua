@@ -672,10 +672,9 @@ function M.supply(F, from, req, have)
   local chest = chestOf(F, from)
   if not chest then return { type = "nochest" } end
   local S = F.deps.storage
-  -- it is this turtle's turn at the chest: empty it first (it takes all it
-  -- finds), unless another turtle's delivery is waiting there
-  local held = F.held and F.held[chest]
-  if not (held and held.by ~= from and now(F) < held.untilTime) then S.store(chest) end
+  -- empty it first (the turtle takes all it finds): one turtle, one home,
+  -- one chest
+  S.store(chest)
   local stock = S.list()
   have = have or {}
   local sent, short = {}, {}
@@ -1325,8 +1324,8 @@ function M.handle(F, from, msg)
     else
       local found = markFind(F, from, msg.marker)
       if found then
-        -- the chest belongs to its home (one chest per home, shared by every
-        -- turtle there); the turtle's own record only for one without a home
+        -- the chest belongs to its home (one turtle, one home, one chest);
+        -- the turtle's own record only for one without a home
         local home
         for _, h in ipairs(F.homes) do if h.owner == from then home = h end end
         if home then home.chest = found else t.chest = found end

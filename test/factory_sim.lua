@@ -1826,11 +1826,6 @@ do
   chest.insert("minecraft:oak_log", 30)
   ask(95, { fuel = 16 })
   check(has(chest, "minecraft:oak_log") == 0 and has(chest, "minecraft:charcoal") == 16, "logs stored, then fuel sent")
-  -- but not another turtle's delivery waiting there
-  F.held["minecraft:chest_95"].by = 12345
-  ask(95, { fuel = 32 })
-  check(has(chest, "minecraft:charcoal") == 48, "another's delivery stays: its 16 + 32: " .. has(chest, "minecraft:charcoal"))
-  F.held = {}
   factory.serviceChests(F)
   -- auto (nothing selected): the kind storage has most of
   F.saplings = {}
@@ -1845,13 +1840,7 @@ do
                           source = "survey", chest = "minecraft:chest_98", owner = 98 })
   r = ask(98, { fuel = 16 })
   check(r.chest == "minecraft:chest_98" and has(hc, "minecraft:charcoal") == 16, "its home's chest from the survey: 16 charcoal")
-  -- one chest, home to several turtles: each asks for itself, at its own turn
-  F.turtles[99] = { id = 99, role = "miner", seen = W.clock }
-  table.insert(F.homes, { id = 999, x = 831, y = 0, z = 801, facing = "north", role = "miner",
-                          source = "survey", chest = "minecraft:chest_98", owner = 99 })
-  r = ask(99, { fuel = 16 })
-  check(r.chest == "minecraft:chest_98" and has(hc, "minecraft:charcoal") == 32, "the miner sharing it gets its own 16 there too")
-  table.remove(F.homes); table.remove(F.homes); F.turtles[98] = nil; F.turtles[99] = nil
+  table.remove(F.homes); F.turtles[98] = nil
   -- a turtle at a home without a chest on record claims it: the chest goes on the HOME
   local cc = newInv("minecraft:chest_93", 840, 0, 800)
   F.turtles[96] = { id = 96, role = "miner", seen = W.clock }

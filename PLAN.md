@@ -337,10 +337,10 @@ verify-live: furnace slot pushes with a bridge backend; real hammer durability.
 - **Shafts at the homes, not one central shaft.** Each miner goes down at its
   own home and digs a connector at its level to the nearest grid point. (A
   single shaft is gridlock: turtles are solid and can't pass in a 1x1 tunnel.)
-- **Several miners may share a home (and its shaft).** When two meet, the one
-  going down (outbound) digs a pocket aside, waits there until the way is
-  clear, then goes on; in tunnels and lanes the outbound one yields to the one coming
-  back.
+- **One turtle per home (decided 2026-11-22: sharing homes broke more than
+  it gave).** Every home has one owner and one chest; more turtles need more
+  homes. Miners meeting underground (other homes' tunnels) wait for each
+  other, then dig around (oreminer turtleWait / goAround).
 - **The ore map: shipped 2026-11-22** (4e085d2, two independent reviews,
   every finding fixed with a test that failed first): every scanned block
   but filler and liquids, in the base's frame, kept per 16-cell; scans drop
