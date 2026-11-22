@@ -42,6 +42,7 @@ local CFG = {
   trailFile = "oreminer.trail", -- the way it came (its way out, whatever the planner finds)
   askFuelBelow = 1000, -- at home, ask the base for fuel below this
   minDepth = 16,       -- a job's level is at least this far below home (never up through the base)
+  floorY = -58,        -- never below this world Y (bedrock is -64 .. -60): a deeper job is lifted
   mapEvery = 3,        -- out on a job: send the base its scans every this many (wireless modem)
   stateFile = "oreminer.state",
   mapFile = "oremap.pending", -- what it saw and dug, until the base has it
@@ -785,10 +786,13 @@ local function newJob(job, home, known)
   S = { pos = { x = 0, y = 0, z = 0 }, heading = home.heading, homeHeading = home.heading,
         known = known or {},
         lane = 0, progress = 0, lanes = job.lanes or CFG.lanes, length = job.length or CFG.length,
-        dy = job.y and math.min(job.y - home.y, -CFG.minDepth) or 0, only = job.only, quantity = job.quantity,
+        dy = job.y and math.max(math.min(job.y - home.y, -CFG.minDepth), CFG.floorY - home.y) or 0,
+        only = job.only, quantity = job.quantity,
         sector = job.sector or 0, mined = 0, job = job, scout = job.scout or nil }
   save()
-  if job.y and job.y - home.y > -CFG.minDepth then
+  if job.y and job.y < CFG.floorY then
+    log(("Y %d is below the world's floor: mining at Y %d instead"):format(job.y, home.y + S.dy))
+  elseif job.y and job.y - home.y > -CFG.minDepth then
     log(("Y %d is not below home (Y %d): mining at Y %d instead"):format(job.y, home.y, home.y + S.dy))
   end
   if job.scout then
@@ -815,6 +819,12 @@ local function resumeUnfinished()
   if s and not s.done then
     S = s
     S.dy, S.mined, S.lanes, S.length = S.dy or 0, S.mined or 0, S.lanes or CFG.lanes, S.length or CFG.length
+    -- (a job saved before the floor existed: lifted too)
+    local home = readFile(CFG.homeFile)
+    if home and home.y and S.dy < CFG.floorY - home.y then
+      S.dy = CFG.floorY - home.y
+      log(("Job level below the world's floor: Y %d instead"):format(CFG.floorY))
+    end
     -- settle a move that was in flight when it stopped, and re-measure the
     -- heading: a turn may have happened without being saved
     tmove.recover(S, save, applyMove)

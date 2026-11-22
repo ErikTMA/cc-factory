@@ -680,6 +680,27 @@ do
   check((B.totals.iron or 0) == 0 and (B.totals.coal or 0) == 0, "nothing counted as mined")
 end
 
+print("scenario: a job below the world's floor (live: Y -139 from a frame mix-up): the miner works at")
+print("          Y -58 instead, above bedrock, and comes home")
+do
+  -- home at world Y 0 here; the world's floor (bedrock) at -60
+  local W = newWorld(41, 0, { span = 40, ymin = -60, ymax = 6 })
+  local minY = 0
+  local B, fleet = runFleet(W, { { x = 0, z = 0, h = 0 } }, function(Base, B)
+    table.insert(B.homes, { id = 1, x = 0, y = 0, z = 0, facing = "north", role = "miner", owner = 101 })
+    Base.queueJob(B, { only = "iron", y = -139, quantity = 2, lanes = 1, length = 16 })
+  end, { onTick = function(_, _, fl)
+    local T = fl[1] and fl[1].T
+    if T and T.y < minY then minY = T.y end
+  end })
+  local f = fleet[1]
+  check(not f.err, "ran without error: " .. tostring(f.err))
+  local st = f.files["oreminer.state"] and load("return " .. f.files["oreminer.state"])()
+  check(st and st.dy == -58, "it worked at Y -58 (dy " .. tostring(st and st.dy) .. ")")
+  check(minY > -60, "never into the bedrock floor (it may dig an ore it sees just below): lowest " .. minY)
+  check(st and st.done and st.pos.x == 0 and st.pos.y == 0 and st.pos.z == 0, "done and back home")
+end
+
 print("scenario: map review: a known ore that is gone isn't counted and leaves the map; a block")
 print("          worth mapping dug in a tunnel leaves it; out of reach it backs off; hand-run keeps no map")
 do

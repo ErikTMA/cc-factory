@@ -293,7 +293,7 @@ function M.oreSummary(F)
   local map = F.map
   local held = 0
   for _ in pairs(map.held) do held = held + 1 end
-  local stamp = map.n .. ":" .. held
+  local stamp = map.n .. ":" .. held .. ":" .. tostring(F.cfg.build.y) .. ":" .. tostring(F.buildSpot and F.buildSpot.y)
   if F.oreSummaryCache and F.oreSummaryCache.stamp == stamp then return F.oreSummaryCache.list end
   local by = {}
   oremap.each(map, function(x, y, z, name)
@@ -309,7 +309,9 @@ function M.oreSummary(F)
   local list = {}
   for _, e in pairs(by) do
     table.sort(e.ys)
-    e.minY, e.maxY, e.y = e.ys[1], e.ys[#e.ys], e.ys[math.ceil(#e.ys / 2)]
+    -- (the map is in the base's frame: shown and mined at world Y)
+    e.minY, e.maxY = absY(F, e.ys[1]), absY(F, e.ys[#e.ys])
+    e.y = absY(F, e.ys[math.ceil(#e.ys / 2)])
     e.ys = nil
     list[#list + 1] = e
   end

@@ -2287,6 +2287,10 @@ do
   local oremap = baseEnv.require("oremap")
   local keepMap = F.map
   F.map = oremap.new()
+  -- the map is in the base's frame (relative to the build spot); world Y is
+  -- the build spot's Y plus that (live: a job went to Y -139 below bedrock)
+  local keepBuildY, keepSpot = F.cfg.build.y, F.buildSpot
+  F.cfg.build.y, F.buildSpot = 70, { x = 0, y = 0, z = 0 }
   F.oreSummaryCache = nil
   -- what miners reported: iron as two block kinds, gold, one amethyst (not an ore)
   local ores = {}
@@ -2322,8 +2326,9 @@ do
   local before = #F.queue
   if mine then mine.action() end
   local job = F.queue[#F.queue]
-  check(#F.queue == before + 1 and job.only == "iron" and job.quantity == 7 and job.y <= -21 and job.y >= -44,
-    ("queued: only iron, 7, at a Y where they are (%s)"):format(tostring(F.note)))
+  check(#F.queue == before + 1 and job.only == "iron" and job.quantity == 7 and job.y <= 70 - 21 and job.y >= 70 - 44,
+    ("queued: only iron, 7, at the WORLD Y where they are (70 + frame y): %s"):format(tostring(F.note)))
+  check(text:find("26%.%.%s*49") ~= nil, "the Y range shown is world Y (70-44 .. 70-21)")
   if #F.queue > before then table.remove(F.queue) end
   -- SCOUT: a scan-only job at the chosen level, 16 apart
   local scoutBtn, down
@@ -2338,6 +2343,7 @@ do
   check(sj and sj.scout == true and sj.y == -40 and sj.lanes == 4 and sj.length == 64 and not sj.only,
     "SCOUT queued a scan-only job at Y -40 (4 lanes of 64): " .. tostring(F.note))
   if sj and sj.scout then table.remove(F.queue) end
+  F.cfg.build.y, F.buildSpot = keepBuildY, keepSpot
   F.map = keepMap
   F.oreSummaryCache = nil
 end
