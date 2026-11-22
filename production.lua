@@ -44,11 +44,20 @@ local function sortedKeys(t)
 end
 
 -- ------------------------------------------------------------- furnaces --
--- What an idle furnace should smelt next, or nil. avail(item) = stock left
--- after what this pass already handed out.
+-- What an idle furnace should smelt next (and how much of it may go, at
+-- most: what is kept back), or nil. avail(item) = stock left after what this
+-- pass already handed out.
 local function pickInput(cfg, hammerOn, stock, avail, blast)
   local items = sortedKeys(stock)
   local hammer = hasHammer(stock)
+  -- fuel first: below its charcoal target a furnace makes charcoal before
+  -- anything else (without fuel nothing smelts; turtles run on it too)
+  if not blast and avail("minecraft:charcoal") < cfg.charcoal then
+    for _, item in ipairs(items) do
+      local s = R.smelt(item)
+      if s and s.out == "minecraft:charcoal" and avail(item) > cfg.keepLogs then return item, avail(item) - cfg.keepLogs end
+    end
+  end
   for _, item in ipairs(items) do
     local s = R.smelt(item)
     if s and s.ore and avail(item) > 0 then
@@ -62,14 +71,8 @@ local function pickInput(cfg, hammerOn, stock, avail, blast)
     end
   end
   if blast then return nil end -- blast furnaces only do ores
-  if avail("minecraft:charcoal") < cfg.charcoal then
-    for _, item in ipairs(items) do
-      local s = R.smelt(item)
-      if s and s.out == "minecraft:charcoal" and avail(item) > cfg.keepLogs then return item end
-    end
-  end
   if avail("minecraft:stone") < cfg.stone and avail("minecraft:cobblestone") > cfg.keepCobble then
-    return "minecraft:cobblestone"
+    return "minecraft:cobblestone", avail("minecraft:cobblestone") - cfg.keepCobble
   end
   if avail("minecraft:glass") < cfg.glass and avail("minecraft:sand") > 0 then return "minecraft:sand" end
 end
@@ -109,9 +112,9 @@ function P.smelt(S, cfg, hammerOn, stock, tinyOn)
     if slots[3] then S.storeSlot(f.name, 3) end
     local items = slots[1] and slots[1].count or 0
     if not slots[1] then
-      local item = pickInput(cfg, hammerOn, stock, avail, f.blast)
+      local item, most = pickInput(cfg, hammerOn, stock, avail, f.blast)
       if item then
-        local sent = S.send(f.name, item, math.min(16, avail(item)), nil, 1)
+        local sent = S.send(f.name, item, math.min(16, most or avail(item)), nil, 1)
         planned[item] = (planned[item] or 0) + sent
         items = sent
         work = work + 1

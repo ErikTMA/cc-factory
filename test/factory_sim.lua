@@ -1811,6 +1811,36 @@ do
     "crafted by the real Utilitarian recipe: " .. textutils.serialize(CT.inv[1]))
 end
 
+print("scenario: out of charcoal, with logs and a pile of dust to smelt: a furnace makes charcoal")
+print("          first (without fuel nothing smelts; dust first starved the live base of charcoal)")
+do
+  local production = baseEnv.require("production")
+  local sent = {}
+  local fake = {
+    furnaces = function() return { { name = "furnace_a" }, { name = "furnace_b" } } end,
+    slots = function() return {} end,
+    storeSlot = function() end,
+    send = function(to, item, n, _, slot) sent[#sent + 1] = { to, item, n, slot }; return n end,
+  }
+  local stock = { ["alltheores:iron_dust"] = 200, ["alltheores:copper_dust"] = 100,
+                  ["minecraft:oak_log"] = 40, ["minecraft:coal"] = 100 }
+  production.smelt(fake, production.DEFAULTS, true, stock, false)
+  local logs, dust = 0, 0
+  for _, x in ipairs(sent) do
+    if x[4] == 1 and x[2] == "minecraft:oak_log" then logs = logs + x[3] end
+    if x[4] == 1 and x[2]:find("_dust$") then dust = dust + x[3] end
+  end
+  check(logs > 0, "logs went into a furnace for charcoal: " .. logs)
+  check(logs <= 40 - production.DEFAULTS.keepLogs, "but it keeps its logs for planks: " .. logs)
+  -- with plenty of charcoal (over its target, fuel taken out too), the dust gets the furnaces
+  sent = {}
+  stock["minecraft:charcoal"] = 200
+  production.smelt(fake, production.DEFAULTS, true, stock, false)
+  logs = 0
+  for _, x in ipairs(sent) do if x[4] == 1 and x[2] == "minecraft:oak_log" then logs = logs + x[3] end end
+  check(logs == 0, "enough charcoal: no logs smelted: " .. logs)
+end
+
 print("scenario: no cobblestone, only coal (it was carried there and dropped its things): it marks")
 print("          the home chest with a piece of coal")
 do
