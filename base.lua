@@ -217,6 +217,9 @@ local function drawOres(UI, out, w, row, h)
   button(UI, out, 1, row, 13, "SCOUT ALL Y", false, function() factory.scoutAllLevels(F) end)
   button(UI, out, 15, row, 16, "AUTO SCOUT " .. (st.on and "ON" or "OFF"), st.on == true,
     function() factory.toggleAutoScout(F) end)
+  local am = F.mineAuto and F.mineAuto.on
+  button(UI, out, 33, row, 15, "AUTO MINE " .. (am and "ON" or "OFF"), am == true,
+    function() factory.toggleAutoMine(F) end)
   row = row + 1
   -- what is scouted: a row per level, a column per area (# done, + partly,
   -- ~ under way, . not yet); areas side by side, then further out

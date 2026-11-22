@@ -2330,6 +2330,36 @@ do
     ("queued: only iron, 7, at the WORLD Y where they are (70 + frame y): %s"):format(tostring(F.note)))
   check(text:find("26%.%.%s*49") ~= nil, "the Y range shown is world Y (70-44 .. 70-21)")
   if #F.queue > before then table.remove(F.queue) end
+  -- AUTO MINE: one job waiting, for the ore with the most free known blocks
+  F.mineAuto = nil
+  local amBtn
+  for _, b in ipairs(UI.buttons) do if b.label:find("^AUTO MINE") then amBtn = b end end
+  check(amBtn ~= nil, "an AUTO MINE button")
+  if amBtn then amBtn.action() end
+  local q0 = #F.queue
+  factory.tick(F); factory.tick(F)
+  local mj = F.queue[#F.queue]
+  check(#F.queue == q0 + 1 and mj.auto == "mine" and mj.only == "iron" and mj.quantity == 7 and mj.y >= 26 and mj.y <= 49,
+    ("AUTO MINE: one job, the 7 free iron at its world Y: %s %s x%s Y%s"):format(#F.queue - q0, tostring(mj.only), tostring(mj.quantity), tostring(mj.y)))
+  -- a miner takes it (all 9 iron held by its running job): next, gold
+  local taken = table.remove(F.queue)
+  taken.id = 100
+  F.turtles[79] = { id = 79, role = "miner", label = "miner-79", state = "working", job = taken }
+  for _, k in ipairs({ { 1, -21, 3 }, { 2, -22, 3 }, { 3, -23, 3 }, { 4, -24, 3 }, { 5, -25, 3 },
+                       { 1, -41, 5 }, { 2, -42, 5 }, { 3, -43, 5 }, { 4, -44, 5 } }) do
+    F.map.held[oremap.key(k[1], k[2], k[3])] = 100
+  end
+  factory.tick(F)
+  local mj2 = F.queue[#F.queue]
+  check(mj2 and mj2.auto == "mine" and mj2.only == "gold" and mj2.quantity == 2, "then gold (iron all in a job): " .. tostring(mj2 and mj2.only))
+  table.remove(F.queue)
+  F.turtles[79] = nil
+  factory.toggleAutoMine(F)
+  factory.tick(F)
+  local anyAuto = false
+  for _, j in ipairs(F.queue) do if j.auto == "mine" then anyAuto = true end end
+  check(not anyAuto, "AUTO MINE off: nothing queued")
+  F.mineAuto = nil
   -- SCOUT: a scan-only job at the chosen level, 16 apart
   local scoutBtn, down
   for _, b in ipairs(UI.buttons) do

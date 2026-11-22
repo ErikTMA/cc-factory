@@ -25,7 +25,7 @@ M.QTY = { 8, 16, 32, 64, 128, 256, 0 } -- job sizes on the monitor; 0 = no limit
 local PERSIST = { "turtles", "queue", "nextJobId", "nextSector", "totals", "counted", "toolWants",
                   "orders", "nextOrderId", "homes", "nextHomeId", "buildSpot", "gpsWanted", "anchor", "ruleJobs", "lastFail", "failStreak",
                   "hammer", "tinyFuel", "craft", "nextCraftId", "crafted",
-                  "saplings", "boneMeal", "dismantle", "scoutAuto", "scouted" }
+                  "saplings", "boneMeal", "dismantle", "scoutAuto", "scouted", "mineAuto" }
 
 local CRAFT_PAUSE = 60      -- seconds without craft jobs after one failed
 
@@ -451,6 +451,28 @@ local function autoScout(F)
       if scoutGap(F, area, y) then return end
     end
   end
+end
+
+-- AUTO MINE: like AUTO SCOUT, one job waiting at a time: the ore kind with
+-- the most known blocks no job holds, at the world Y where most of them are,
+-- up to AUTO_MINE_MAX of them (the job is handed their positions).
+M.AUTO_MINE_MAX = 64
+function M.toggleAutoMine(F)
+  F.mineAuto = F.mineAuto or {}
+  F.mineAuto.on = not F.mineAuto.on
+  F.note = "Auto mining (the most known ore first): " .. (F.mineAuto.on and "ON" or "OFF")
+end
+local function autoMine(F)
+  if not (F.mineAuto and F.mineAuto.on) then return end
+  for _, j in ipairs(F.queue) do if j.auto == "mine" then return end end
+  local best
+  for _, e in ipairs(M.oreSummary(F)) do
+    local free = e.count - e.held
+    if free > 0 and (not best or free > best.count - best.held) then best = e end
+  end
+  if not best then return end
+  local n = math.min(best.count - best.held, M.AUTO_MINE_MAX)
+  M.queueJob(F, { only = best.kind, y = best.y, quantity = n, auto = "mine" })
 end
 
 function M.scout(F)
@@ -1601,6 +1623,7 @@ function M.tick(F)
   freshStorage(F)
   local S = F.deps.storage
   autoScout(F)
+  autoMine(F)
   if F.dismantle and now(F) - (F.dismantle.since or 0) > DISMANTLE_TIMEOUT then
     F.note = ("Gave up taking %s apart (it didn't come)"):format(label(F, F.dismantle.id))
     F.dismantle = nil
