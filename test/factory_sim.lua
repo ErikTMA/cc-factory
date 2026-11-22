@@ -1841,6 +1841,30 @@ do
   check(logs == 0, "enough charcoal: no logs smelted: " .. logs)
 end
 
+print("scenario: logs of many kinds (a mixed forest), none over 16 alone: they still make charcoal;")
+print("          16 logs in all are kept for planks")
+do
+  local production = baseEnv.require("production")
+  local sent = {}
+  local fake = {
+    furnaces = function() return { { name = "furnace_a" }, { name = "furnace_b" } } end,
+    slots = function() return {} end,
+    storeSlot = function() end,
+    send = function(to, item, n, _, slot) sent[#sent + 1] = { to, item, n, slot }; return n end,
+  }
+  local stock = { ["minecraft:oak_log"] = 13, ["minecraft:birch_log"] = 12, ["minecraft:cherry_log"] = 14,
+                  ["minecraft:spruce_log"] = 11, ["minecraft:acacia_log"] = 10, ["minecraft:coal"] = 100 }
+  local report = {}
+  production.smelt(fake, production.DEFAULTS, false, stock, false, report)
+  local logs = 0
+  for _, x in ipairs(sent) do if x[4] == 1 and x[2]:find("_log$") then logs = logs + x[3] end end
+  check(logs > 0, "60 logs of 5 kinds: charcoal is made: " .. logs)
+  local text = table.concat(report, "\n")
+  check(text:find("stock: logs 60 %(keep 16%), charcoal 0") and text:find("furnace_a: in %-") and text:find("given %d+ minecraft:cherry_log"),
+    "the production report says so:\n" .. text)
+  check(logs <= 60 - 16, "16 logs in all kept: " .. logs .. " smelted")
+end
+
 print("scenario: no cobblestone, only coal (it was carried there and dropped its things): it marks")
 print("          the home chest with a piece of coal")
 do

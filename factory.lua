@@ -1151,7 +1151,8 @@ function M.tick(F)
   local stock = S.list()
   local cfgp = F.cfg.production or {}
   if cfgp.enabled ~= false and S.furnaces then
-    F.prod.furnaces = production.smelt(S, cfgp, F.hammer, stock, F.tinyFuel)
+    F.prod.report = {}
+    F.prod.furnaces = production.smelt(S, cfgp, F.hammer, stock, F.tinyFuel, F.prod.report)
     stock = S.list()
   end
   -- a craft job whose assembler went silent

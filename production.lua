@@ -51,12 +51,19 @@ local function pickInput(cfg, hammerOn, stock, avail, blast)
   local items = sortedKeys(stock)
   local hammer = hasHammer(stock)
   -- fuel first: below its charcoal target a furnace makes charcoal before
-  -- anything else (without fuel nothing smelts; turtles run on it too)
+  -- anything else (without fuel nothing smelts; turtles run on it too).
+  -- keepLogs are kept in all, whatever kinds (a mixed forest has many kinds,
+  -- each of them a few): the kind there is most of goes in.
   if not blast and avail("minecraft:charcoal") < cfg.charcoal then
+    local total, best = 0, nil
     for _, item in ipairs(items) do
       local s = R.smelt(item)
-      if s and s.out == "minecraft:charcoal" and avail(item) > cfg.keepLogs then return item, avail(item) - cfg.keepLogs end
+      if s and s.out == "minecraft:charcoal" and avail(item) > 0 then
+        total = total + avail(item)
+        if not best or avail(item) > avail(best) then best = item end
+      end
     end
+    if best and total > cfg.keepLogs then return best, math.min(avail(best), total - cfg.keepLogs) end
   end
   for _, item in ipairs(items) do
     local s = R.smelt(item)
@@ -103,13 +110,34 @@ end
 
 -- One pass over every furnace. Returns how many got new work.
 -- `tinyOn`: fuel with tiny coal/charcoal by the item (the TINY FUEL switch).
-function P.smelt(S, cfg, hammerOn, stock, tinyOn)
+-- `report` (optional, a list): a line per furnace and one for the stock, so
+-- what the furnaces do can be read off the base (/production.txt).
+function P.smelt(S, cfg, hammerOn, stock, tinyOn, report)
   local planned = {}
   local function avail(item) return (stock[item] or 0) - (planned[item] or 0) end
+  local function short(st) return st and ((st.name:gsub("^%w+:", "")) .. " x" .. st.count) or "-" end
+  if report then
+    local logs = 0
+    for item, n in pairs(stock) do local s = R.smelt(item); if s and s.out == "minecraft:charcoal" then logs = logs + n end end
+    report[#report + 1] = ("stock: logs %d (keep %d), charcoal %d (target %d), coal %d (turtles keep %d)"):format(
+      logs, cfg.keepLogs or 0, stock["minecraft:charcoal"] or 0, cfg.charcoal or 0,
+      stock["minecraft:coal"] or 0, cfg.coalReserve or 0)
+  end
+  local furnaces = S.furnaces()
+  if report and #furnaces == 0 then report[#report + 1] = "no furnaces on the network" end
   local work = 0
-  for _, f in ipairs(S.furnaces()) do
+  for _, f in ipairs(furnaces) do
     local slots = S.slots(f.name)
-    if slots[3] then S.storeSlot(f.name, 3) end
+    local given
+    if report then
+      report[#report + 1] = ("%s: in %s, fuel %s, out %s"):format(f.name, short(slots[1]), short(slots[2]), short(slots[3]))
+    end
+    if slots[3] then
+      local moved = S.storeSlot(f.name, 3)
+      if report and moved < slots[3].count then
+        report[#report + 1] = ("  output not emptied: %d of %d moved (storage full?)"):format(moved, slots[3].count)
+      end
+    end
     local items = slots[1] and slots[1].count or 0
     if not slots[1] then
       local item, most = pickInput(cfg, hammerOn, stock, avail, f.blast)
@@ -118,6 +146,7 @@ function P.smelt(S, cfg, hammerOn, stock, tinyOn)
         planned[item] = (planned[item] or 0) + sent
         items = sent
         work = work + 1
+        if report then report[#report + 1] = ("  given %d %s"):format(sent, item) end
       end
     end
     if not (tinyOn and items > 0 and tinyFuel(S, f, slots, items, avail, planned))

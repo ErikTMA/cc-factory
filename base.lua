@@ -507,6 +507,15 @@ local function ticker()
     else
       F.note = "tick: " .. tostring(stock)
     end
+    -- what the furnaces do, readable off the base (and the server's files)
+    if F.prod and F.prod.report then
+      pcall(function()
+        local f = fs.open("/production.txt", "w")
+        f.write(os.date and os.date("%H:%M:%S\n") or "")
+        f.write(table.concat(F.prod.report, "\n") .. "\n")
+        f.close()
+      end)
+    end
     persist()
     os.queueEvent("factory_redraw")
     sleep(10)
