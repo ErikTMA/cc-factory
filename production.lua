@@ -125,9 +125,12 @@ function P.smelt(S, cfg, hammerOn, stock, tinyOn, report)
   if report then
     local logs = 0
     for item, n in pairs(stock) do local s = R.smelt(item); if s and s.out == "minecraft:charcoal" then logs = logs + n end end
-    report[#report + 1] = ("stock: logs %d (keep %d), charcoal %d (target %d), coal %d (turtles keep %d)"):format(
+    local tiny = 0
+    for _, t in ipairs(C.TINY) do tiny = tiny + (stock[t] or 0) end
+    report[#report + 1] = ("stock: logs %d (keep %d), charcoal %d (target %d), coal %d (turtles keep %d), tiny %d%s"):format(
       logs, cfg.keepLogs or 0, stock["minecraft:charcoal"] or 0, cfg.charcoal or 0,
-      stock["minecraft:coal"] or 0, cfg.coalReserve or 0)
+      stock["minecraft:coal"] or 0, cfg.coalReserve or 0, tiny,
+      tinyOn and (" (TINY FUEL on, keep " .. (cfg.tinyStock or P.DEFAULTS.tinyStock) .. ")") or "")
   end
   local furnaces = S.furnaces()
   if report and #furnaces == 0 then report[#report + 1] = "no furnaces on the network" end
@@ -158,6 +161,19 @@ function P.smelt(S, cfg, hammerOn, stock, tinyOn, report)
       end
     end
     local items = slots[1] and slots[1].count or 0
+    -- TINY FUEL on: coal or charcoal already in the fuel slot would be
+    -- topped up with more for ever (tiny pieces only go into an empty or
+    -- tiny slot): it goes back to storage while there are tiny pieces
+    if tinyOn and slots[2] and not isTiny(slots[2].name) then
+      local tinyLeft = 0
+      for _, t in ipairs(C.TINY) do tinyLeft = tinyLeft + math.max(0, avail(t)) end
+      if tinyLeft > 0 then
+        local what, n = slots[2].name, slots[2].count
+        local moved = S.storeSlot(f.name, 2) or 0
+        if moved >= n then slots[2] = nil end
+        if report then report[#report + 1] = ("  %d %s out of the fuel slot: tiny fuel"):format(moved, what) end
+      end
+    end
     if not slots[1] then
       local item, most = pickInput(cfg, hammerOn, stock, avail, f.blast)
       if item then

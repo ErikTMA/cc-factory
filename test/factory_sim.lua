@@ -1922,6 +1922,26 @@ do
   production.smelt(fake, production.DEFAULTS, false, stock, false)
   i1, n1 = fuelOf("furnace_a")
   check(i1 == "minecraft:coal" and n1 == 8, "switch off: 8 coal as before (" .. tostring(i1) .. " " .. tostring(n1) .. ")")
+  -- the live furnaces: coal already in the fuel slot. With TINY FUEL on it
+  -- must not be topped up with more coal for ever: it goes back to storage,
+  -- the furnace gets tiny pieces
+  sent = {}
+  local stored = {}
+  local liveFake = {
+    furnaces = function() return { { name = "ironfurnaces:gold_furnace_0" } } end,
+    slots = function() return { [1] = { name = "alltheores:iron_dust", count = 11 },
+                                [2] = { name = "minecraft:coal", count = 3 } } end,
+    storeSlot = function(name, slot) stored[#stored + 1] = slot; return 3 end,
+    send = function(to, item, n, _, slot) sent[#sent + 1] = { to, item, n, slot }; return n end,
+  }
+  local report = {}
+  production.smelt(liveFake, production.DEFAULTS, false, stock, true, report)
+  local fi, fn = fuelOf("ironfurnaces:gold_furnace_0")
+  local tookCoal = false
+  for _, sl in ipairs(stored) do if sl == 2 then tookCoal = true end end
+  check(tookCoal and fi == "utilitarian:tiny_charcoal" and fn == 11,
+    ("coal in the fuel slot: back to storage, 11 tiny for 11 items (%s %s, coal taken %s)"):format(tostring(fi), tostring(fn), tostring(tookCoal)))
+  check(table.concat(report, "\n"):find("tiny 20"), "production.txt shows the tiny stock")
   -- the craft: wanted only with charcoal to make it from, then the REAL recipe
   local w = production.wantedTiny({ ["minecraft:charcoal"] = 3 }, production.DEFAULTS)
   check(w[1] and w[1][1] == "utilitarian:tiny_charcoal" and w[1][2] == 24, "wants 3 charcoal made into 24 tiny")
