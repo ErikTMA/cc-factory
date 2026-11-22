@@ -579,7 +579,8 @@ end
 
 -- -------------------------------------------------------------- base link --
 local function status()
-  return { job = S and S.job, mined = S and S.mined or 0, map = pending() }
+  -- (lanesDone: lanes finished; the base records what a scout job covered)
+  return { job = S and S.job, mined = S and S.mined or 0, map = pending(), lanesDone = S and S.lane or nil }
 end
 
 -- Report to the base (only at home). Code updates wait until the job is done.

@@ -678,6 +678,8 @@ do
   check(mapped > 10, "its scans filled the map: " .. mapped .. " ores")
   check(still == mapped, ("every mapped ore is still in the ground: %d of %d"):format(still, mapped))
   check((B.totals.iron or 0) == 0 and (B.totals.coal or 0) == 0, "nothing counted as mined")
+  local rec = B.scouted and B.scouted["-20|0"] or {}
+  check(rec[0] and rec[1], "the base recorded both lanes as scouted at Y -20")
 end
 
 print("scenario: a job below the world's floor (live: Y -139 from a frame mix-up): the miner works at")

@@ -2344,7 +2344,7 @@ do
     "SCOUT queued a scan-only job at Y -40 (4 lanes of 64): " .. tostring(F.note))
   if sj and sj.scout then table.remove(F.queue) end
   -- SCOUT ALL Y: one area at every level; the next press, the next area
-  F.scoutAuto = nil
+  F.scoutAuto, F.scouted = nil, nil
   local qn = #F.queue
   factory.scoutAllLevels(F)
   local levels, area0 = {}, true
@@ -2355,13 +2355,13 @@ do
   end
   check(#levels == 7 and levels[1] == -51 and levels[7] == 45 and area0,
     "SCOUT ALL Y: area 1 at 7 levels, Y -51 .. 45: " .. table.concat(levels, ","))
-  for _ = qn + 1, #F.queue do table.remove(F.queue) end
-  factory.scoutAllLevels(F)
-  local nj = F.queue[qn + 1]
+  factory.scoutAllLevels(F) -- (area 1 is under way: the next one)
+  local nj = F.queue[qn + 8]
   check(nj and nj.sector == 4 and nj.along == 0, "the next press: the area beside it (sector 4)")
   for _ = qn + 1, #F.queue do table.remove(F.queue) end
-  -- AUTO: one scout job waiting at a time, level after level, then the next area
-  F.scoutAuto = nil
+  -- AUTO: one scout job waiting at a time, level after level, then the next
+  -- area; each taken and reported done (all 4 lanes)
+  F.scoutAuto, F.scouted = nil, nil
   factory.toggleAutoScout(F)
   local seen = {}
   for _ = 1, 9 do
@@ -2371,6 +2371,7 @@ do
     for i, j in ipairs(F.queue) do if j.scout then waiting[#waiting + 1] = i end end
     if #waiting ~= 1 then seen.bad = true end
     local j = table.remove(F.queue, waiting[1])
+    if j then factory.scoutDone(F, j, j.lanes) end
     seen[#seen + 1] = (j and j.y or "?") .. "/" .. (j and j.sector or "?") .. "/" .. (j and j.along or "?")
   end
   check(not seen.bad, "always exactly one scout job waiting")
@@ -2381,7 +2382,32 @@ do
   local any = false
   for _, j in ipairs(F.queue) do if j.scout then any = true end end
   check(not any, "AUTO off: nothing more queued")
-  F.scoutAuto = nil
+  -- a job cut short (2 of its 4 lanes): the next one is for the other 2 only
+  F.scoutAuto, F.scouted = nil, nil
+  F.queue = {}
+  factory.toggleAutoScout(F)
+  factory.tick(F)
+  local first = table.remove(F.queue)
+  factory.scoutDone(F, first, 2)
+  factory.tick(F)
+  local rest = F.queue[#F.queue]
+  check(rest and rest.scout and rest.y == first.y and rest.sector == 2 and rest.lanes == 2,
+    ("lanes 1-2 scouted: the next job is lanes 3-4 only (sector %s, %s lanes)"):format(tostring(rest and rest.sector), tostring(rest and rest.lanes)))
+  -- the coverage map: a row per level, # done, + partly, ~ under way
+  local screen2 = {}
+  local mon2 = { getSize = function() return 57, 40 end, clear = function() end,
+                 setCursorPos = function(_, y) screen2.y = y end, setTextColor = function() end,
+                 setBackgroundColor = function() end,
+                 write = function(t) screen2[screen2.y] = (screen2[screen2.y] or "") .. t end }
+  F.scouted["-35|0"] = { [0] = true, [1] = true, [2] = true, [3] = true }
+  UIlib.draw({ F = F, buttons = {}, stock = {}, tab = "ORES" }, mon2)
+  local t2 = ""
+  for i = 1, 40 do t2 = t2 .. (screen2[i] or "") .. "\n" end
+  if os.getenv("DUMP") then print(t2) end
+  check(t2:find("Y %-35 #") and t2:find("Y %-51 ~") and t2:find("Y  45 %."),
+    "coverage map: Y -35 area 1 done (#), Y -51 under way (~), Y 45 not yet (.)")
+  factory.toggleAutoScout(F)
+  F.queue, F.scoutAuto, F.scouted = {}, nil, nil
   F.cfg.build.y, F.buildSpot = keepBuildY, keepSpot
   F.map = keepMap
   F.oreSummaryCache = nil

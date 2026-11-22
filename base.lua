@@ -208,12 +208,25 @@ local function drawOres(UI, out, w, row, h)
   button(UI, out, 27, row, #sl + 2, sl, false, function() factory.scout(F) end)
   row = row + 1
   -- every level of the next area; or on and on, area after area
-  local st = F.scoutAuto or { on = false, area = 0 }
+  local st = F.scoutAuto or { on = false }
   button(UI, out, 1, row, 13, "SCOUT ALL Y", false, function() factory.scoutAllLevels(F) end)
   button(UI, out, 15, row, 16, "AUTO SCOUT " .. (st.on and "ON" or "OFF"), st.on == true,
     function() factory.toggleAutoScout(F) end)
-  put(out, 33, row, ("next area %d"):format((st.area or 0) + 1), colors.lightGray)
-  row = row + 2
+  row = row + 1
+  -- what is scouted: a row per level, a column per area (# done, + partly,
+  -- ~ under way, . not yet); areas side by side, then further out
+  local cols = math.max(1, math.min(factory.SCOUT_MAX_AREAS, w - 8))
+  local last = math.min(cols, (factory.nextScoutArea(F) or cols) + 6)
+  put(out, 1, row, ("scouted, areas 1..%d (# done + part ~ busy . not yet)"):format(last):sub(1, w), colors.lightGray)
+  row = row + 1
+  for i = #factory.SCOUT_LEVELS, 1, -1 do
+    local y = factory.SCOUT_LEVELS[i]
+    local cells = {}
+    for a = 0, last - 1 do cells[#cells + 1] = factory.scoutCell(F, a, y) end
+    put(out, 1, row, ("Y%4d %s"):format(y, table.concat(cells)):sub(1, w), colors.white)
+    row = row + 1
+  end
+  row = row + 1
   if #list == 0 then
     put(out, 1, row, "Nothing yet: miners report every scan when they come home.", colors.lightGray)
     return row + 2
