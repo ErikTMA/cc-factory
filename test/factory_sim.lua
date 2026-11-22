@@ -2282,6 +2282,17 @@ do
   check(not (T.files["surveyor.state"] or ""):find("done"), "not marked done: it carries on after it gets fuel")
 end
 
+print("scenario: every mining preset is a level a miner can work at (live: emerald at Y 236)")
+do
+  local Cf = baseEnv.require("oreconf")
+  local bad = {}
+  for _, p in ipairs(Cf.PRESETS) do
+    -- above the bedrock floor; below a base (miners only work below home)
+    if p.y < -58 or p.y > 64 then bad[#bad + 1] = p.name .. " Y " .. p.y end
+  end
+  check(#bad == 0, "presets between Y -58 and 64: " .. table.concat(bad, ", "))
+end
+
 print("scenario: ORES tab: every ore the scans found, by kind, most first; MINE queues a job for them")
 do
   local oremap = baseEnv.require("oremap")
