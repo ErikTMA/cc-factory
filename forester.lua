@@ -861,7 +861,9 @@ local function lookForItems()
   local at = ("%.0f look at %d,%d"):format(now(), S.pos.x, S.pos.z)
   local found = link.withTool("environment_detector", function(p)
     for _ = 1, 20 do
-      local list, err = p.scanEntities(8)
+      -- (dropped items only with the entity type asked for: with no filter
+      -- AP 0.8.2a lists living entities only; checked in the jar)
+      local list, err = p.scanEntities(8, "minecraft:item")
       if list then return list end
       if not tostring(err):lower():find("cooldown") then return {} end
       sleep(0.5)
@@ -1370,6 +1372,8 @@ end
 -- lately, then every spot: plant, fell, replant.
 local function round()
   if not fueled() then return end
+  -- what lies on the ground first: it despawns (5 minutes)
+  lookForItems()
   sweep()
   visitAll(AREA.spots, visitSpot, function() return CFG.treeFuel end)
   report()

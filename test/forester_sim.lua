@@ -425,10 +425,15 @@ local function makeEnv(T, api, files, onSleep)
     end end end
     return out
   end }
-  -- scanEntities lists every entity in the box; a dropped item is "minecraft:item"
-  local detector = { scanEntities = function(r)
+  -- like AP 0.8.2a's scanEntities(radius, [detailed], [filter]): with no
+  -- filter only LIVING entities (EnvironmentDetectorPeripheral: isAlive and a
+  -- LivingEntity), so never a dropped item; "minecraft:item" (an entity type
+  -- id; "#..." a tag) lists dropped items
+  local detector = { scanEntities = function(r, a, b)
     T.looks = (T.looks or 0) + 1
+    local filter = type(a) == "string" and a or (type(b) == "string" and b or nil)
     local out = {}
+    if filter ~= "minecraft:item" then return out end
     for _, it in ipairs(T.W.items) do
       if T.W.clock - it.t < 300 and math.abs(it.x - T.x) <= r and math.abs(it.z - T.z) <= r and math.abs(0 - T.y) <= r then
         out[#out + 1] = { name = "minecraft:item", x = it.x - T.x, y = 0.1 - (T.y + 0.5), z = it.z - T.z }

@@ -44,6 +44,12 @@ over rednet. Friends-only server: base-ID pinning, no signing.
   extract, then the REAL insert, then the real extract. A push from an
   inventory into itself can land back in the source stack: useless for
   merging inside one Sophisticated barrel.
+- Environment Detector `scanEntities(radius, [detailed], [filter])` (AP
+  0.8.2a EnvironmentDetectorPeripheral): with no filter it lists LIVING
+  entities only (`isAlive() && instanceof LivingEntity`): never a dropped
+  item. `"minecraft:item"` (an entity type id; `"#ns:tag"` a tag) lists
+  dropped items. x/y/z are world-axis offsets from the turtle's centre
+  (`getCenterPos`); forward/right/up come as extra fields.
 - Shearing leaves: CC 1.120.2 has no shears upgrade (its upgrades: the
   diamond tools, crafting table, modems, speaker) and `turtle.dig()` breaks
   with the equipped tool only; using shears (`turtle.place()` with them
