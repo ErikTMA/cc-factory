@@ -1481,8 +1481,8 @@ local function withoutInStorage(item)
 end
 
 print("scenario: like the real base: the modem behind the computer sits INSIDE a wall (can't be")
-print("          seen); the cable carries on behind the wall to a home: it looks around the hidden")
-print("          cell, finds the cable and follows it")
+print("          seen); the cable carries on behind the wall to a home: it follows the chain from")
+print("          the computer's hidden side (its neighbours), finds the cable, no wandering")
 do
   local ox, oz = 900, 900
   for x = ox - 8, ox + 8 do for z = oz - 16, oz + 6 do W.set(x, -1, z, "minecraft:stone") end end
@@ -1498,6 +1498,8 @@ do
   local ok = runUntil(function() return T.files["surveyor.state"] and T.files["surveyor.state"]:find("done") end, 400000)
   check(ok, "the survey finished")
   check(homeAt("minecraft:chest_92") ~= nil, "found the home behind the wall: " .. tostring((T.files["surveyor.log"] or ""):match("Mapped:[^\n]*")))
+  local st = textutils.unserialize(T.files["surveyor.state"] or "{}") or {}
+  check((st.steps or 0) < 300, "without wandering around: " .. tostring(st.steps) .. " steps")
   check(T.x == ox and T.y == 1 and T.z == oz, "back on the computer")
 end
 

@@ -40,7 +40,8 @@ local CFG = {
                      -- earth that has never been seen)
   unknownCost = 3,   -- an unknown cell counts as this many steps when planning
   maxTries = 3,      -- give up on a side after its way was blocked this often
-  findRadius = 8,    -- no cable or modem seen yet: look this far around the start
+  chainDepth = 3,    -- no cable seen yet: follow a hidden chain this many cells
+                     -- out from the computer's hidden side
   maxSteps = 4000,
   minFuel = 100,     -- refuel from its inventory below this
   askMargin = 150,   -- go ask the base for fuel while this much above the need is left
@@ -452,20 +453,31 @@ local function cableKnown()
   return false
 end
 
--- No cable or modem seen yet (the chain broke right at the start: e.g. the
--- modem behind the base computer sits inside a wall): unknown cells around
--- the start, next to open air, to look at until one turns up.
-local function searchTargets()
-  local want, R = {}, CFG.findRadius
-  for k, name in pairs(MAP) do
-    if name == false then
+-- No cable or modem seen yet: the chain broke right at the start. The base
+-- computer has a wired modem, so one of its sides IS the network; when that
+-- side can't be seen (e.g. the modem sits inside a wall), the chain goes on
+-- from that hidden cell: the next link is one of ITS neighbours. Those are
+-- looked at next; one that can't be seen either is followed the same way, up
+-- to CFG.chainDepth cells out. Never anywhere else.
+local chainDepth = {} -- [hidden cell] = how far out along the hidden chain
+local function hiddenChainTargets()
+  -- the computer's (network blocks') sides it gave up on start the chain
+  for k in pairs(given) do
+    if chainDepth[k] == nil then
+      local x, y, z = unkey(k)
+      if nextToNetwork(x, y, z) then chainDepth[k] = 0 end
+    end
+  end
+  local want = {}
+  for k, d in pairs(chainDepth) do
+    if d < CFG.chainDepth and given[k] then
       local x, y, z = unkey(k)
       for _, n in ipairs(SIX) do
         local nx, ny, nz = x + n[1], y + n[2], z + n[3]
         local nk = key(nx, ny, nz)
-        if MAP[nk] == nil and not given[nk] and math.abs(nx) <= R and math.abs(nz) <= R
-           and math.abs(ny) <= 4 and inBounds(nx, ny, nz) then
+        if MAP[nk] == nil and not given[nk] and inBounds(nx, ny, nz) then
           want[nk] = true
+          if chainDepth[nk] == nil then chainDepth[nk] = d + 1 end
         end
       end
     end
@@ -479,9 +491,11 @@ local function explore()
   while (S.steps or 0) < CFG.maxSteps do
     local targets = unseenSides()
     if next(targets) == nil and not cableKnown() then
-      if not S.searching then log("No cable found from here: looking around for one...") end
-      S.searching = true
-      targets = searchTargets()
+      targets = hiddenChainTargets()
+      if next(targets) ~= nil and not S.searching then
+        log("The computer's network side is hidden: following it from the cells next to it...")
+        S.searching = true
+      end
     end
     if next(targets) == nil then break end
     local moves, target = planToSee(targets)
