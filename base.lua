@@ -206,6 +206,13 @@ local function drawOres(UI, out, w, row, h)
   button(UI, out, 20, row, 5, "+16", false, function() factory.scoutY(F, 16) end)
   local sl = ("SCOUT %dx%d"):format(factory.SCOUT_LENGTH, factory.SCOUT_LANES * 16)
   button(UI, out, 27, row, #sl + 2, sl, false, function() factory.scout(F) end)
+  row = row + 1
+  -- every level of the next area; or on and on, area after area
+  local st = F.scoutAuto or { on = false, area = 0 }
+  button(UI, out, 1, row, 13, "SCOUT ALL Y", false, function() factory.scoutAllLevels(F) end)
+  button(UI, out, 15, row, 16, "AUTO SCOUT " .. (st.on and "ON" or "OFF"), st.on == true,
+    function() factory.toggleAutoScout(F) end)
+  put(out, 33, row, ("next area %d"):format((st.area or 0) + 1), colors.lightGray)
   row = row + 2
   if #list == 0 then
     put(out, 1, row, "Nothing yet: miners report every scan when they come home.", colors.lightGray)

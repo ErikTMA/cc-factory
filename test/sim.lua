@@ -701,6 +701,27 @@ do
   check(st and st.done and st.pos.x == 0 and st.pos.y == 0 and st.pos.z == 0, "done and back home")
 end
 
+print("scenario: a scout area further out (lanes start 48 out): it scans out there, not at home")
+do
+  local W = newWorld(52, 0, { span = 130, ymin = -30, ymax = 6 })
+  local farthest, nearestScan = 0, math.huge
+  local B, fleet, _, _, Base = runFleet(W, { { x = 0, z = 0, h = 0 } }, function(Base, B)
+    table.insert(B.homes, { id = 1, x = 0, y = 0, z = 0, facing = "north", role = "miner", owner = 101 })
+    Base.queueJob(B, { scout = true, y = -20, lanes = 1, length = 32, sector = 0, along = 48 })
+  end, { onTick = function(_, _, fl)
+    local T = fl[1] and fl[1].T
+    if T then farthest = math.max(farthest, -T.z) end -- (north: out along its heading)
+  end })
+  local f = fleet[1]
+  check(not f.err, "ran without error: " .. tostring(f.err))
+  for k in pairs(B.map.scans) do
+    local z = tonumber(k:match(",(-?%d+)$"))
+    if z then nearestScan = math.min(nearestScan, -z) end
+  end
+  check(farthest >= 48 + 32 - 1, "it went out to the far end (48 + 32): " .. farthest)
+  check(nearestScan >= 48, "its scans start 48 out, none nearer home: " .. tostring(nearestScan))
+end
+
 print("scenario: map review: a known ore that is gone isn't counted and leaves the map; a block")
 print("          worth mapping dug in a tunnel leaves it; out of reach it backs off; hand-run keeps no map")
 do

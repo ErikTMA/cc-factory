@@ -2333,7 +2333,7 @@ do
   -- SCOUT: a scan-only job at the chosen level, 16 apart
   local scoutBtn, down
   for _, b in ipairs(UI.buttons) do
-    if b.label:find("^SCOUT") then scoutBtn = b end
+    if b.label:find("^SCOUT %d") then scoutBtn = b end
     if b.label == "-16" then down = b end
   end
   check(scoutBtn and down, "SCOUT and its level buttons are there")
@@ -2343,6 +2343,45 @@ do
   check(sj and sj.scout == true and sj.y == -40 and sj.lanes == 4 and sj.length == 64 and not sj.only,
     "SCOUT queued a scan-only job at Y -40 (4 lanes of 64): " .. tostring(F.note))
   if sj and sj.scout then table.remove(F.queue) end
+  -- SCOUT ALL Y: one area at every level; the next press, the next area
+  F.scoutAuto = nil
+  local qn = #F.queue
+  factory.scoutAllLevels(F)
+  local levels, area0 = {}, true
+  for i = qn + 1, #F.queue do
+    local j = F.queue[i]
+    levels[#levels + 1] = j.y
+    if not (j.scout and j.sector == 0 and j.along == 0 and j.lanes == 4 and j.length == 64) then area0 = false end
+  end
+  check(#levels == 7 and levels[1] == -51 and levels[7] == 45 and area0,
+    "SCOUT ALL Y: area 1 at 7 levels, Y -51 .. 45: " .. table.concat(levels, ","))
+  for _ = qn + 1, #F.queue do table.remove(F.queue) end
+  factory.scoutAllLevels(F)
+  local nj = F.queue[qn + 1]
+  check(nj and nj.sector == 4 and nj.along == 0, "the next press: the area beside it (sector 4)")
+  for _ = qn + 1, #F.queue do table.remove(F.queue) end
+  -- AUTO: one scout job waiting at a time, level after level, then the next area
+  F.scoutAuto = nil
+  factory.toggleAutoScout(F)
+  local seen = {}
+  for _ = 1, 9 do
+    factory.tick(F)
+    factory.tick(F) -- (a second tick adds nothing while one waits)
+    local waiting = {}
+    for i, j in ipairs(F.queue) do if j.scout then waiting[#waiting + 1] = i end end
+    if #waiting ~= 1 then seen.bad = true end
+    local j = table.remove(F.queue, waiting[1])
+    seen[#seen + 1] = (j and j.y or "?") .. "/" .. (j and j.sector or "?") .. "/" .. (j and j.along or "?")
+  end
+  check(not seen.bad, "always exactly one scout job waiting")
+  check(seen[1] == "-51/0/0" and seen[7] == "45/0/0" and seen[8] == "-51/4/0" and seen[9] == "-35/4/0",
+    "AUTO: every level of area 1, then area 2 beside it: " .. table.concat(seen, " "))
+  factory.toggleAutoScout(F)
+  factory.tick(F)
+  local any = false
+  for _, j in ipairs(F.queue) do if j.scout then any = true end end
+  check(not any, "AUTO off: nothing more queued")
+  F.scoutAuto = nil
   F.cfg.build.y, F.buildSpot = keepBuildY, keepSpot
   F.map = keepMap
   F.oreSummaryCache = nil

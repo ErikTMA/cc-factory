@@ -25,7 +25,7 @@ M.QTY = { 8, 16, 32, 64, 128, 256, 0 } -- job sizes on the monitor; 0 = no limit
 local PERSIST = { "turtles", "queue", "nextJobId", "nextSector", "totals", "counted", "toolWants",
                   "orders", "nextOrderId", "homes", "nextHomeId", "buildSpot", "gpsWanted", "anchor", "ruleJobs", "lastFail", "failStreak",
                   "hammer", "tinyFuel", "craft", "nextCraftId", "crafted",
-                  "saplings", "boneMeal", "dismantle" }
+                  "saplings", "boneMeal", "dismantle", "scoutAuto" }
 
 local CRAFT_PAUSE = 60      -- seconds without craft jobs after one failed
 
@@ -259,7 +259,9 @@ local function oreKey(job) return job and (job.only or "all") or "-" end
 
 function M.jobText(job)
   if not job then return "-" end
-  if job.scout then return ("scout %dx%d @Y%s"):format(job.lanes or 0, job.length or 0, tostring(job.y)) end
+  if job.scout then
+    return ("scout %s@Y%s"):format(job.area and ("area " .. (job.area + 1) .. " ") or "", tostring(job.y))
+  end
   return ("%s%s @Y%s"):format(job.quantity and (job.quantity .. "x ") or "",
     job.only or "all ores", tostring(job.y))
 end
@@ -267,10 +269,13 @@ end
 -- ------------------------------------------------------------------ jobs --
 -- Queue a mining job. Each job gets its own lanes (sector) at its Y level.
 function M.queueJob(F, job)
-  local sector = F.nextSector[job.y] or 0
   local lanes = job.lanes or F.cfg.job.lanes
-  if sector + lanes > (F.cfg.job.maxLanes or 24) then sector = 0 end
-  F.nextSector[job.y] = sector + lanes
+  local sector = job.sector -- (a scout area's own: given)
+  if not sector then
+    sector = F.nextSector[job.y] or 0
+    if sector + lanes > (F.cfg.job.maxLanes or 24) then sector = 0 end
+    F.nextSector[job.y] = sector + lanes
+  end
   job.id, job.sector = F.nextJobId, sector
   job.lanes, job.length = lanes, job.length or F.cfg.job.length
   F.nextJobId = F.nextJobId + 1
@@ -343,6 +348,49 @@ M.SCOUT_LANES, M.SCOUT_LENGTH = 4, 64
 function M.scoutY(F, d)
   F.sel.scoutY = math.max(-56, math.min(48, (F.sel.scoutY or -24) + d))
 end
+-- Every level, every area: SCOUT ALL Y and AUTO SCOUT. Levels every 16
+-- (a scan reaches 8 up and down: Y -59 .. 53 without gaps, above bedrock).
+-- Areas: SCOUT_LANES lanes wide, side by side up to maxLanes (6 of 64 x 64
+-- across), then the next band SCOUT_LENGTH further out along the lanes.
+-- F.scoutAuto = { on, area, level }: where it got to (kept).
+M.SCOUT_LEVELS = { -51, -35, -19, -3, 13, 29, 45 }
+local function scoutArea(F, area)
+  local across = math.max(1, math.floor((F.cfg.job.maxLanes or 24) / M.SCOUT_LANES))
+  return (area % across) * M.SCOUT_LANES, math.floor(area / across) * M.SCOUT_LENGTH
+end
+local function scoutJob(F, area, y)
+  local sector, along = scoutArea(F, area)
+  return M.queueJob(F, { scout = true, y = y, lanes = M.SCOUT_LANES, length = M.SCOUT_LENGTH,
+                         sector = sector, along = along, area = area })
+end
+local function scoutState(F)
+  F.scoutAuto = F.scoutAuto or { on = false, area = 0, level = 1 }
+  return F.scoutAuto
+end
+-- SCOUT ALL Y: the next area at every level
+function M.scoutAllLevels(F)
+  local st = scoutState(F)
+  if st.level > 1 then st.area, st.level = st.area + 1, 1 end -- (an area started by AUTO: the next one)
+  for _, y in ipairs(M.SCOUT_LEVELS) do scoutJob(F, st.area, y) end
+  F.note = ("Queued scouting area %d at %d levels (%d in queue)"):format(st.area + 1, #M.SCOUT_LEVELS, #F.queue)
+  st.area = st.area + 1
+end
+function M.toggleAutoScout(F)
+  local st = scoutState(F)
+  st.on = not st.on
+  F.note = "Auto scouting: " .. (st.on and ("ON (from area " .. (st.area + 1) .. ")") or "OFF")
+end
+-- (from the tick) AUTO SCOUT: one scout job waiting at a time; mining jobs
+-- queued meanwhile go after it
+local function autoScout(F)
+  local st = F.scoutAuto
+  if not (st and st.on) then return end
+  for _, j in ipairs(F.queue) do if j.scout then return end end
+  scoutJob(F, st.area, M.SCOUT_LEVELS[st.level])
+  st.level = st.level + 1
+  if st.level > #M.SCOUT_LEVELS then st.area, st.level = st.area + 1, 1 end
+end
+
 function M.scout(F)
   local y = F.sel.scoutY or -24
   local job = M.queueJob(F, { scout = true, y = y, lanes = M.SCOUT_LANES, length = M.SCOUT_LENGTH })
@@ -1465,6 +1513,7 @@ local DISMANTLE_TIMEOUT = 3600 -- seconds before giving up on a turtle to take a
 function M.tick(F)
   freshStorage(F)
   local S = F.deps.storage
+  autoScout(F)
   if F.dismantle and now(F) - (F.dismantle.since or 0) > DISMANTLE_TIMEOUT then
     F.note = ("Gave up taking %s apart (it didn't come)"):format(label(F, F.dismantle.id))
     F.dismantle = nil

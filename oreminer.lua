@@ -728,7 +728,8 @@ end
 -- same level never overlap.
 local function laneTarget(lane, progress)
   local f, r = DIRS[S.homeHeading], DIRS[(S.homeHeading + 1) % 4]
-  local along = (lane % 2 == 0) and progress or (S.length - progress)
+  -- (`along`: where its lanes start, out from home: scout areas further out)
+  local along = (S.along or 0) + ((lane % 2 == 0) and progress or (S.length - progress))
   local side = (lane + (S.sector or 0)) * CFG.spacing
   return { x = f[1] * along + r[1] * side, y = S.dy, z = f[3] * along + r[3] * side }
 end
@@ -788,7 +789,7 @@ local function newJob(job, home, known)
         lane = 0, progress = 0, lanes = job.lanes or CFG.lanes, length = job.length or CFG.length,
         dy = job.y and math.max(math.min(job.y - home.y, -CFG.minDepth), CFG.floorY - home.y) or 0,
         only = job.only, quantity = job.quantity,
-        sector = job.sector or 0, mined = 0, job = job, scout = job.scout or nil }
+        sector = job.sector or 0, along = job.along or 0, mined = 0, job = job, scout = job.scout or nil }
   save()
   if job.y and job.y < CFG.floorY then
     log(("Y %d is below the world's floor: mining at Y %d instead"):format(job.y, home.y + S.dy))
