@@ -234,10 +234,11 @@ function L.claimChest()
   if not slot then return false end -- nothing to drop yet: next time
   local r1 = L.talk("mark1", {}, false)
   if not (r1 and r1.type == "ok") then return false end
+  local marker = turtle.getItemDetail(slot).name
   turtle.select(slot)
   turtle.drop(1)
   turtle.select(1)
-  local r2 = L.talk("mark2", {}, false)
+  local r2 = L.talk("mark2", { marker = marker }, false)
   if r2 and r2.type == "marked" and r2.chest then
     cfg = L.config()
     cfg.chest = r2.chest

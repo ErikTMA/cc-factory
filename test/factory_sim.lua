@@ -1637,9 +1637,21 @@ do
   local chest = newInv("minecraft:chest_95", 800, 0, 800)
   local other = newInv("minecraft:chest_96", 810, 0, 800)
   -- a forester claims chest_95 with the marker trick
+  -- another turtle unloads into its own chest during the claim: no guessing
+  local busy = newInv("minecraft:chest_94", 790, 0, 800)
+  local r0 = factory.handle(F, 95, { type = "status", state = "mark1", role = "forester", label = "f-95" })
+  chest.insert("minecraft:cobblestone", 1)
+  busy.insert("minecraft:cobblestone", 1)
+  local rx = factory.handle(F, 95, { type = "status", state = "mark2", role = "forester", label = "f-95",
+                                     marker = "minecraft:cobblestone" })
+  check(rx.type == "nomark" and F.turtles[95].chest == nil, "two chests gained a cobblestone: no guess, try again")
+  busy.take(busy.firstSlot())
+  -- a miner unloads ore into its chest during the claim: only the marker counts
   local r1 = factory.handle(F, 95, { type = "status", state = "mark1", role = "forester", label = "f-95" })
   chest.insert("minecraft:cobblestone", 1)
-  local r2 = factory.handle(F, 95, { type = "status", state = "mark2", role = "forester", label = "f-95" })
+  busy.insert("minecraft:raw_iron", 12)
+  local r2 = factory.handle(F, 95, { type = "status", state = "mark2", role = "forester", label = "f-95",
+                                     marker = "minecraft:cobblestone" })
   check(r1.type == "ok" and r2.type == "marked" and r2.chest == "minecraft:chest_95" and F.turtles[95].chest == "minecraft:chest_95",
     "claimed: " .. tostring(r2.chest))
   factory.handle(F, 95, { type = "status", state = "resting", role = "forester", label = "f-95" }) -- (keeps it)

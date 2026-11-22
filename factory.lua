@@ -874,17 +874,27 @@ function M.marking(F) return F.mark and now(F) < F.mark.untilTime end
 local function markStart(F, from)
   F.mark = { from = from, untilTime = now(F) + MARK_TIMEOUT, snap = inputCounts(F) }
 end
-local function markFind(F, from)
+-- `marker`: the item it dropped. Only the chest that gained exactly one of
+-- it counts; when another turtle unloads at the same moment (or two chests
+-- match) it doesn't guess: nil, and the turtle tries again later.
+local function markFind(F, from, marker)
   local mark = F.mark
   F.mark = nil
   if not mark or mark.from ~= from then return nil end
-  local found
+  local found, n = nil, 0
   for name, c in pairs(inputCounts(F)) do
     local before = mark.snap[name] or {}
-    for item, n in pairs(c) do
-      if n > (before[item] or 0) then found = name end
+    local gained = {}
+    for item, k in pairs(c) do
+      if k > (before[item] or 0) then gained[item] = k - (before[item] or 0) end
+    end
+    if marker then
+      if gained[marker] == 1 then found, n = name, n + 1 end
+    elseif next(gained) then
+      found, n = name, n + 1
     end
   end
+  if n ~= 1 then return nil end
   return found
 end
 
@@ -893,7 +903,7 @@ local function handleSurveyor(F, from, msg)
     markStart(F, from)
     return { type = "ok" }
   elseif msg.state == "mark2" then
-    local found = markFind(F, from)
+    local found = markFind(F, from, msg.marker)
     if not found or not msg.home then
       F.note = "Survey: marker not found in any home chest"
       return { type = "nomark" }
@@ -965,7 +975,7 @@ function M.handle(F, from, msg)
     if msg.state == "mark1" then
       markStart(F, from)
     else
-      local found = markFind(F, from)
+      local found = markFind(F, from, msg.marker)
       if found then
         t.chest = found
         F.note = ("%s's home chest: %s"):format(label(F, from), found)

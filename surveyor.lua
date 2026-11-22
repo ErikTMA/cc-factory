@@ -614,9 +614,10 @@ local function registerHomes()
         else
           local r1 = link.talk("mark1", { home = home }, false)
           if r1 and r1.type == "ok" then
+            local marker = turtle.getItemDetail(slot).name
             turtle.select(slot)
             turtle.drop(1)
-            local r2 = link.talk("mark2", { home = home }, false)
+            local r2 = link.talk("mark2", { home = home, marker = marker }, false)
             if r2 and r2.type == "marked" then
               S.homes[id] = r2.chest or true
               save()
