@@ -587,7 +587,7 @@ local function turtleApi(T)
 end
 
 local function scannerFor(T)
-  return { scan = function(r)
+  return { scanBlocks = function(r) -- (AP 0.8.2a; no `scan`)
     local out = {}
     for x = -r, r do for y = -r, r do for z = -r, r do
       local b = W.get(T.x + x, T.y + y, T.z + z)

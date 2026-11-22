@@ -17,8 +17,9 @@ local cfg = link.config()
 -- Every error a program shows (shell prints them with printError) also goes
 -- to crash.log, with the time: readable on the server when nobody watches the
 -- turtle's screen.
-local printErrorOrig = printError
-printError = function(...)
+-- (_G: a program's own globals are its own environment; shell uses _G's)
+local printErrorOrig = _G.printError
+_G.printError = function(...)
   local args = { n = select("#", ...), ... }
   pcall(function()
     local parts = {}

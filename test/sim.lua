@@ -170,7 +170,8 @@ local function newTurtle(W, startHeading, fuel, start)
   function api.equipRight() return equip("right") end
   local scanner = {}
   local lastScan = -1
-  function scanner.scan(r)
+  -- AP 0.8.2a: scanBlocks(radius); there is no `scan` (seen live)
+  function scanner.scanBlocks(r)
     local out = {}
     for x = -r, r do for y = -r, r do for z = -r, r do
       local b = W.get(T.x + x, T.y + y, T.z + z)

@@ -13,12 +13,16 @@ N.NAMES = { [0] = "north", "east", "south", "west" }
 local INDEX = { north = 0, east = 1, south = 2, west = 3 }
 function N.index(name) return INDEX[tostring(name):lower()] end
 
--- Geo Scanner scan, waiting out the cooldown.
+-- Geo Scanner scan, waiting out the cooldown. AP 0.8.2a calls it
+-- scanBlocks(radius) (checked in the jar, and live: it has no `scan`);
+-- older APs: scan(radius).
 function N.scan(radius)
   while true do
     local scanner = link.scanner()
     if not scanner then error("No Geo Scanner equipped", 0) end
-    local blocks, err = scanner.scan(radius)
+    local fn = scanner.scanBlocks or scanner.scan
+    if not fn then error("This Geo Scanner has no scanBlocks/scan method", 0) end
+    local blocks, err = fn(radius)
     if blocks then return blocks end
     if tostring(err):lower():find("cooldown") then
       sleep(0.5)
