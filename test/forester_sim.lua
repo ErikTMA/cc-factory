@@ -441,6 +441,7 @@ local function fakeBase(W, T, stock, plant)
         if item:find("sapling") and (not B.plant or B.plant[item]) then send(item, req.saplings or 0) end
       end
       send("minecraft:dirt", req.dirt or 0)
+      send("minecraft:charcoal", req.fuel or 0)
       return { type = "supplied", sent = {}, short = {}, plant = B.plantList() }
     end
     if msg.state == "resting" then return { type = "ok", plant = B.plantList() } end
@@ -926,6 +927,50 @@ do
   check(#A == 4 and onA == 4, ("the %d acacia spots planted: %d"):format(#A, onA))
   check(stray == 0, "no old sapling left: " .. stray)
   check(W.count(LOG) == 0, "every old tree felled: " .. W.count(LOG))
+end
+
+print("scenario: low on fuel at home: it asks for enough fuel through its chest (no modem on the")
+print("          wired network needed), takes it and burns it; never the old push request")
+do
+  local W = newWorld()
+  local T, api = newTurtle(W, 3000)
+  T.inv[1] = { name = SAP, count = 64 }
+  T.inv[4] = { name = "computercraft:wireless_modem_normal", count = 1 }
+  fakeBase(W, T, { ["minecraft:charcoal"] = 64 })
+  local fuelAfter
+  local ok, err = run(makeEnv(T, api, {}, function() fuelAfter = T.fuel; error("END OF TEST") end), "10")
+  check(tostring(err):find("END OF TEST") ~= nil, "one round (" .. tostring(err) .. ")")
+  local asked, pushed = nil, false
+  for _, m in ipairs(T.sent or {}) do
+    if m.state == "supply" then asked = m.supply.fuel end
+    if m.wantFuel then pushed = true end
+  end
+  check(not pushed, "no wired-network fuel request (the one that needs its modem on)")
+  check(asked and asked >= 16, "asked for fuel at its chest: " .. tostring(asked))
+  check(fuelAfter and fuelAfter >= 600, "and has it: fuel " .. tostring(fuelAfter))
+end
+
+print("scenario: the base has no fuel (the live forester-4): nearly empty at home it asks at its")
+print("          chest, says the base had none, and waits; no wired-network request, no modem message")
+do
+  local W = newWorld()
+  local T, api = newTurtle(W, 3000)
+  T.inv[1] = { name = SAP, count = 64 }
+  T.inv[4] = { name = "computercraft:wireless_modem_normal", count = 1 }
+  fakeBase(W, T, {}) -- no fuel at the base
+  local n = 0
+  local function sl()
+    n = n + 1
+    if n == 1 then T.fuel = 40; return end
+    if n < 3 then return end
+    error("END OF TEST")
+  end
+  local ok, err = run(makeEnv(T, api, {}, sl), "10")
+  check(tostring(err):find("END OF TEST") ~= nil, "it waits at home, no error (" .. tostring(err) .. ")")
+  local pushed = false
+  for _, m in ipairs(T.sent or {}) do if m.wantFuel then pushed = true end end
+  check(not pushed, "never the wired-network fuel request")
+  check(T.x == 0 and T.z == 0, "at home")
 end
 
 print("scenario: starts without saplings, asks the base and takes them from its home chest")

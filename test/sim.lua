@@ -453,7 +453,7 @@ local function runFleet(W, homes, setup, opts)
     if i > 1 then W.addHome(h.x, h.z, h.h) end
     local T, api, sc = newTurtle(W, h.h, 0, { x = h.x, y = 0, z = h.z })
     T.label = "T" .. i
-    T.inv[1] = { name = "minecraft:coal", count = 64 }
+    T.inv[1] = { name = "minecraft:coal", count = opts.coal or 64 }
     T.inv[2] = { name = "computercraft:wireless_modem_normal", count = 1 }
     for j = 3, 2 + (opts.filler or 0) do T.inv[j] = { name = "filler:" .. j, count = 64 } end
     local files = {}
@@ -529,6 +529,38 @@ do
   for i = 1, 40 do text = text .. (screen[i] or "") .. "\n" end
   check(text:find("iron%s+64 mined") ~= nil, "monitor shows iron total")
   check(text:find("T1") and text:find("T2") and text:find("T3"), "monitor lists all three turtles")
+end
+
+print("scenario: a job above its home (coal's old Y 96 from a base at 77): it mines below home")
+print("          instead (16 down at least), never up through the base")
+do
+  local W = newWorld(5, 1, { span = 60, ymin = -40, ymax = 12 })
+  local T, api, sc = newTurtle(W, 1, 0)
+  T.inv[1] = { name = "minecraft:coal", count = 64 }
+  local files = {}
+  local highest, lowest = 0, 0
+  local realUp, realDown = api.up, api.down
+  api.up = function() local ok = realUp(); highest = math.max(highest, T.y); return ok end
+  api.down = function() local ok = realDown(); lowest = math.min(lowest, T.y); return ok end
+  local ok, err = runProgram(makeEnv(T, api, sc, files), "y=8", "at=0", "lanes=1", "length=16")
+  check(ok, "ran (" .. tostring(err) .. ")")
+  check(highest <= 0, "never above home: highest Y " .. highest)
+  check(lowest <= -16, "mined 16 below home or deeper: lowest Y " .. lowest)
+end
+
+print("scenario: little fuel at home: the miner asks for fuel at its chest, never the wired-network")
+print("          push (that one needs its modem on, and says so)")
+do
+  local W = newWorld(9, 0, { span = 40, ymin = -12, ymax = 6 })
+  local B, fleet, _, _, Base, bus = runFleet(W, { { x = 0, z = 0, h = 0 } }, function(Base, B) end,
+    { coal = 5, onTick = function(Base, B, fleet, tick) if tick > 200 then fleet[1].stopNow = true end end })
+  local asked, pushed = false, false
+  for _, e in ipairs(bus.log) do
+    if e.msg.state == "supply" and e.msg.supply and (e.msg.supply.fuel or 0) > 0 then asked = true end
+    if e.msg.wantFuel then pushed = true end
+  end
+  check(asked, "asked for fuel at its chest")
+  check(not pushed, "no wired-network fuel push")
 end
 
 print("scenario: STOP a working turtle from the base")

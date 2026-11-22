@@ -36,6 +36,7 @@ local CFG = {
   length = 64,         -- lane length in blocks
   fuelMargin = 100,    -- head home when fuel < distance home + this
   askFuelBelow = 1000, -- at home, ask the base for fuel below this
+  minDepth = 16,       -- a job's level is at least this far below home (never up through the base)
   stateFile = "oreminer.state",
   homeFile = "oreminer.home",
   -- ores whose name matches any of these are left alone
@@ -225,14 +226,34 @@ end
 -- Burn fuel items up to FUEL_TARGET, one at a time, so mined coal mostly
 -- reaches the chest (coal jobs!) instead of all going into the tank.
 local FUEL_TARGET = 4000
-local function refuel()
+local function refuel(target)
+  target = target or FUEL_TARGET
   if turtle.getFuelLevel() == "unlimited" then return end
   for i = 1, 16 do
     turtle.select(i)
-    while turtle.getFuelLevel() < FUEL_TARGET and turtle.getItemCount(i) > 0 and turtle.refuel(1) do end
-    if turtle.getFuelLevel() >= FUEL_TARGET then break end
+    while turtle.getFuelLevel() < target and turtle.getItemCount(i) > 0 and turtle.refuel(1) do end
+    if turtle.getFuelLevel() >= target then break end
   end
   turtle.select(1)
+end
+
+-- At home: fuel for `level` through the home chest (the base sends it there;
+-- no modem on the wired network needed), burnt. It finds the chest by
+-- turning, and turns back.
+local function fuelUp(level)
+  local f = turtle.getFuelLevel()
+  if f == "unlimited" or f >= level then return end
+  local turns = 0
+  while turns < 4 do
+    local ok, b = turtle.inspect()
+    if ok and b.name:find("chest") then break end
+    turtle.turnRight(); turns = turns + 1
+  end
+  if turns < 4 then
+    link.supply({ fuel = math.ceil((level - f) / 80) })
+    refuel(level)
+  end
+  for _ = 1, (4 - turns) % 4 do turtle.turnRight() end
 end
 
 local function needHome()
@@ -426,9 +447,12 @@ end
 local function newJob(job, home)
   S = { pos = { x = 0, y = 0, z = 0 }, heading = home.heading, homeHeading = home.heading,
         lane = 0, progress = 0, lanes = job.lanes or CFG.lanes, length = job.length or CFG.length,
-        dy = job.y and (job.y - home.y) or 0, only = job.only, quantity = job.quantity,
+        dy = job.y and math.min(job.y - home.y, -CFG.minDepth) or 0, only = job.only, quantity = job.quantity,
         sector = job.sector or 0, mined = 0, job = job }
   save()
+  if job.y and job.y - home.y > -CFG.minDepth then
+    log(("Y %d is not below home (Y %d): mining at Y %d instead"):format(job.y, home.y, home.y + S.dy))
+  end
   log(("Job: %s%s at %s, %d lane(s) of %d."):format(
     job.quantity and (job.quantity .. " ") or "", job.only and (job.only .. " ore") or "all ores",
     job.y and ("Y " .. job.y) or "this level", S.lanes, S.length))
@@ -506,12 +530,11 @@ elseif args[1] == "serve" then
   local lastAsk
   while true do
     refuel() -- burn any fuel someone put in
-    -- low on fuel at home: ask the base (at most once a minute)
+    -- low on fuel at home: ask the base at the chest (at most once a minute)
     local f = turtle.getFuelLevel()
     if f ~= "unlimited" and f < CFG.askFuelBelow and (not lastAsk or os.clock() - lastAsk > 60) then
       lastAsk = os.clock()
-      local got, why = link.requestFuel(FUEL_TARGET - f)
-      log(got and ("The base gave me %d fuel"):format(got) or ("No fuel from the base: " .. tostring(why)))
+      fuelUp(FUEL_TARGET)
     end
     local reply = talk("idle")
     if type(reply) == "table" and reply.type == "job" then
@@ -519,9 +542,7 @@ elseif args[1] == "serve" then
       -- rough fuel for the job: shaft both ways plus the furthest lane and back
       local reach = ((j.sector or 0) + (j.lanes or CFG.lanes)) * CFG.spacing + (j.length or CFG.length)
       local needFuel = 2 * (math.abs((j.y or home.y) - home.y) + reach) + CFG.fuelMargin
-      if turtle.getFuelLevel() ~= "unlimited" and turtle.getFuelLevel() < needFuel then
-        link.requestFuel(needFuel - turtle.getFuelLevel() + CFG.fuelMargin)
-      end
+      fuelUp(needFuel + CFG.fuelMargin)
       if turtle.getFuelLevel() ~= "unlimited" and turtle.getFuelLevel() < needFuel then
         log(("Need about %d fuel for that job, have %d: handing it back"):format(needFuel, turtle.getFuelLevel()))
         link.talk("no fuel", { job = j, need = needFuel }, false)

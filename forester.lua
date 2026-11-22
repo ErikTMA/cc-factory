@@ -681,8 +681,9 @@ local function explore()
 end
 
 -- ------------------------------------------------------------- the round --
--- Drop what it doesn't keep into the chest in front; returns the logs dropped.
-local function dropHaul()
+-- Drop what it doesn't keep into the chest in front (fuel: up to `keepFuel`
+-- items, else CFG.keepFuel); returns the logs dropped.
+local function dropHaul(keepFuel)
   -- keep: saplings it may plant (CFG.keepSaplings of each), bone meal in
   -- slot 2, fuel, a few logs, dirt; the rest goes into the chest
   local kept, delivered = {}, 0
@@ -698,7 +699,7 @@ local function dropHaul()
     if d and not (link.isKeptItem(d.name) or d.name == DIRT or (i == BONEMEAL_SLOT and d.name == "minecraft:bone_meal")) then
       if isSaplingItem(d.name) and allowed(d.name) then keepUpTo(i, d, CFG.keepSaplings)
       elseif isLog(d) then delivered = delivered + keepUpTo(i, d, CFG.keepLogs, "logs")
-      elseif C.isFuel(d.name) then keepUpTo(i, d, CFG.keepFuel, "fuel")
+      elseif C.isFuel(d.name) then keepUpTo(i, d, keepFuel or CFG.keepFuel, "fuel")
       else select(i); turtle.drop() end
     end
   end
@@ -707,8 +708,9 @@ end
 
 -- At home, facing the chest: unload the haul FIRST (room to take supplies;
 -- the base empties the chest before it sends), ask the base for what we want
--- to carry, take it all, and put back what we don't keep.
-local function unload()
+-- to carry (fuel: enough for `fuelNeed`, at least the usual), take it all,
+-- and put back what we don't keep. All through the chest: no modem needed.
+local function unload(fuelNeed)
   turnTo((S.homeHeading + 2) % 4) -- chest is behind the home spot
   local ok, b = turtle.inspect()
   if not (ok and b.name:find("chest")) then
@@ -718,28 +720,26 @@ local function unload()
   local delivered = dropHaul()
   local dirt = 0
   if AREA and AREA.cells then for _ in pairs(cellsNeedingDirt()) do dirt = dirt + 1 end end
-  local r = link.supply({ fuel = CFG.supply.fuel, saplings = CFG.supply.saplings,
+  local fuelItems = CFG.supply.fuel
+  local level = turtle.getFuelLevel()
+  if fuelNeed and level ~= "unlimited" and fuelNeed > level then
+    fuelItems = math.max(fuelItems, math.ceil((fuelNeed - level) / 80)) -- (a coal or charcoal: 80)
+  end
+  local r = link.supply({ fuel = fuelItems, saplings = CFG.supply.saplings,
                           bonemeal = CFG.supply.bonemeal, dirt = dirt })
   if r and r.plant ~= nil then setAllowed(r.plant) end
   restock()
-  dropHaul() -- (what it took but doesn't keep)
+  dropHaul(math.max(CFG.keepFuel, fuelItems)) -- (what it took but doesn't keep; the fuel it asked for stays)
   select(WORK_SLOT)
   turnTo(S.homeHeading)
   return delivered
 end
 
--- Measuring ran low on fuel: home, take the mailbox (the base keeps fuel in
--- the chest), drop the clutter, burn what it has, and ask the base for more.
--- At home: take the mailbox (the base keeps fuel in the chest), drop the
--- clutter, burn what it has, ask the base for more. True when it has `need`.
+-- At home: unload, ask the base for fuel enough for `need` (through the
+-- chest), burn it. True when it has `need`.
 local function fillUp(need)
-  unload()
+  unload(math.max(need, CFG.fuelTarget))
   refuel()
-  local f = turtle.getFuelLevel()
-  if f ~= "unlimited" and f < need then
-    local got, why = link.requestFuel(math.max(need, CFG.fuelTarget) - f)
-    log(got and ("The base gave me %d fuel"):format(got) or ("No fuel from the base: " .. tostring(why)))
-  end
   return turtle.getFuelLevel() == "unlimited" or turtle.getFuelLevel() >= need
 end
 
@@ -929,15 +929,10 @@ end
 local function report()
   goHome()
   refuel()
-  local delivered = unload()
+  local delivered = unload(CFG.fuelTarget)
   S.delivered = (S.delivered or 0) + delivered
   save()
   refuel()
-  local f = turtle.getFuelLevel()
-  if f ~= "unlimited" and f < CFG.fuelLow then
-    local got, why = link.requestFuel(CFG.fuelTarget - f)
-    log(got and ("The base gave me %d fuel"):format(got) or ("Low on fuel, none from the base: " .. tostring(why)))
-  end
   local r = link.talk("resting", { delivered = delivered, total = S.delivered })
   if type(r) == "table" and r.plant ~= nil then setAllowed(r.plant) end
 end

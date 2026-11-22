@@ -10,7 +10,7 @@ local C = {
     { name = "diamond", y = -58 }, { name = "redstone", y = -58 },
     { name = "lapis", y = 0 },     { name = "gold", y = -16 },
     { name = "iron", y = 16 },     { name = "copper", y = 48 },
-    { name = "coal", y = 96 },     { name = "emerald", y = 236 },
+    { name = "coal", y = 48 },     { name = "emerald", y = 236 },
   },
 
   -- The turtle keeps a wireless modem in its inventory and swaps it with the
