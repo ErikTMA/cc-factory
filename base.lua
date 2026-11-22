@@ -557,14 +557,17 @@ local function playerPos(user)
   end
 end
 
+-- AP 0.8.2a: sendMessage(text, { prefix, brackets, bracketsColor, range,
+-- player }) (checked in the jar; seen live: a prefix string as 2nd argument
+-- -> "map expected"); older APs: sendMessageToPlayer(text, user, prefix).
 local function say(user, text)
   if not chatBox or not text then return end
-  local ok, r1, r2 = false, nil, nil
-  if chatBox.sendMessageToPlayer then ok, r1, r2 = pcall(chatBox.sendMessageToPlayer, text, user, "cc-factory") end
-  logChat("reply to", user, "sendMessageToPlayer", ok, r1, r2)
-  if not ok or r1 == false or r1 == nil then
-    local ok2, s1, s2 = pcall(chatBox.sendMessage, text, "cc-factory")
-    logChat("reply", "sendMessage", ok2, s1, s2)
+  local ok, err = pcall(chatBox.sendMessage, text, { prefix = "cc-factory", player = user })
+  logChat("reply to", user, "sendMessage{player}", ok, err)
+  if ok then return end
+  if chatBox.sendMessageToPlayer then
+    ok, err = pcall(chatBox.sendMessageToPlayer, text, user, "cc-factory")
+    logChat("reply to", user, "sendMessageToPlayer", ok, err)
   end
 end
 

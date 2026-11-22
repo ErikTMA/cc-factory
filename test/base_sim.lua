@@ -185,8 +185,12 @@ check(files["factory.cfg"] ~= nil, "wrote factory.cfg with defaults on first sta
 print("scenario: a Chat Box connected while it runs is picked up (no restart): $help gets an answer")
 do
   local said = {}
-  local chat = { sendMessageToPlayer = function(text, user) said[#said + 1] = { text, user } return true end,
-                 sendMessage = function(text) said[#said + 1] = { text } return true end }
+  -- as strict as AP 0.8.2a: only sendMessage(text, options table)
+  local chat = { sendMessage = function(text, opts)
+    if type(opts) ~= "table" then error("bad argument #2 (map expected, got " .. type(opts) .. ")") end
+    said[#said + 1] = { text, opts.player }
+    return true
+  end }
   local attached = false
   local oldFind = periph.find
   periph.find = function(t) if attached and t == "chat_box" then return chat end return oldFind(t) end
