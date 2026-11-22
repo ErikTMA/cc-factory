@@ -54,8 +54,9 @@ M.DEFAULT_CONFIG = {
   forester = { sapling = "minecraft:oak_sapling", trees = 6, wait = 300 },
   -- what the base keeps in each home chest (the mailbox) for its turtle:
   -- fuel items for every turtle; per selected sapling kind and bone meal
-  -- (GATHERING > FORESTRY on the monitor) for a forester
-  mailbox = { fuel = 16, saplings = 16, bonemeal = 32 },
+  -- (GATHERING > FORESTRY on the monitor) and the dirt it is short of (at
+  -- most `dirt`) for a forester
+  mailbox = { fuel = 16, saplings = 16, bonemeal = 32, dirt = 64 },
   -- furnaces, crafting turtle parts, ore doubling (see production.lua)
   production = production.DEFAULTS,
   -- lanes per job; sectors reuse lanes from 0 after maxLanes (bounds how far
@@ -581,6 +582,8 @@ function M.suppliesFor(F, chest, stock)
     end
     for _, k in ipairs(kinds) do want[k] = mb.saplings end
     if F.boneMeal then want["minecraft:bone_meal"] = mb.bonemeal end
+    -- the dirt it is short of for its pen's floor (a stack at a time)
+    if (t.needDirt or 0) > 0 then want["minecraft:dirt"] = math.min(t.needDirt, mb.dirt or 64) end
   end
   return want
 end
@@ -935,7 +938,8 @@ function M.handle(F, from, msg)
                       job = msg.job, seen = now(F), version = msg.version,
                       delivered = msg.total or prev.delivered,
                       inv = msg.inv or prev.inv, -- (the assembler's slots)
-                      chest = msg.chest or prev.chest } -- its home chest (mailbox)
+                      chest = msg.chest or prev.chest, -- its home chest (mailbox)
+                      needDirt = msg.needDirt or prev.needDirt } -- (a forester: dirt it is short of)
   local t = F.turtles[from]
   local reply = { type = "ok" }
 

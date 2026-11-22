@@ -107,8 +107,10 @@ then says the block is connected. A modem that isn't lit does nothing.
   with dirt under its 4 side cells, which the forester lays); 5 for acacia,
   cherry and mangrove (their branches reach sideways); 4 for other modded
   saplings. Mixed kinds share the widest spacing; dark oak (needs 2x2) isn't
-  planted. It keeps its dirt (never unloads it); tree spots it had no
-  dirt for are fixed in a later round once you give it more. Other solid blocks
+  planted. It keeps its dirt (never unloads it). Holes and tree spots it had
+  no dirt for are filled in later rounds: each round it tells the base how
+  much dirt it is short of, and the base keeps that much (a stack at a time)
+  in its home chest from storage. Other solid blocks
   inside the pen count as walls. Run `forester rescan` after changing the
   fence.
 - **The home chest is a mailbox.** Once the forester has unloaded there, the

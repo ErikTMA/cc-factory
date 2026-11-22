@@ -1675,6 +1675,18 @@ do
   factory.serviceChests(F)
   check(has(chest, "minecraft:spruce_sapling") == 16 and has(chest, "minecraft:oak_sapling") == 0,
     "auto: spruce (most in storage), the others back to storage")
+  -- the forester is short of dirt: the base keeps that much in its mailbox (capped)
+  check(W.inv["minecraft:barrel_1"].insert("minecraft:dirt", 200) == 200, "200 dirt in storage")
+  factory.handle(F, 95, { type = "status", state = "resting", role = "forester", label = "f-95", needDirt = 20 })
+  factory.handle(F, 95, { type = "status", state = "idle", role = "forester", label = "f-95" }) -- (no needDirt: kept)
+  factory.serviceChests(F)
+  check(has(chest, "minecraft:dirt") == 20, "short of 20 dirt: 20 dirt in its mailbox: " .. has(chest, "minecraft:dirt"))
+  factory.handle(F, 95, { type = "status", state = "resting", role = "forester", label = "f-95", needDirt = 500 })
+  factory.serviceChests(F)
+  check(has(chest, "minecraft:dirt") == 64, "short of 500: a stack at a time: " .. has(chest, "minecraft:dirt"))
+  factory.handle(F, 95, { type = "status", state = "resting", role = "forester", label = "f-95", needDirt = 0 })
+  factory.serviceChests(F)
+  check(has(chest, "minecraft:dirt") == 0, "its floor is done: the dirt goes back to storage")
   -- a miner's chest gets fuel only
   local mc = newInv("minecraft:chest_97", 820, 0, 800)
   F.turtles[97] = { id = 97, role = "miner", chest = "minecraft:chest_97", seen = W.clock }

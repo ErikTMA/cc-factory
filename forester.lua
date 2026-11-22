@@ -356,6 +356,38 @@ local function fixGround(treeSpot)
   return DIRT
 end
 
+-- a floor cell measured as a hole (no dirt for it then): air, or a fluid
+local function isHole(name) return name == nil or name == "air" or isFluid(name) end
+
+local function dirtCount()
+  local n = 0
+  for i = 1, 16 do
+    local d = turtle.getItemDetail(i)
+    if d and d.name == DIRT then n = n + d.count end
+  end
+  return n
+end
+
+-- Cells that still need dirt: holes in the path, tree spots without soil and,
+-- for kinds like menril, the side cells of a spot. { key = true }
+local function cellsNeedingDirt(soilAround)
+  local need = {}
+  for k, g in pairs(AREA.cells) do
+    if not isSpot[k] and isHole(g) then need[k] = true end
+  end
+  for _, sk in ipairs(AREA.spots) do
+    if not isSoil(AREA.cells[sk]) then need[sk] = true end
+    if soilAround then
+      local sx, sz = unkey(sk)
+      for h = 0, 3 do
+        local nk = key(sx + DIRS[h][1], sz + DIRS[h][3])
+        if AREA.cells[nk] and not isSpot[nk] and not isSoil(AREA.cells[nk]) then need[nk] = true end
+      end
+    end
+  end
+  return need
+end
+
 
 -- Move anything that is not bone meal out of slot 2, into a free loot slot.
 local function clearReservedSlots()
@@ -646,6 +678,48 @@ end
 
 local function dist(a, x, z) return math.abs(a.x - x) + math.abs(a.z - z) end
 
+-- A hole in the path (measured without dirt): stand over it and fill it.
+local function fillHole(k)
+  local x, z = unkey(k)
+  if isHole(AREA.cells[k]) and dirtSlot() and walkTo({ x = x, z = z }) then
+    AREA.cells[k] = fixGround(false) or AREA.cells[k]
+    saveArea()
+  end
+end
+
+-- A tree spot: lay soil (and under its side cells for menril) if it has
+-- dirt, then tend it from the nearest path cell next to it.
+local function visitSpot(sk, soilAround)
+  local sx, sz = unkey(sk)
+  if not isSoil(AREA.cells[sk]) and dirtSlot() and walkTo({ x = sx, z = sz }) then
+    AREA.cells[sk] = fixGround(true) or AREA.cells[sk]
+    saveArea()
+  end
+  if soilAround and isSoil(AREA.cells[sk]) then
+    for h = 0, 3 do
+      local nk = key(sx + DIRS[h][1], sz + DIRS[h][3])
+      local nx, nz = unkey(nk)
+      if AREA.cells[nk] and not isSoil(AREA.cells[nk]) and dirtSlot() and walkTo({ x = nx, z = nz }) then
+        AREA.cells[nk] = fixGround(true) or AREA.cells[nk]
+        saveArea()
+      end
+    end
+  end
+  local best, bestLen
+  for h = 0, 3 do
+    local ax, az = sx - DIRS[h][1], sz - DIRS[h][3]
+    local ak = key(ax, az)
+    if AREA.cells[ak] and not isSpot[ak] then
+      local p = path(S.pos, { x = ax, z = az })
+      if p and (not bestLen or #p < bestLen) then best, bestLen = { x = ax, z = az, h = h }, #p end
+    end
+  end
+  if best and isSoil(AREA.cells[sk]) and walkTo(best) then
+    turnTo(best.h)
+    tend()
+  end
+end
+
 local function round()
   select(WORK_SLOT)
   refuel()
@@ -661,9 +735,18 @@ local function round()
     placeSpots()
     log(("Tree spots now %d apart: %d spots"):format(spacing, #AREA.spots))
   end
-  -- visit the spots nearest first
+  -- visit the spots nearest first, and the holes in the path while it has
+  -- dirt for them
   local todo = {}
   for _, k in ipairs(AREA.spots) do todo[#todo + 1] = k end
+  if dirtSlot() then
+    local holes = {}
+    for k, g in pairs(AREA.cells) do
+      if not isSpot[k] and isHole(g) then holes[#holes + 1] = k end
+    end
+    table.sort(holes)
+    for _, k in ipairs(holes) do todo[#todo + 1] = k end
+  end
   while #todo > 0 do
     local bi, bd = 1, math.huge
     for i, k in ipairs(todo) do
@@ -676,7 +759,7 @@ local function round()
     local sx0, sz0 = unkey(sk)
     local there = path(S.pos, { x = sx0, z = sz0 }) or {}
     local back = path({ x = sx0, z = sz0 }, { x = 0, z = 0 }) or there
-    local need = #there + #back + CFG.treeFuel
+    local need = #there + #back + (isSpot[sk] and CFG.treeFuel or 1)
     if turtle.getFuelLevel() ~= "unlimited" and turtle.getFuelLevel() < need then
       refuel()
       if turtle.getFuelLevel() < need then
@@ -684,37 +767,7 @@ local function round()
         break
       end
     end
-    local sx, sz = unkey(sk)
-    -- a spot without soil: stand on it and lay dirt, if we have some now
-    if not isSoil(AREA.cells[sk]) and dirtSlot() and walkTo({ x = sx, z = sz }) then
-      AREA.cells[sk] = fixGround(true) or AREA.cells[sk]
-      saveArea()
-    end
-    -- menril: the ground under the spot's 4 side cells must be soil too
-    if soilAround and isSoil(AREA.cells[sk]) then
-      for h = 0, 3 do
-        local nk = key(sx + DIRS[h][1], sz + DIRS[h][3])
-        local nx, nz = unkey(nk)
-        if AREA.cells[nk] and not isSoil(AREA.cells[nk]) and dirtSlot() and walkTo({ x = nx, z = nz }) then
-          AREA.cells[nk] = fixGround(true) or AREA.cells[nk]
-          saveArea()
-        end
-      end
-    end
-    -- the nearest path cell next to the spot we can reach
-    local best, bestLen
-    for h = 0, 3 do
-      local ax, az = sx - DIRS[h][1], sz - DIRS[h][3]
-      local ak = key(ax, az)
-      if AREA.cells[ak] and not isSpot[ak] then
-        local p = path(S.pos, { x = ax, z = az })
-        if p and (not bestLen or #p < bestLen) then best, bestLen = { x = ax, z = az, h = h }, #p end
-      end
-    end
-    if best and isSoil(AREA.cells[sk]) and walkTo(best) then
-      turnTo(best.h)
-      tend()
-    end
+    if isSpot[sk] then visitSpot(sk, soilAround) else fillHole(sk) end
   end
   goHome()
   refuel()
@@ -722,16 +775,18 @@ local function round()
   S.delivered = (S.delivered or 0) + delivered
   save()
   -- tell the base (if it can); code updates apply here
-  local noSoil = 0
-  for _, k in ipairs(AREA.spots) do if not isSoil(AREA.cells[k]) then noSoil = noSoil + 1 end end
-  if noSoil > 0 then log(("%d tree spots need dirt: put some dirt in me"):format(noSoil)) end
+  -- the dirt it is short of: the base keeps that much in the mailbox
+  local cells = 0
+  for _ in pairs(cellsNeedingDirt(soilAround)) do cells = cells + 1 end
+  local needDirt = math.max(0, cells - dirtCount())
+  if needDirt > 0 then log(("%d cells of the pen need dirt, %d more than I carry"):format(cells, needDirt)) end
   refuel()
   local f = turtle.getFuelLevel()
   if f ~= "unlimited" and f < CFG.fuelLow then
     local got, why = link.requestFuel(CFG.fuelTarget - f)
     log(got and ("The base gave me %d fuel"):format(got) or ("Low on fuel, none from the base: " .. tostring(why)))
   end
-  local r = link.talk("resting", { delivered = delivered, total = S.delivered, needDirt = noSoil })
+  local r = link.talk("resting", { delivered = delivered, total = S.delivered, needDirt = needDirt })
   -- the kinds selected on the monitor (false: any)
   if type(r) == "table" and r.plant ~= nil then
     local set
