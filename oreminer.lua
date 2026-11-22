@@ -35,6 +35,8 @@ local CFG = {
   lanes = 3,           -- parallel lanes, each `spacing` to the right of the last
   length = 64,         -- lane length in blocks
   fuelMargin = 100,    -- head home when fuel < distance home + this
+  travelSteps = 2000,  -- replans one trip may take going around what it can't dig
+  orePatience = 6,     -- ... and one ore (under a bedrock layer: not worth more)
   askFuelBelow = 1000, -- at home, ask the base for fuel below this
   minDepth = 16,       -- a job's level is at least this far below home (never up through the base)
   mapEvery = 3,        -- out on a job: send the base its scans every this many (wireless modem)
@@ -271,44 +273,149 @@ local function step(kind)
   return false
 end
 
--- Walk to target, digging a path: vertical first when going up, last when going
--- down, so the turtle mostly travels through already-open tunnels.
-local function goDirect(t)
+-- The shortest way from `from` to `to` through cells not known to be
+-- blocked (everything else is assumed diggable), inside the box around both
+-- plus `margin`: a list of { kind, h } moves, or nil if there is none. A*
+-- with a binary heap; ties go up first when going up, down last when going
+-- down (so it mostly travels through open tunnels).
+local function plan(from, to, blocked, margin)
+  local lo = { x = math.min(from.x, to.x) - margin, y = math.min(from.y, to.y) - margin, z = math.min(from.z, to.z) - margin }
+  local hi = { x = math.max(from.x, to.x) + margin, y = math.max(from.y, to.y) + margin, z = math.max(from.z, to.z) + margin }
+  local MOVES = { { "up", nil, 0, 1, 0 }, { "fwd", 0, 0, 0, -1 }, { "fwd", 1, 1, 0, 0 },
+                  { "fwd", 2, 0, 0, 1 }, { "fwd", 3, -1, 0, 0 }, { "down", nil, 0, -1, 0 } }
+  local function h(p) return math.abs(p.x - to.x) + math.abs(p.y - to.y) + math.abs(p.z - to.z) end
+  local heap, size = {}, 0
+  local function push(n)
+    size = size + 1; heap[size] = n
+    local i = size
+    while i > 1 do
+      local pa = math.floor(i / 2)
+      if heap[pa].f <= n.f then break end
+      heap[i], heap[pa] = heap[pa], n; i = pa
+    end
+  end
+  local function pop()
+    local top = heap[1]
+    heap[1] = heap[size]; heap[size] = nil; size = size - 1
+    local i = 1
+    while true do
+      local l, r, m = 2 * i, 2 * i + 1, i
+      if l <= size and heap[l].f < heap[m].f then m = l end
+      if r <= size and heap[r].f < heap[m].f then m = r end
+      if m == i then break end
+      heap[i], heap[m] = heap[m], heap[i]; i = m
+    end
+    return top
+  end
+  local startK = key(from.x, from.y, from.z)
+  local best, prev = { [startK] = 0 }, {}
+  push({ x = from.x, y = from.y, z = from.z, g = 0, f = h(from), k = startK })
+  local goal = key(to.x, to.y, to.z)
+  local expanded = 0
+  while size > 0 do
+    local n = pop()
+    if n.k == goal then
+      local moves, k = {}, goal
+      while prev[k] do table.insert(moves, 1, prev[k].move); k = prev[k].from end
+      return moves
+    end
+    expanded = expanded + 1
+    if expanded > 60000 then return nil end
+    if n.g == best[n.k] then
+      for i, m in ipairs(MOVES) do
+        local p = { x = n.x + m[3], y = n.y + m[4], z = n.z + m[5] }
+        if p.x >= lo.x and p.x <= hi.x and p.y >= lo.y and p.y <= hi.y and p.z >= lo.z and p.z <= hi.z then
+          local k = key(p.x, p.y, p.z)
+          if not blocked[k] then
+            local g = n.g + 1
+            if not best[k] or g < best[k] then
+              best[k], prev[k] = g, { from = n.k, move = { kind = m[1], h = m[2] } }
+              -- (tie-break: up first when going up, down last when going down)
+              local tie = (m[1] == "up" and to.y > n.y) and 0 or (m[1] == "down" and 0.002 or 0.001)
+              p.g, p.f, p.k = g, g + h(p) + tie, k
+              push(p)
+            end
+          end
+        end
+      end
+    end
+  end
+end
+
+-- Around what it can't dig (bedrock, a chest, another turtle): it plans the
+-- shortest way assuming every unknown block can be dug, follows it, and when
+-- a step fails it remembers that cell and plans again from where it is. Each
+-- failure rules out a cell for good, so it either gets there or finds it is
+-- sealed in (or runs out of CFG.travelSteps).
+local function goAround(t, blocked, patience)
+  blocked = blocked or {}
+  local margin = 8
+  for _ = 1, patience or CFG.travelSteps do
+    if S.pos.x == t.x and S.pos.y == t.y and S.pos.z == t.z then return true end
+    local moves = plan(S.pos, t, blocked, margin)
+    if not moves then
+      if margin >= 32 then return false end
+      margin = margin * 2 -- a wider detour
+    else
+      for _, m in ipairs(moves) do
+        if m.h then turnTo(m.h) end
+        local d = m.kind == "fwd" and DIRS[S.heading] or { 0, m.kind == "up" and 1 or -1, 0 }
+        local nk = key(S.pos.x + d[1], S.pos.y + d[2], S.pos.z + d[3])
+        if not step(m.kind) then blocked[nk] = true; break end
+      end
+    end
+  end
+  return S.pos.x == t.x and S.pos.y == t.y and S.pos.z == t.z
+end
+
+-- Walk to target, digging a path: vertical first when going up, last when
+-- going down, so the turtle mostly travels through already-open tunnels.
+-- Blocked by something it can't dig: it goes around (goAround), trying
+-- `patience` times (an ore: a few; the way home: CFG.travelSteps).
+local function goDirect(t, patience)
+  local blockedAt
+  local function stepTo(kind)
+    local d = kind == "fwd" and DIRS[S.heading] or { 0, kind == "up" and 1 or -1, 0 }
+    local nk = key(S.pos.x + d[1], S.pos.y + d[2], S.pos.z + d[3])
+    if step(kind) then return true end
+    blockedAt = nk
+    return false
+  end
   local function vertical()
-    while S.pos.y < t.y do if not step("up") then return false end end
-    while S.pos.y > t.y do if not step("down") then return false end end
+    while S.pos.y < t.y do if not stepTo("up") then return false end end
+    while S.pos.y > t.y do if not stepTo("down") then return false end end
     return true
   end
   local function horizontal(axis, plus, minus)
     while S.pos[axis] ~= t[axis] do
       turnTo(S.pos[axis] < t[axis] and plus or minus)
-      if not step("fwd") then return false end
+      if not stepTo("fwd") then return false end
     end
     return true
   end
-  if t.y > S.pos.y and not vertical() then return false end
-  if not horizontal("x", 1, 3) then return false end
-  if not horizontal("z", 2, 0) then return false end
-  return vertical()
+  local ok = (t.y <= S.pos.y or vertical()) and horizontal("x", 1, 3) and horizontal("z", 2, 0) and vertical()
+  if ok then return true end
+  log(("Blocked at %s on the way to %s: going around"):format(tostring(blockedAt), key(t.x, t.y, t.z)))
+  return goAround(t, { [blockedAt or ""] = true }, patience)
 end
 
 -- Every trip that leaves or reaches the home level, or changes level a lot,
 -- goes through the shaft at x=0,z=0: one hole at home instead of digging up
 -- through the surface (and the base) wherever the turtle happens to be.
 local SHAFT_SWITCH = 12 -- vertical distance that counts as changing level underground
-local function goTo(t)
+local function goTo(t, patience)
   -- (mining at the home level itself, dy = 0, has no shaft: it works in its
   -- own tunnels around home)
   local viaShaft = S.dy ~= 0 and t.y ~= S.pos.y
                    and (t.y == HOME.y or S.pos.y == HOME.y or math.abs(t.y - S.pos.y) > SHAFT_SWITCH)
-  if not viaShaft then return goDirect(t) end
+  if not viaShaft then return goDirect(t, patience) end
   -- to the shaft at the job's level at least: below it (digging an ore a
   -- few blocks down) may be bedrock, which can't be dug through
   local level = math.max(S.pos.y, math.min(S.dy, 0))
-  return goDirect({ x = S.pos.x, y = level, z = S.pos.z })
-     and goDirect({ x = 0, y = level, z = 0 })
-     and goDirect({ x = 0, y = t.y, z = 0 })
-     and goDirect(t)
+  return goDirect({ x = S.pos.x, y = level, z = S.pos.z }, patience)
+     and goDirect({ x = 0, y = level, z = 0 }, patience)
+     and goDirect({ x = 0, y = t.y, z = 0 }, patience)
+     and goDirect(t, patience)
 end
 
 -- -------------------------------------------------------------- inventory --
@@ -499,7 +606,7 @@ local function mineList(ores)
     if why then serviceTrip(why) end
     if finished() then break end
     LASTDUG = nil
-    if goTo(o) then
+    if goTo(o, CFG.orePatience) then
       local dug = LASTDUG and LASTDUG.key == key(o.x, o.y, o.z) and LASTDUG.info
       if dug and isOre(dug) then
         mined = mined + 1

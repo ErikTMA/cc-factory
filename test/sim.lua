@@ -765,6 +765,21 @@ do
   check(fleet[1].T.x == 0 and fleet[1].T.y == 0 and fleet[1].T.z == 0, ("home (%d,%d,%d)"):format(fleet[1].T.x, fleet[1].T.y, fleet[1].T.z))
 end
 
+print("scenario: a bedrock wall between the lane and the shaft, one hole 10 blocks off: it mines its way")
+print("          around to the hole and home, it doesn't give up")
+do
+  local W = newWorld(65, 0, { span = 70, ymin = -40, ymax = 6 })
+  -- a bedrock wall across the lane at z -30, floor to ceiling, one hole 10 off
+  for x = -15, 15 do for y = -35, -5 do W.set(x, y, -30, "minecraft:bedrock") end end
+  W.set(10, -22, -30, "minecraft:stone")
+  -- the job under the slab; nothing else but the slab in the way
+  local B, fleet = runFleet(W, { { x = 0, z = 0, h = 0 } }, function(Base, B)
+    Base.queueJob(B, { only = "diamond", y = -22, quantity = 999, lanes = 1, length = 64 })
+  end)
+  check(not fleet[1].err, "no 'Cannot reach home': " .. tostring(fleet[1].err))
+  check(fleet[1].T.x == 0 and fleet[1].T.y == 0 and fleet[1].T.z == 0, ("home (%d,%d,%d)"):format(fleet[1].T.x, fleet[1].T.y, fleet[1].T.z))
+end
+
 print("scenario: modded stone (darkstone) with no tags in the scan stays out of the map; real")
 print("          ores and odd blocks go in; a raw scan entry is kept as scan.sample")
 do
