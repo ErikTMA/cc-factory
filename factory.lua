@@ -636,21 +636,35 @@ function M.supply(F, from, req, have)
   if F.boneMeal and (req.bonemeal or 0) > 0 then want("bonemeal", "minecraft:bone_meal", req.bonemeal) end
   if (req.dirt or 0) > 0 then want("dirt", "minecraft:dirt", req.dirt) end
   -- tools for its toolbelt: one each it lacks; none in storage: the base
-  -- crafts one if it can (M.toolsToCraft), the next ask takes it
-  for _, item in ipairs(req.tools or {}) do
-    if C.TOOLS[item] and (have[item] or 0) == 0 and give(item, 1) == 0 then
+  -- crafts one if it can (M.toolsToCraft), the next ask takes it. A
+  -- forester set to shear gets the shears and the Weak Automata Core too.
+  local tools = {}
+  for _, item in ipairs(req.tools or {}) do tools[#tools + 1] = item end
+  local t = F.turtles[from]
+  if t and t.role == "forester" and t.shear then
+    tools[#tools + 1] = C.SHEARS_ITEM
+    tools[#tools + 1] = C.AUTOMATA_ITEM
+  end
+  local asked = {}
+  for _, item in ipairs(tools) do
+    if not asked[item] and C.TOOLS[item] and (have[item] or 0) == 0 and give(item, 1) == 0 then
       short[item] = 1
-      F.toolWants = F.toolWants or {}
-      F.toolWants[item] = true
+      -- the base crafts the ones it has a recipe for (the core: storage only)
+      if recipes.CRAFT[item] then
+        F.toolWants = F.toolWants or {}
+        F.toolWants[item] = true
+      end
     end
+    asked[item] = true
   end
   if next(sent) then
     F.held = F.held or {}
     F.held[chest] = { untilTime = now(F) + HOLD, by = from }
   end
   local reply = { type = "supplied", chest = chest, sent = sent, short = short }
-  if F.turtles[from] and F.turtles[from].role == "forester" then
+  if t and t.role == "forester" then
     reply.plant = (F.saplings and #F.saplings > 0) and F.saplings or false
+    reply.shear = t.shear == true
   end
   return reply
 end
@@ -722,6 +736,16 @@ local function defragStep(F)
   F.note = ("Defrag: %d -> %d slots..."):format(d.from, after)
 end
 M.defragStep = defragStep
+
+-- TURTLES tab: the selected forester shears its trees' leaves before
+-- felling them (the leaves as blocks), or not.
+function M.toggleShear(F)
+  local t = F.selected and F.turtles[F.selected]
+  if not (t and t.role == "forester") then F.note = "Select a forester to shear with"; return end
+  t.shear = not t.shear
+  F.note = ("%s shears leaves: %s%s"):format(label(F, F.selected), t.shear and "ON" or "OFF",
+    t.shear and " (it gets shears and a Weak Automata Core at home; the core comes from storage)" or "")
+end
 
 function M.toggleHammer(F)
   F.hammer = not F.hammer

@@ -2241,6 +2241,42 @@ do
   check(not (T.files["surveyor.state"] or ""):find("done"), "not marked done: it carries on after it gets fuel")
 end
 
+print("scenario: SHEAR for one forester: its supply brings shears and a Weak Automata Core and says so;")
+print("          off again: nothing sent, it is told to stop")
+do
+  local id = 77
+  newInv("minecraft:chest_77")
+  F.turtles[id] = { role = "forester", label = "forester-77", chest = "minecraft:chest_77", state = "idle" }
+  local B = W.inv["minecraft:barrel_1"]
+  B.insert("minecraft:shears", 1); B.insert("advancedperipherals:weak_automata_core", 1)
+  F.selected = id
+  factory.toggleShear(F)
+  check(F.turtles[id].shear == true, "SHEAR on for forester-77: " .. tostring(F.note))
+  F.deps.storage.forget()
+  local r = factory.supply(F, id, { fuel = 0 }, {})
+  local chest = W.inv[r.chest] -- (its home's chest, if it has a home)
+  check(r.shear == true and chest.count("minecraft:shears") == 1 and chest.count("advancedperipherals:weak_automata_core") == 1,
+    "the shears and the core went to its chest, and it is told to shear")
+  -- it has them now: not sent again
+  F.held = nil
+  F.deps.storage.forget()
+  local r2 = factory.supply(F, id, { fuel = 0 }, { ["minecraft:shears"] = 1, ["advancedperipherals:weak_automata_core"] = 1 })
+  check(not (r2.sent or {})["minecraft:shears"], "not sent again while it has them")
+  -- the core isn't craftable: never on the base's craft list
+  check(not (F.toolWants or {})["advancedperipherals:weak_automata_core"], "the core is not queued for crafting")
+  factory.toggleShear(F)
+  F.held = nil
+  F.deps.storage.forget()
+  local r3 = factory.supply(F, id, { fuel = 0 }, {})
+  check(r3.shear == false and not (r3.sent or {})["minecraft:shears"], "SHEAR off: told to stop, nothing sent")
+  -- another role can't be set to shear
+  F.turtles[78] = { role = "miner", label = "miner-78" }
+  F.selected = 78
+  factory.toggleShear(F)
+  check(not F.turtles[78].shear, "a miner can't be set to shear")
+  F.selected, F.turtles[id], F.turtles[78] = nil, nil, nil
+end
+
 print("scenario: DEFRAG packs storage: copper takes the upgraded barrel's slots, the redstone moves out;")
 print("          drawers, a double chest and pearls as the mods do them; nothing lost")
 do

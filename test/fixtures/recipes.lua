@@ -451,6 +451,20 @@ return {
    },
    ["type"] = "minecraft:crafting_shaped"
   },
+  ["minecraft:shears"] = {
+   ["category"] = "equipment",
+   ["key"] = {
+    ["#"] = {
+     ["item"] = "minecraft:iron_ingot"
+    }
+   },
+   ["pattern"] = { " #", "# " },
+   ["result"] = {
+    ["count"] = 1,
+    ["id"] = "minecraft:shears"
+   },
+   ["type"] = "minecraft:crafting_shaped"
+  },
   ["minecraft:stick"] = {
    ["category"] = "misc",
    ["group"] = "sticks",

@@ -320,6 +320,7 @@ local function newTurtle(W, fuel)
   function api.getFuelLevel() return T.fuel end
   function api.getFuelLimit() return 20000 end
   function api.select(i) T.sel = i; return true end
+  function api.getSelectedSlot() return T.sel end
   function api.getItemCount(i) return T.inv[i] and T.inv[i].count or 0 end
   function api.getItemDetail(i) local s = T.inv[i]; return s and { name = s.name, count = s.count } or nil end
   function api.transferTo(to)
@@ -365,7 +366,39 @@ local function makeEnv(T, api, files, onSleep)
   local compass = { getFacing = function() return ({ [0] = "north", "east", "south", "west" })[T.h] end }
   local PTYPE = { ["minecraft:compass"] = "compass", ["computercraft:wireless_modem_normal"] = "modem",
                   ["advancedperipherals:geo_scanner"] = "geo_scanner",
-                  ["advancedperipherals:environment_detector"] = "environment_detector" }
+                  ["advancedperipherals:environment_detector"] = "environment_detector",
+                  ["advancedperipherals:weak_automata_core"] = "weak_automata" }
+  -- like AP 0.8.2a's Weak Automata Core: digBlock({ pitch }) breaks the block
+  -- ahead (pitch -90 above, 90 below) as a player holding the item in the
+  -- turtle's SELECTED slot; 1 fuel, then 1 s cooldown. Leaves broken with
+  -- shears drop themselves (the shears wear: 238 uses); with anything else
+  -- they drop nothing here. The drop falls to the floor.
+  local core = { digBlock = function(args)
+    args = args or {}
+    if T.lastCoreDig and T.W.clock - T.lastCoreDig < 1 then return nil, "Operation is on cooldown" end
+    local d = DIRS[T.h]
+    local x, y, z = T.x + d[1], T.y, T.z + d[2]
+    if args.pitch == -90 then x, y, z = T.x, T.y + 1, T.z elseif args.pitch == 90 then x, y, z = T.x, T.y - 1, T.z end
+    local b = T.W.get(x, y, z)
+    if not b then return false, "Nothing to break" end
+    if T.fuel < 1 then return nil, "Not enough fuel" end
+    T.fuel = T.fuel - 1
+    T.lastCoreDig = T.W.clock
+    T.W.set(x, y, z, nil)
+    local held = T.inv[T.sel]
+    if b:find("_leaves$") then
+      if held and held.name == "minecraft:shears" then
+        T.W.drop(x, z, b, 1)
+        T.sheared = (T.sheared or 0) + 1
+        held.uses = (held.uses or 0) + 1
+        if held.uses >= 238 then T.inv[T.sel] = nil end
+      end
+    else
+      T.W.drop(x, z, b, 1)
+      if b:find("_log$") then T.coreLogs = (T.coreLogs or 0) + 1 end
+    end
+    return true
+  end }
   -- like AP 0.8.2a: scanBlocks lists every block but air in the cube, tags as a list
   local scanner = { scanBlocks = function(r)
     T.scans = (T.scans or 0) + 1
@@ -403,6 +436,7 @@ local function makeEnv(T, api, files, onSleep)
       if t == "compass" then return compass end
       if t == "geo_scanner" then return scanner end
       if t == "environment_detector" then return detector end
+      if t == "weak_automata" then return core end
       if t then return {} end
     end,
   }
@@ -478,7 +512,12 @@ local function fakeBase(W, T, stock, plant)
       end
       send("minecraft:dirt", req.dirt or 0)
       send("minecraft:charcoal", req.fuel or 0)
-      return { type = "supplied", sent = {}, short = {}, plant = B.plantList() }
+      for _, item in ipairs(req.tools or {}) do send(item, 1) end
+      -- (like factory.supply: a forester set to shear gets them unasked)
+      if B.shear then
+        send("minecraft:shears", 1); send("advancedperipherals:weak_automata_core", 1)
+      end
+      return { type = "supplied", sent = {}, short = {}, plant = B.plantList(), shear = B.shear }
     end
     if msg.state == "resting" then return { type = "ok", plant = B.plantList() } end
   end
@@ -1044,6 +1083,78 @@ do
   local kept = false
   for i = 1, 16 do if T.inv[i] and T.inv[i].name == "advancedperipherals:geo_scanner" then kept = true end end
   check(T.right == "minecraft:compass" and kept, "compass back in its slot, scanner in its toolbelt")
+end
+
+print("scenario: SHEAR on: it shears every leaf of the tree with the Weak Automata Core and shears")
+print("          BEFORE it cuts a log; leaf blocks, not saplings; the core and compass go back")
+do
+  local W = newWorld()
+  local T, api = newTurtle(W, 8000)
+  T.inv[1] = { name = SAP, count = 64 }
+  T.inv[6] = { name = "advancedperipherals:geo_scanner", count = 1 }
+  -- the base sends the shears and the core with its first supply, and says SHEAR
+  local B = fakeBase(W, T, { ["minecraft:shears"] = 1, ["advancedperipherals:weak_automata_core"] = 1,
+                             ["minecraft:charcoal"] = 64 })
+  B.shear = true
+  T.inv[7] = { name = "computercraft:wireless_modem_normal", count = 1 } -- (to talk at home)
+  local n, grown, leavesAtFell = 0, 0, {}
+  local function sl(secs)
+    if (tonumber(secs) or 0) < 5 then return end -- (a cooldown, not the wait between rounds)
+    n = n + 1
+    if n == 1 then
+      for key, v in pairs(W.b) do
+        if isSap(v) then
+          local x, y, z = key:match("^(-?%d+),(-?%d+),(-?%d+)$")
+          W.growAt(tonumber(x), tonumber(y), tonumber(z))
+        end
+      end
+      grown = W.count("minecraft:oak_leaves")
+      return
+    end
+    error("END OF TEST")
+  end
+  -- every log cut: how many leaves still touch it (none, if it sheared first;
+  -- the next tree's canopy never touches this tree's logs)
+  local origDig = api.dig
+  local function watch(fn, dx, dy)
+    return function()
+      local d = DIRS[T.h]
+      local x, y, z = T.x + (dx and d[1] or 0), T.y + (dy or 0), T.z + (dx and d[2] or 0)
+      local b = W.get(x, y, z)
+      if b and b:find("_log$") and y > 1 then
+        local near = 0
+        for _, a in ipairs({ { 1, 0, 0 }, { -1, 0, 0 }, { 0, 1, 0 }, { 0, -1, 0 }, { 0, 0, 1 }, { 0, 0, -1 } }) do
+          local o = W.get(x + a[1], y + a[2], z + a[3])
+          if o and o:find("_leaves$") then near = near + 1 end
+        end
+        leavesAtFell[#leavesAtFell + 1] = near
+      end
+      return fn()
+    end
+  end
+  api.dig = watch(origDig, true, 0)
+  api.digUp = watch(api.digUp, false, 1)
+  api.digDown = watch(api.digDown, false, -1)
+  local ok, err = run(makeEnv(T, api, {}, sl), "10")
+  check(tostring(err):find("END OF TEST") ~= nil, "two rounds (" .. tostring(err) .. ")")
+  check(grown > 20 and (T.sheared or 0) >= grown * 0.8,
+    ("it sheared the leaves: %d of %d"):format(T.sheared or 0, grown))
+  check(W.count(LOG) == 0, "every log felled after: " .. W.count(LOG) .. " left")
+  local worst = 0
+  for _, v in ipairs(leavesAtFell) do worst = math.max(worst, v) end
+  check(#leavesAtFell > 0 and worst == 0,
+    ("no log is cut while a leaf still touches it (most touching a cut: %d, of %d cuts)"):format(worst, #leavesAtFell))
+  local core, shears = false, false
+  for i = 1, 16 do
+    local it = T.inv[i]
+    if it and it.name == "advancedperipherals:weak_automata_core" then core = true end
+    if it and it.name == "minecraft:shears" then shears = true end
+  end
+  check(core and shears and T.right == "minecraft:compass", "the core and shears in its toolbelt, the compass on")
+  local leafItems = W.ground("minecraft:oak_leaves")
+  for i = 1, 27 do if W.slots[i] and W.slots[i].name == "minecraft:oak_leaves" then leafItems = leafItems + W.slots[i].count end end
+  for i = 1, 16 do if T.inv[i] and T.inv[i].name == "minecraft:oak_leaves" then leafItems = leafItems + T.inv[i].count end end
+  check(leafItems > 0, "leaf blocks to keep (on the ground, carried or in the chest): " .. leafItems)
 end
 
 print("scenario: with an Environment Detector it finds every item lying in the pen after each tree")

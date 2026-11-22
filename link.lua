@@ -27,7 +27,7 @@ local CFG_FILE, VERSION_FILE = "agent.cfg", "version"
 -- are swapped in for a moment (the wireless modem to talk, the Environment
 -- Detector to look for items) and the home tool goes back.
 local HOME_ITEMS = { [C.SCANNER_ITEM] = true, ["minecraft:compass"] = true }
-local VISITING_ITEMS = { [C.DETECTOR_ITEM] = true }
+local VISITING_ITEMS = { [C.DETECTOR_ITEM] = true, [C.AUTOMATA_ITEM] = true }
 for name in pairs(C.MODEM_ITEMS) do VISITING_ITEMS[name] = true end
 -- (kept, never unloaded: every tool but the modems, kept as MODEM_ITEMS)
 local SWAPPABLE = { [C.SCANNER_ITEM] = true, ["minecraft:compass"] = true, [C.DETECTOR_ITEM] = true }
@@ -35,10 +35,11 @@ local SWAPPABLE = { [C.SCANNER_ITEM] = true, ["minecraft:compass"] = true, [C.DE
 local SCANNER_TYPES = { "geo_scanner", "geoScanner" }
 -- what may be in the swap slot (everything but the pickaxe side)
 local SWAPPABLE_TYPE = { geo_scanner = true, geoScanner = true, compass = true,
-                         environment_detector = true, modem = true }
+                         environment_detector = true, modem = true, weak_automata = true }
 -- a tool's item, by the peripheral type it gives
 local TOOL_ITEM = { geo_scanner = { [C.SCANNER_ITEM] = true }, compass = { ["minecraft:compass"] = true },
-                    environment_detector = { [C.DETECTOR_ITEM] = true }, modem = C.MODEM_ITEMS }
+                    environment_detector = { [C.DETECTOR_ITEM] = true }, modem = C.MODEM_ITEMS,
+                    weak_automata = { [C.AUTOMATA_ITEM] = true } }
 
 local EQUIP = { left = turtle.equipLeft, right = turtle.equipRight }
 
@@ -118,7 +119,7 @@ function L.restoreUpgrade()
   local side
   for _, s in ipairs({ "left", "right" }) do
     local t = peripheral.getType(s)
-    if t == "modem" or t == "environment_detector" then side = s end
+    if t == "modem" or t == "environment_detector" or t == "weak_automata" then side = s end
   end
   local slot = L.findItem(function(n) return HOME_ITEMS[n] end)
   if side and slot then

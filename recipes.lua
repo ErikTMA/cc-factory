@@ -47,6 +47,7 @@ R.CRAFT = {
     [1] = "minecraft:diamond", [2] = "computercraft:wired_modem_full", [3] = "minecraft:diamond",
     [5] = "minecraft:diamond", [6] = "advancedperipherals:peripheral_casing", [7] = "minecraft:diamond",
     [9] = "minecraft:redstone_block", [10] = "minecraft:observer", [11] = "minecraft:redstone_block" } },
+  ["minecraft:shears"] = { count = 1, grid = { [2] = "minecraft:iron_ingot", [5] = "minecraft:iron_ingot" } },
   ["computercraft:wireless_modem_normal"] = { count = 1, grid = {
     [1] = "minecraft:stone", [2] = "minecraft:stone", [3] = "minecraft:stone",
     [5] = "minecraft:stone", [6] = "minecraft:ender_pearl", [7] = "minecraft:stone",

@@ -80,6 +80,11 @@ local function drawTurtles(UI, out, w, row)
   if F.selected then
     button(UI, out, 18, row, 12, "DISMANTLE", F.dismantle ~= nil, function() factory.dismantle(F) end)
     button(UI, out, 31, row, 9, "FORGET", false, function() factory.forget(F) end)
+    local sel = F.turtles[F.selected]
+    if sel and sel.role == "forester" then
+      button(UI, out, 41, row, 11, "SHEAR " .. (sel.shear and "ON" or "OFF"), sel.shear == true,
+        function() factory.toggleShear(F) end)
+    end
   end
   return row + 2
 end

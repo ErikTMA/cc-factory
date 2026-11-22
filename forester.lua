@@ -217,10 +217,49 @@ local function step()
   return false
 end
 
+-- Shearing: while SHEARING is the Weak Automata Core (swapped in from the
+-- toolbelt), every leaf in the way is sheared, not cut: the core digs with
+-- the item in the selected slot (AP 0.8.2a digBlock; yaw/pitch relative to
+-- the turtle: pitch -90 up, 90 down), and that is the shears, so the leaves
+-- drop as blocks. Logs are left standing meanwhile: the tree holds its
+-- leaves until they are all sheared.
+local SHEARING
+local DIG = { fwd = turtle.dig, up = turtle.digUp, down = turtle.digDown }
+local INSPECT = { fwd = turtle.inspect, up = turtle.inspectUp, down = turtle.inspectDown }
+local SUCK = { fwd = turtle.suck, up = turtle.suckUp, down = turtle.suckDown }
+local PITCH = { fwd = 0, up = -90, down = 90 }
+local function shearAt(dir)
+  local slot = link.findItem(function(n) return n == C.SHEARS_ITEM end)
+  if not slot then return false end
+  local before = turtle.getSelectedSlot()
+  turtle.select(slot)
+  local done = false
+  for _ = 1, 20 do
+    local ok, res, err = pcall(SHEARING.digBlock, { pitch = PITCH[dir] })
+    if ok and res then done = true; break end
+    -- a cooldown (1 s a dig): wait; anything else: give up on this leaf
+    if not tostring(ok and err or res):lower():find("cool") then break end
+    sleep(0.25)
+  end
+  turtle.select(before)
+  if done then for _ = 1, 4 do if not SUCK[dir]() then break end end end
+  return done
+end
+local function digDir(dir)
+  if SHEARING then
+    local ok, b = INSPECT[dir]()
+    if ok and isLog(b) then return false end
+    if ok and isLeaves(b) and shearAt(dir) then return true end
+  end
+  return DIG[dir]()
+end
+
 local function forceUp()
   for _ = 1, 20 do
     if move("up", turtle.up) then return true end
-    if turtle.detectUp() then turtle.digUp() else turtle.attackUp() end
+    if turtle.detectUp() then
+      if not digDir("up") and SHEARING then return false end
+    else turtle.attackUp() end
   end
   return false
 end
@@ -228,7 +267,9 @@ end
 local function forceDown()
   for _ = 1, 20 do
     if move("down", turtle.down) then return true end
-    if turtle.detectDown() then turtle.digDown() else turtle.attackDown() end
+    if turtle.detectDown() then
+      if not digDir("down") and SHEARING then return false end
+    else turtle.attackDown() end
   end
   return false
 end
@@ -597,18 +638,25 @@ local function stepOver(h)
     if move("fwd", turtle.forward) then return true end
     local ok, b = turtle.inspect()
     if ok and not (isLog(b) or isLeaves(b) or isClearable(b)) then return false end
-    turtle.dig()
+    if not digDir("fwd") and SHEARING then return false end
   end
   return false
 end
 
 -- To (x, up, z), digging its way (the last step digs what is there).
-local function reach(x, up, z)
+-- Up first, then across, then down; `across` first: across, then up and
+-- down (shearing: it stands in the trunk, and the logs above it stay).
+local function climbTo(up)
   while S.up < up do
     local ok, b = turtle.inspectUp()
     if ok and not (isLog(b) or isLeaves(b) or isClearable(b)) then return false end
+    if ok and SHEARING and isLog(b) then return false end
     if not forceUp() then return false end
   end
+  return true
+end
+local function reach(x, up, z, acrossFirst)
+  if not acrossFirst and not climbTo(up) then return false end
   for _ = 1, 64 do
     if S.pos.x == x and S.pos.z == z then break end
     local h
@@ -622,8 +670,45 @@ local function reach(x, up, z)
       if not (h2 and stepOver(h2)) then return false end
     end
   end
+  if acrossFirst and (S.pos.x ~= x or S.pos.z ~= z) then return false end
+  if acrossFirst and not climbTo(up) then return false end
   while S.up > up do if not forceDown() then return false end end
-  return S.pos.x == x and S.pos.z == z
+  return S.pos.x == x and S.pos.z == z and S.up == up
+end
+
+-- Shear `leaves` ({ x, up, z }), nearest first, with the Weak Automata Core
+-- swapped in and the shears selected for each (shearAt). No core or no
+-- shears: nothing (they are cut with the logs as always).
+local function shearLeaves(leaves)
+  if #leaves == 0 or not link.findItem(function(n) return n == C.SHEARS_ITEM end) then return end
+  link.withTool("weak_automata", function(core)
+    SHEARING = core
+    local ok, err = pcall(function()
+      while #leaves > 0 do
+        local bi, bd = 1, math.huge
+        for i, l in ipairs(leaves) do
+          local d = math.abs(l.x - S.pos.x) + math.abs(l.up - S.up) + math.abs(l.z - S.pos.z)
+          if d < bd then bi, bd = i, d end
+        end
+        local l = table.remove(leaves, bi)
+        if not reach(l.x, l.up, l.z, true) then
+          -- from a cell beside it, then shear it ahead (on top of the trunk)
+          for h = 0, 3 do
+            local d = DIRS[h]
+            if reach(l.x - d[1], l.up, l.z - d[3], true) then
+              turnTo(h)
+              local ok, b = turtle.inspect()
+              if ok and isLeaves(b) then shearAt("fwd") end
+              break
+            end
+          end
+        end
+        if not link.findItem(function(n) return n == C.SHEARS_ITEM end) then break end -- (worn out)
+      end
+    end)
+    SHEARING = nil
+    if not ok then error(err, 0) end
+  end)
 end
 
 local function scanFell()
@@ -673,6 +758,22 @@ local function scanFell()
       local take = ours or (not theirs and nearestSpotIsUs(piece[1]))
       if take then for _, p in ipairs(piece) do logs[#logs + 1] = p end end
     end
+  end
+  if S.shear then
+    -- this tree's leaves (over the pen, nearest to this spot), sheared before
+    -- a log is cut
+    local leaves = {}
+    for _, b in ipairs(blocks) do
+      if isLeaves(b) then
+        local x, z = tx + math.floor(b.x + 0.5), tz + math.floor(b.z + 0.5)
+        local up = S.up + math.floor(b.y + 0.5)
+        local p = { x = x, up = up, z = z }
+        if up >= 0 and up <= CFG.maxHeight and AREA.cells[key(x, z)] and nearestSpotIsUs(p) then
+          leaves[#leaves + 1] = p
+        end
+      end
+    end
+    shearLeaves(leaves)
   end
   while #logs > 0 do
     local bi, bd = 1, math.huge
@@ -852,7 +953,10 @@ local function dropHaul(keepFuel)
   end
   for i = 1, 16 do
     local d = turtle.getItemDetail(i)
-    if d and not (link.isKeptItem(d.name) or d.name == DIRT or (i == BONEMEAL_SLOT and d.name == "minecraft:bone_meal")) then
+    -- (the shears and the core only while it shears: else back to storage)
+    local shearTool = d and (d.name == C.SHEARS_ITEM or d.name == C.AUTOMATA_ITEM)
+    if shearTool and not S.shear then select(i); turtle.drop()
+    elseif d and not (shearTool or link.isKeptItem(d.name) or d.name == DIRT or (i == BONEMEAL_SLOT and d.name == "minecraft:bone_meal")) then
       if isSaplingItem(d.name) and allowed(d.name) then keepUpTo(i, d, CFG.keepSaplings)
       elseif isLog(d) then delivered = delivered + keepUpTo(i, d, CFG.keepLogs, "logs")
       elseif C.isFuel(d.name) then keepUpTo(i, d, keepFuel or CFG.keepFuel, "fuel")
@@ -884,12 +988,19 @@ local function unload(fuelNeed)
   -- its toolbelt: a Geo Scanner (fell by the scan) and an Environment
   -- Detector (find dropped saplings), asked for until it has them
   local tools = {}
-  for _, item in ipairs({ C.SCANNER_ITEM, C.DETECTOR_ITEM }) do
+  local toolbelt = { C.SCANNER_ITEM, C.DETECTOR_ITEM }
+  if S.shear then toolbelt[3], toolbelt[4] = C.SHEARS_ITEM, C.AUTOMATA_ITEM end
+  for _, item in ipairs(toolbelt) do
     if not link.findItem(function(n) return n == item end) then tools[#tools + 1] = item end
   end
   local r = link.supply({ fuel = fuelItems, saplings = CFG.supply.saplings,
                           bonemeal = CFG.supply.bonemeal, dirt = dirt, tools = tools })
   if r and r.plant ~= nil then setAllowed(r.plant) end
+  if r and r.shear ~= nil and r.shear ~= (S.shear == true) then
+    S.shear = r.shear
+    log("Shearing leaves: " .. (S.shear and "ON" or "OFF"))
+    save()
+  end
   restock()
   dropHaul(math.max(CFG.keepFuel, fuelItems)) -- (what it took but doesn't keep; the fuel it asked for stays)
   select(WORK_SLOT)

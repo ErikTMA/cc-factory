@@ -23,7 +23,14 @@ local C = {
   DETECTOR_ITEM = "advancedperipherals:environment_detector", -- scanEntities: items lying around
   -- tools a turtle may ask the base for (sent from storage, else crafted)
   TOOLS = { ["advancedperipherals:geo_scanner"] = true, ["advancedperipherals:environment_detector"] = true,
-            ["minecraft:compass"] = true, ["computercraft:wireless_modem_normal"] = true },
+            ["minecraft:compass"] = true, ["computercraft:wireless_modem_normal"] = true,
+            ["minecraft:shears"] = true, ["advancedperipherals:weak_automata_core"] = true },
+  -- a forester that shears leaves: the Weak Automata Core digs with the item
+  -- in the selected slot (AP 0.8.2a AutomataBlockHandPlugin.digBlock, 1 fuel
+  -- and 1 s each), and that is the shears. The core can't be crafted by the
+  -- base (its recipe takes a potion): it comes from storage.
+  SHEARS_ITEM = "minecraft:shears",
+  AUTOMATA_ITEM = "advancedperipherals:weak_automata_core",
 }
 
 -- ----------------------------------------------------------------- fuel --

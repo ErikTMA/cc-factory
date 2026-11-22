@@ -35,6 +35,18 @@ over rednet. Friends-only server: base-ID pinning, no signing.
   double chest's second half serves the first half's inventory (counted
   twice); the controller and storage_io show everything again. An insert
   into one slot may go on into other slots (toSlot not strict).
+- Shearing leaves: CC 1.120.2 has no shears upgrade (its upgrades: the
+  diamond tools, crafting table, modems, speaker) and `turtle.dig()` breaks
+  with the equipped tool only; using shears (`turtle.place()` with them
+  selected) shears sheep, not leaves. AP 0.8.2a's Weak Automata Core
+  (upgrade type `weak_automata`, peripheral type `weak_automata`):
+  `digBlock({ sneak, yaw, pitch })` breaks the block as a fake player holding
+  the turtle's SELECTED slot item (`TurtlePeripheralOwner.getToolInMainHand`
+  -> `getInventory().getItem(getSelectedSlot())`); yaw/pitch are added to
+  the turtle's facing (`doActionWithRot`), so pitch -90 is up, 90 down.
+  Cost: 1 fuel, cooldown 1000 ms (`SingleOperation.DIG`). The core's recipe
+  needs a long-regeneration potion: the base can't craft it. Vanilla shears:
+  shaped, iron at (2,1) and (1,2) (server-1.21.1 extra jar, in the fixture).
 
 - `rom/startup.lua`: if an *attached* disk drive's disk has a startup file it
   runs **instead of** the computer's own startup (`shell.allow_disk_startup`).
