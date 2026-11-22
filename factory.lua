@@ -262,8 +262,8 @@ function M.jobText(job)
   if job.scout then
     return ("scout %s@Y%s"):format(job.area and ("area " .. (job.area + 1) .. " ") or "", tostring(job.y))
   end
-  return ("%s%s @Y%s"):format(job.quantity and (job.quantity .. "x ") or "",
-    job.only or "all ores", tostring(job.y))
+  return ("%s%s %s@Y%s"):format(job.quantity and (job.quantity .. "x ") or "",
+    job.only or "all ores", job.area and ("area " .. (job.area + 1) .. " ") or "", tostring(job.y))
 end
 
 -- ------------------------------------------------------------------ jobs --
@@ -368,7 +368,7 @@ local function laneStates(F, area, y)
   local done = (F.scouted or {})[scoutKey(y, along)] or {}
   local busy = {}
   local function mark(j)
-    if j and j.scout and j.y == y and (j.along or 0) == along then
+    if j and j.area and j.y == y and (j.along or 0) == along then
       for l = j.sector or 0, (j.sector or 0) + (j.lanes or 0) - 1 do busy[l] = true end
     end
   end
@@ -393,7 +393,7 @@ function M.scoutCell(F, area, y)
   return "."
 end
 -- A job for the lanes of (area, y) still to do (the first run of them), or nil.
-local function scoutGap(F, area, y)
+local function scoutGap(F, area, y, mine)
   local st, sector, along = laneStates(F, area, y)
   local first, n
   for i, x in ipairs(st) do
@@ -402,8 +402,10 @@ local function scoutGap(F, area, y)
     elseif first then break end
   end
   if not first then return nil end
-  return M.queueJob(F, { scout = true, y = y, lanes = n, length = M.SCOUT_LENGTH,
-                         sector = sector + first - 1, along = along, area = area })
+  -- (AUTO MINE: the same lanes, every ore it sees mined, home when full)
+  return M.queueJob(F, { scout = not mine or nil, y = y, lanes = n, length = M.SCOUT_LENGTH,
+                         sector = sector + first - 1, along = along, area = area,
+                         auto = mine and "mine" or nil })
 end
 local function scoutState(F)
   F.scoutAuto = F.scoutAuto or { on = false }
@@ -411,7 +413,8 @@ local function scoutState(F)
 end
 -- (done) what a scout job covered: its lanes up to the ones it finished
 function M.scoutDone(F, job, lanesDone)
-  if not (job and job.scout) then return end
+  -- (a scout job, or an AUTO MINE area job: its lanes were scanned)
+  if not (job and (job.scout or job.area)) then return end
   F.scouted = F.scouted or {}
   local k = scoutKey(job.y, job.along or 0)
   F.scouted[k] = F.scouted[k] or {}
@@ -442,37 +445,33 @@ end
 -- (from the tick) AUTO SCOUT: one scout job waiting at a time, for the
 -- first lanes not scouted yet (area by area, level by level); mining jobs
 -- queued meanwhile go after it
+local function autoArea(F, mine)
+  for area = 0, M.SCOUT_MAX_AREAS - 1 do
+    for _, y in ipairs(M.SCOUT_LEVELS) do
+      if scoutGap(F, area, y, mine) then return end
+    end
+  end
+end
 local function autoScout(F)
   local st = F.scoutAuto
   if not (st and st.on) then return end
   for _, j in ipairs(F.queue) do if j.scout then return end end
-  for area = 0, M.SCOUT_MAX_AREAS - 1 do
-    for _, y in ipairs(M.SCOUT_LEVELS) do
-      if scoutGap(F, area, y) then return end
-    end
-  end
+  autoArea(F, false)
 end
 
--- AUTO MINE: like AUTO SCOUT, one job waiting at a time: the ore kind with
--- the most known blocks no job holds, at the world Y where most of them are,
--- up to AUTO_MINE_MAX of them (the job is handed their positions).
-M.AUTO_MINE_MAX = 64
+-- AUTO MINE: AUTO SCOUT that digs: one job waiting at a time for the next
+-- lanes not covered yet (area by area, level by level), mining every ore it
+-- sees and going home to unload when full. A lane mined counts as scouted
+-- (it was scanned), and the other way round.
 function M.toggleAutoMine(F)
   F.mineAuto = F.mineAuto or {}
   F.mineAuto.on = not F.mineAuto.on
-  F.note = "Auto mining (the most known ore first): " .. (F.mineAuto.on and "ON" or "OFF")
+  F.note = "Auto mining (every ore, area by area, level by level): " .. (F.mineAuto.on and "ON" or "OFF")
 end
 local function autoMine(F)
   if not (F.mineAuto and F.mineAuto.on) then return end
   for _, j in ipairs(F.queue) do if j.auto == "mine" then return end end
-  local best
-  for _, e in ipairs(M.oreSummary(F)) do
-    local free = e.count - e.held
-    if free > 0 and (not best or free > best.count - best.held) then best = e end
-  end
-  if not best then return end
-  local n = math.min(best.count - best.held, M.AUTO_MINE_MAX)
-  M.queueJob(F, { only = best.kind, y = best.y, quantity = n, auto = "mine" })
+  autoArea(F, true)
 end
 
 function M.scout(F)
@@ -1513,7 +1512,7 @@ function M.handle(F, from, msg)
       local k = oreKey(msg.job)
       F.totals[k] = (F.totals[k] or 0) + (msg.mined or 0)
       if msg.job.rule then F.ruleJobs[msg.job.rule] = nil end
-      M.scoutDone(F, msg.job, msg.lanesDone)
+      M.scoutDone(F, msg.job, msg.lanesDone) -- (scout or auto-mine: lanes covered)
       F.note = ("%s finished: %d %s"):format(label(F, from), msg.mined or 0, k)
     end
     if msg.state == "no fuel" and msg.job then
