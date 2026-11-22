@@ -120,6 +120,18 @@ local function newWorld(opts)
       if not W.get(x + dx, y + h, z + dz) then W.set(x + dx, y + h, z + dz, LEAF) end
     end end end
   end
+  -- an ATM10 oak whose canopy spreads over the neighbouring spots: trunk 7
+  -- high, branches out 3 each way at 5..7 (over the next spots' columns),
+  -- leaves around them
+  function W.growWide(x, y, z)
+    for h = 0, 6 do W.set(x, y + h, z, LOG) end
+    for _, d in ipairs({ { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } }) do
+      for r = 1, 3 do W.set(x + d[1] * r, y + 4 + r, z + d[2] * r, LOG) end
+    end
+    for dx = -4, 4 do for dz = -4, 4 do for h = 8, 9 do
+      if not W.get(x + dx, y + h, z + dz) then W.set(x + dx, y + h, z + dz, LEAF) end
+    end end end
+  end
   -- a 2x2 trunk (dark oak, giant spruce): the spot and the cells east, south, south-east
   function W.grow2x2(x, y, z)
     for h = 0, 4 do for _, d in ipairs({ { 0, 0 }, { 1, 0 }, { 0, 1 }, { 1, 1 } }) do
@@ -1205,6 +1217,76 @@ do
   check(W.count(LOG) == 0, "every log of the big oaks felled, the canopy too: " .. W.count(LOG) .. " left")
   local flog = files["forester.log"] or ""
   check(flog:find("fell %-?%d+,%-?%d+ layer 2") ~= nil, "forester.log says what each felling saw, layer by layer")
+end
+
+print("scenario: oaks whose canopies reach over the neighbouring spots (live: 40-55 logs 'another spot's',")
+print("          canopies left floating): every log felled, nothing left hanging")
+do
+  local W = newWorld()
+  local T, api = newTurtle(W, 8000)
+  T.inv[1] = { name = SAP, count = 64 }
+  T.inv[6] = { name = "advancedperipherals:geo_scanner", count = 1 }
+  local n = 0
+  local function sl(secs)
+    if (tonumber(secs) or 0) < 5 then return end
+    n = n + 1
+    if n == 1 then
+      for key, v in pairs(W.b) do
+        if isSap(v) then
+          local x, y, z = key:match("^(-?%d+),(-?%d+),(-?%d+)$")
+          x, y, z = tonumber(x), tonumber(y), tonumber(z)
+          W.set(x, y, z, nil)
+          W.growWide(x, y, z)
+        end
+      end
+      return
+    end
+    error("END OF TEST")
+  end
+  local files = {}
+  local ok, err = run(makeEnv(T, api, files, sl), "10")
+  check(tostring(err):find("END OF TEST") ~= nil, "two rounds (" .. tostring(err) .. ")")
+  check(W.count(LOG) == 0, "every log felled, the spread canopies too: " .. W.count(LOG) .. " left")
+end
+
+print("scenario: canopies floating with no trunk at all (live: left by older code), over other spots'")
+print("          columns: debris, taken by whichever tree is felled near it")
+do
+  local W = newWorld()
+  local T, api = newTurtle(W, 8000)
+  T.inv[1] = { name = SAP, count = 64 }
+  T.inv[6] = { name = "advancedperipherals:geo_scanner", count = 1 }
+  local n, floating = 0, 0
+  local function sl(secs)
+    if (tonumber(secs) or 0) < 5 then return end
+    n = n + 1
+    if n == 1 then
+      local spots = {}
+      for key, v in pairs(W.b) do
+        if isSap(v) then
+          local x, y, z = key:match("^(-?%d+),(-?%d+),(-?%d+)$")
+          spots[#spots + 1] = { tonumber(x), tonumber(y), tonumber(z) }
+        end
+      end
+      for i, p in ipairs(spots) do
+        W.set(p[1], p[2], p[3], nil)
+        W.growWide(p[1], p[2], p[3])
+        if i % 2 == 0 then
+          -- this one's trunk gone: its branches and canopy float over the
+          -- neighbouring spots (and a sapling planted under it again)
+          for h = 0, 6 do W.set(p[1], p[2] + h, p[3], nil) end
+          W.set(p[1], p[2], p[3], SAP)
+          floating = floating + 1
+        end
+      end
+      return
+    end
+    error("END OF TEST")
+  end
+  local files = {}
+  local ok, err = run(makeEnv(T, api, files, sl), "10")
+  check(tostring(err):find("END OF TEST") ~= nil, "two rounds (" .. tostring(err) .. ")")
+  check(floating > 0 and W.count(LOG) == 0, ("%d trunkless canopies, every log taken: %d left"):format(floating, W.count(LOG)))
 end
 
 print("scenario: a tree hangs over its spot (its bottom log cut, live): it fells it, never plants under it")

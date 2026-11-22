@@ -649,11 +649,14 @@ end
 -- tree is that spot's: cutting through its trunk would leave it floating).
 -- True when it moved.
 local TRUNK -- the column of the tree being felled
+-- (while felling by scan: the other spots whose trunk still stands; only
+-- those columns are closed. Otherwise every other spot's column is.)
+local ROOTED
 local function stepOver(h)
   if not overPen(h) then return false end
   local d = DIRS[h]
   local k = key(S.pos.x + d[1], S.pos.z + d[3])
-  if isSpot[k] and k ~= TRUNK then return false end
+  if isSpot[k] and k ~= TRUNK and (not ROOTED or ROOTED[k]) then return false end
   turnTo(h)
   for _ = 1, 4 do
     if move("fwd", turtle.forward) then return true end
@@ -734,17 +737,16 @@ end
 
 -- Fell the tree by Geo Scanner, in layers: a scan reaches 8 up, and big
 -- trees (ATM10 oaks) are taller. Each layer: scan, take this tree's logs,
--- shear its leaves first (if on), fell the logs nearest first; if the
--- highest was near the top of what the scan saw, climb the trunk column
--- there and scan again. This tree's logs: pieces of logs touching (diagonals
+-- shear its leaves first (if on), fell the logs nearest first; then climb
+-- the trunk column to the highest one cut and scan again, until a scan
+-- finds nothing more to take. This tree's logs: pieces of logs touching (diagonals
 -- too, like branches) that stand on its trunk column or touch a log already
 -- cut from it (the canopy, once the trunk under it is gone); a piece on
 -- another spot's column is that tree's; a loose one (a log alone in the
 -- leaves) the nearest spot's. False without a scanner.
 local function scanFell()
   local tx, tz = S.pos.x, S.pos.z
-  TRUNK = key(tx, tz)
-  local felled = {}
+  TRUNK, ROOTED = key(tx, tz), nil
   local function nearestSpotIsUs(p)
     local mine = math.max(math.abs(p.x - tx), math.abs(p.z - tz))
     for dx = -mine, mine do for dz = -mine, mine do
@@ -752,12 +754,6 @@ local function scanFell()
       if isSpot[k] and k ~= TRUNK and math.max(math.abs(dx), math.abs(dz)) < mine then return false end
     end end
     return true
-  end
-  local function touchesFelled(p)
-    for dx = -1, 1 do for dy = -1, 1 do for dz = -1, 1 do
-      if felled[(p.x + dx) .. "," .. (p.up + dy) .. "," .. (p.z + dz)] then return true end
-    end end end
-    return false
   end
   for layer = 1, 6 do
     local blocks = link.withTool("geo_scanner", scanBlocks)
@@ -770,13 +766,27 @@ local function scanFell()
       local x, z = sx + math.floor(b.x + 0.5), sz + math.floor(b.z + 0.5)
       return x, su + math.floor(b.y + 0.5), z
     end
-    -- every scanned log over the pen, by position
+    -- every scanned log over the pen, by position; the other spots whose
+    -- trunk stands (a log at their foot)
     local at = {}
+    ROOTED = {}
+    -- (a log just outside the pen, next to a pen cell (a branch over the
+    -- fence): taken too, dug from that pen cell)
+    local function penSide(x, z)
+      for h = 0, 3 do
+        local d = DIRS[h]
+        if AREA.cells[key(x - d[1], z - d[3])] then return { x = x - d[1], z = z - d[3], h = h } end
+      end
+    end
     for _, b in ipairs(blocks) do
       if isLog(b) then
         local x, up, z = place(b)
-        if up >= 0 and up <= CFG.maxHeight and AREA.cells[key(x, z)] then
-          at[x .. "," .. up .. "," .. z] = { x = x, up = up, z = z }
+        local inPen = AREA.cells[key(x, z)] ~= nil
+        local side = not inPen and penSide(x, z) or nil
+        if up >= 0 and up <= CFG.maxHeight and (inPen or side) then
+          at[x .. "," .. up .. "," .. z] = { x = x, up = up, z = z, from = side }
+          local col = key(x, z)
+          if up <= 1 and isSpot[col] and col ~= TRUNK then ROOTED[col] = true end
         end
       end
     end
@@ -787,28 +797,30 @@ local function scanFell()
         scanned = scanned + 1
         local x, up, z = place(b)
         if up > CFG.maxHeight then high = high + 1
-        elseif up >= 0 and not AREA.cells[key(x, z)] then outside = outside + 1 end
+        elseif up >= 0 and not at[x .. "," .. up .. "," .. z] and not AREA.cells[key(x, z)] then outside = outside + 1 end
       end
     end
     local logs, seen, theirsN = {}, {}, 0
     for k0, p0 in pairs(at) do
       if not seen[k0] then
-        local piece, queue, trunk, touches, theirs = {}, { p0 }, false, false, false
+        local piece, queue, trunk, theirs = {}, { p0 }, false, false
         seen[k0] = true
         while #queue > 0 do
           local p = table.remove(queue)
           piece[#piece + 1] = p
           local col = key(p.x, p.z)
-          if col == TRUNK then trunk = true elseif isSpot[col] then theirs = true end
-          if touchesFelled(p) then touches = true end
+          if col == TRUNK then trunk = true
+          elseif isSpot[col] and p.up <= 1 then theirs = true end -- (another tree's trunk, standing)
           for dx = -1, 1 do for dy = -1, 1 do for dz = -1, 1 do
             local nk = (p.x + dx) .. "," .. (p.up + dy) .. "," .. (p.z + dz)
             if at[nk] and not seen[nk] then seen[nk] = true; queue[#queue + 1] = at[nk] end
           end end end
         end
-        -- (another tree's trunk in it: that tree's, also when it touches
-        -- what we cut: taking it would cut that trunk and leave it hanging)
-        local take = trunk or (not theirs and (touches or nearestSpotIsUs(piece[1])))
+        -- a piece with another tree's standing trunk in it is that tree's
+        -- (cutting into it would leave that tree hanging); one with none is
+        -- this tree's or debris (a canopy whose trunk is gone): taken. (A
+        -- branch over another spot's column doesn't make it that tree's.)
+        local take = trunk or not theirs
         if take then for _, p in ipairs(piece) do logs[#logs + 1] = p end
         else theirsN = theirsN + #piece end
       end
@@ -839,16 +851,22 @@ local function scanFell()
         if d < bd then bi, bd = i, d end
       end
       local l = table.remove(logs, bi)
-      reach(l.x, l.up, l.z)
-      felled[l.x .. "," .. l.up .. "," .. l.z] = true
+      if l.from then
+        -- just outside the pen: from the pen cell next to it, dig toward it
+        if reach(l.from.x, l.up, l.from.z) then turnTo(l.from.h); digDir("fwd") end
+      else
+        reach(l.x, l.up, l.z)
+      end
       top = math.max(top, l.up)
     end
-    -- the scan saw all there is above: done; else up the trunk column, again
-    if top < su + SCAN_R - 2 or top >= CFG.maxHeight then break end
-    if not reach(tx, top, tz) then break end
+    -- scan again from the highest log it cut, until a scan finds nothing
+    -- more to take (a log left hanging, a branch past this scan's reach)
+    if top >= CFG.maxHeight then break end
+    if not reach(tx, math.max(top, S.up), tz) then break end
   end
   -- back over its own column (the trunk is gone: open), then down
   reach(tx, math.max(S.up, 1), tz)
+  ROOTED = nil
   return true
 end
 
@@ -938,8 +956,24 @@ local function hangingTree()
 end
 
 -- Look after the tree spot in front of us.
+-- At a spot without a tree (a sapling or nothing): scan for logs hanging
+-- around with no trunk (left by older code, or a tree nobody felled near)
+-- and take them, from the path cell it stands on (each visit: a scan is ~2 s).
+-- Needs the Geo Scanner.
+local function clearDebris()
+  if not (link.findItem(function(n) return n == C.SCANNER_ITEM end) or link.equippedSide("geo_scanner")) then return end
+  local facing = S.heading
+  scanFell()
+  while S.up > 0 do
+    if not forceDown() then error("Cannot get back down", 0) end
+  end
+  turnTo(facing)
+end
+
 local function tend()
   local ok, b = turtle.inspect()
+  if not ok or isSapling(b) then clearDebris() end
+  ok, b = turtle.inspect()
   if not ok then
     hangingTree()
     plant(true)
