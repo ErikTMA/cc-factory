@@ -160,7 +160,19 @@ local function applyMove(st, kind)
   end
 end
 
-local function move(kind, fn) return tmove.move(S, save, kind, fn, applyMove) end
+local refuel -- (below)
+
+-- Every move goes through here: below the low mark it first burns logs or
+-- fuel it carries (measuring a big pen takes 1000+ moves), and with nothing
+-- left it says so instead of failing as if the way were blocked.
+local function move(kind, fn)
+  local f = turtle.getFuelLevel()
+  if f ~= "unlimited" and f < CFG.fuelLow then
+    refuel()
+    if turtle.getFuelLevel() == 0 then error("Out of fuel: put coal, charcoal or logs in me", 0) end
+  end
+  return tmove.move(S, save, kind, fn, applyMove)
+end
 
 -- Forward one cell, clearing plants/leaves/logs in the way; false at a border.
 local function step()
@@ -388,7 +400,7 @@ local function nextSapling()
   return slotOf[kinds[(S.turn - 1) % #kinds + 1]]
 end
 
-local function refuel()
+refuel = function()
   if turtle.getFuelLevel() == "unlimited" or turtle.getFuelLevel() >= CFG.fuelLow then return end
   for i = 1, 16 do
     local d = turtle.getItemDetail(i)
@@ -486,54 +498,83 @@ local function tend()
 end
 
 -- ----------------------------------------------------------- exploration --
--- Walk every open cell of the pen once (depth first, back-tracking), caching
--- each cell and the block under it. Trees inside are felled, plants cleared.
-local function explore()
-  log("Measuring the pen...")
-  local ok0, ground0 = turtle.inspectDown()
-  AREA = { done = false, cells = { [key(0, 0)] = ok0 and ground0.name or "air" }, spots = {} }
-  saveArea()
-  local border = {}
-  local count = 1
-  local stack = { { x = 0, z = 0, next = 0 } }
-  while #stack > 0 do
-    local top = stack[#stack]
-    if top.next < 4 then
-      local h = top.next
-      top.next = h + 1
-      local nx, nz = top.x + DIRS[h][1], top.z + DIRS[h][3]
-      local nk = key(nx, nz)
-      if not AREA.cells[nk] and not border[nk] then
-        turnTo(h)
-        local ok, b = turtle.inspect()
-        if ok and isLog(b) then fell(false); ok, b = turtle.inspect() end
-        if ok and isClearable(b) then turtle.dig(); ok, b = turtle.inspect() end
-        if ok then
-          border[nk] = true
-        elseif move("fwd", turtle.forward) then
-          AREA.cells[nk] = fixGround(false) or "air" -- (tree spots: soil later, in the rounds)
-          count = count + 1
-          if count > CFG.maxArea then
-            error(("The pen is not closed: more than %d open cells. Close the fence and run 'forester rescan'.")
-              :format(CFG.maxArea), 0)
-          end
-          saveArea() -- every cell at once: a restart must find its way back home
-          stack[#stack + 1] = { x = nx, z = nz, next = 0, back = (h + 2) % 4 }
-        else
-          border[nk] = true
-        end
-      end
-    else
-      stack[#stack] = nil
-      if top.back then
-        turnTo(top.back)
-        if not move("fwd", turtle.forward) then error("Could not step back while measuring the pen", 0) end
+-- Measure the pen: every open cell (and the block under it) is cached in
+-- forester.area, every fence/wall cell next to it in AREA.border. It works
+-- from the frontier: walk to the nearest known cell next to one not looked at
+-- yet and look. So it can stop any time and carry on later from the map
+-- (after a restart, or a trip home for fuel). Trees inside are felled,
+-- plants cleared.
+local fuelTrip -- (below: home, mailbox, fuel from the base)
+
+local function frontier()
+  -- nearest known cell (walking) that has a neighbour not looked at yet
+  local start = key(S.pos.x, S.pos.z)
+  local seen, queue, head = { [start] = 0 }, { start }, 1
+  while queue[head] do
+    local cur = queue[head]
+    head = head + 1
+    local cx, cz = unkey(cur)
+    for h = 0, 3 do
+      local nk = key(cx + DIRS[h][1], cz + DIRS[h][3])
+      if not AREA.cells[nk] and not AREA.border[nk] then return { x = cx, z = cz, h = h }, seen[cur] end
+    end
+    for h = 0, 3 do
+      local nk = key(cx + DIRS[h][1], cz + DIRS[h][3])
+      if AREA.cells[nk] and seen[nk] == nil then
+        seen[nk] = seen[cur] + 1
+        queue[#queue + 1] = nk
       end
     end
   end
+end
+
+local function cellCount()
+  local n = 0
+  for _ in pairs(AREA.cells) do n = n + 1 end
+  return n
+end
+
+local function explore()
+  if not AREA or AREA.done then
+    log("Measuring the pen...")
+    local ok0, ground0 = turtle.inspectDown()
+    AREA = { done = false, cells = { [key(0, 0)] = ok0 and ground0.name or "air" }, border = {}, spots = {} }
+    saveArea()
+  else
+    log(("Measuring the pen, carrying on (%d cells so far)..."):format(cellCount()))
+  end
+  AREA.border = AREA.border or {}
+  while true do
+    local f, dist = frontier()
+    if not f then break end
+    -- fuel for the way there, one step, and the way home from there
+    local back = path({ x = f.x, z = f.z }, { x = 0, z = 0 })
+    local need = dist + 1 + (back and #back or dist) + 20
+    if turtle.getFuelLevel() ~= "unlimited" and turtle.getFuelLevel() < need then
+      refuel()
+      if turtle.getFuelLevel() < need then fuelTrip(need) end
+    end
+    if not walkTo({ x = f.x, z = f.z }) then error("Cannot reach a cell of the pen I have seen", 0) end
+    local nx, nz = f.x + DIRS[f.h][1], f.z + DIRS[f.h][3]
+    local nk = key(nx, nz)
+    turnTo(f.h)
+    local ok, b = turtle.inspect()
+    if ok and isLog(b) then fell(false); ok, b = turtle.inspect() end
+    if ok and isClearable(b) then turtle.dig(); ok, b = turtle.inspect() end
+    if ok or not move("fwd", turtle.forward) then
+      AREA.border[nk] = true
+    else
+      AREA.cells[nk] = fixGround(false) or "air" -- (tree spots: soil later, in the rounds)
+      if cellCount() > CFG.maxArea then
+        error(("The pen is not closed: more than %d open cells. Close the fence and run 'forester rescan'.")
+          :format(CFG.maxArea), 0)
+      end
+    end
+    saveArea() -- every cell at once: a restart carries on from the map
+  end
   AREA.done = true
   placeSpots()
-  log(("Pen: %d cells, %d tree spots %d apart."):format(count, #AREA.spots, AREA.spacing))
+  log(("Pen: %d cells, %d tree spots %d apart."):format(cellCount(), #AREA.spots, AREA.spacing))
 end
 
 -- ------------------------------------------------------------- the round --
@@ -567,6 +608,25 @@ local function unload()
   select(WORK_SLOT)
   turnTo(S.homeHeading)
   return delivered
+end
+
+-- Measuring ran low on fuel: home, take the mailbox (the base keeps fuel in
+-- the chest), drop the clutter, burn what it has, and ask the base for more.
+fuelTrip = function(need)
+  log("Low on fuel: going home to fill up")
+  while S.up > 0 do forceDown() end
+  if not walkTo({ x = 0, z = 0 }) then error("Cannot find my way home through the pen", 0) end
+  unload()
+  refuel()
+  local f = turtle.getFuelLevel()
+  if f ~= "unlimited" and f < need then
+    local got, why = link.requestFuel(math.max(need, CFG.fuelTarget) - f)
+    log(got and ("The base gave me %d fuel"):format(got) or ("No fuel from the base: " .. tostring(why)))
+  end
+  if turtle.getFuelLevel() < need then
+    error(("Out of fuel while measuring the pen (%s, need %d): put coal or logs in me (I'm home)")
+      :format(tostring(turtle.getFuelLevel()), need), 0)
+  end
 end
 
 local function goHome()
@@ -672,12 +732,12 @@ if S then
   save()
   log("Resuming")
   if AREA then indexSpots() end
-  -- an unfinished measurement: back home over the cells known so far, measure again
+  -- a measurement that was cut short carries on from its map (explore);
+  -- a finished pen: back home first (a round restarts from home)
   if AREA and AREA.cells then
     while S.up > 0 do forceDown() end
-    if not walkTo({ x = 0, z = 0 }) then error("Cannot find my way home", 0) end
+    if AREA.done and not walkTo({ x = 0, z = 0 }) then error("Cannot find my way home", 0) end
   end
-  if not AREA or not AREA.done then AREA = nil end
 else
   local h = nav.compass()
   if not h then log("No compass upgrade: it cannot re-check its facing after a restart.") end
@@ -696,7 +756,8 @@ if turtle.getFuelLevel() ~= "unlimited" and turtle.getFuelLevel() == 0 then
   error("No fuel: put coal or logs in it", 0)
 end
 
-if args[1] == "rescan" or not AREA then
+if args[1] == "rescan" then AREA = nil end
+if not AREA or not AREA.done then
   refuel()
   explore()
   turnTo(S.homeHeading)

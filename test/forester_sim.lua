@@ -202,13 +202,15 @@ local function newTurtle(W, fuel)
     if s.count == 0 then T.inv[T.sel] = nil end
     return true
   end
+  -- fuel per item like CC (burn ticks * 5 / 100): logs 15, coal/charcoal 80
   function api.refuel(n)
     local s = T.inv[T.sel]
-    if not s or not s.name:find("_log$") then return false end
+    local per = s and (s.name:find("_log$") and 15 or (s.name == "minecraft:coal" or s.name == "minecraft:charcoal") and 80)
+    if not per then return false end
     n = n or s.count
     if n == 0 then return true end
     n = math.min(n, s.count)
-    T.fuel = T.fuel + 15 * n; s.count = s.count - n
+    T.fuel = T.fuel + per * n; s.count = s.count - n
     if s.count == 0 then T.inv[T.sel] = nil end
     return true
   end
@@ -523,6 +525,37 @@ do
   check(oakLeft == 0 and (W.chest[SAP] or 0) > 0, "oak saplings went into the chest: " .. tostring(W.chest[SAP]))
   local before = (W.planted or {})[SAP] or 0
   check(((W.planted or {})[BIRCH] or 0) > 0, "birch planted")
+end
+
+print("scenario: little fuel but coal in its inventory: it refuels while measuring the pen")
+do
+  local W = newWorld()
+  local T, api = newTurtle(W, 40)            -- not enough to measure the pen
+  T.inv[1] = { name = SAP, count = 32 }
+  T.inv[5] = { name = "minecraft:coal", count = 16 }
+  local ok, err = run(makeEnv(T, api, {}, sleeper(W, 2)), "10")
+  check(tostring(err):find("END OF TEST") ~= nil, "measured the pen and finished a round (" .. tostring(err) .. ")")
+  check(plantedSpots(W) == #SPOTS, "every spot planted: " .. plantedSpots(W))
+end
+
+print("scenario: too little fuel to measure the whole pen: it goes HOME before it runs dry, and says so")
+do
+  local W = newWorld()
+  local T, api = newTurtle(W, 40)
+  T.inv[1] = { name = SAP, count = 32 }
+  T.inv[5] = { name = "minecraft:coal", count = 1 }
+  local files = {}
+  local ok, err = run(makeEnv(T, api, files, sleeper(W, 2)), "10")
+  check(tostring(err):find("I'm home") ~= nil, "stopped with a clear message: " .. tostring(err))
+  check(T.x == 0 and T.z == 0, ("at home, not stranded in the pen (%d,%d)"):format(T.x, T.z))
+  -- given coal, the next start carries on from its map instead of starting over
+  local cellsBefore = 0
+  for _ in pairs((load("return " .. files["forester.area"])() or {}).cells or {}) do cellsBefore = cellsBefore + 1 end
+  T.inv[6] = { name = "minecraft:coal", count = 16 }
+  local moves0 = T.moves or 0
+  ok, err = run(makeEnv(T, api, files, sleeper(W, 2)), "10")
+  check(tostring(err):find("END OF TEST") ~= nil and plantedSpots(W) == #SPOTS,
+    ("carried on (%d cells known) and finished: %s, %d spots"):format(cellsBefore, tostring(err), plantedSpots(W)))
 end
 
 local MENRIL = "integrateddynamics:menril_sapling"
