@@ -2463,11 +2463,13 @@ do
   local t0 = totals()
   F.deps.storage.forget()
   factory.toggleDefrag(F)
+  F.defragResult = nil
   runUntil(function() return F.defrag == nil end, 20000)
+  local doneNote = F.defragResult
   local t1, same = totals(), true
   for k2, v in pairs(t0) do if t1[k2] ~= v then same = false end end
   check(same, "nothing lost or made")
-  check((F.note or ""):find("Defrag done") ~= nil and not (F.note or ""):find("not enough"), "finished, all sorted: " .. tostring(F.note))
+  check((doneNote or ""):find("Defrag done") ~= nil and not (doneNote or ""):find("no room"), "finished, all sorted: " .. tostring(doneNote))
   local bad = {}
   for _, I in ipairs({ plain, big, big2 }) do
     local last, gap = "", false
@@ -2513,7 +2515,7 @@ do
   end
   check(ok, "the messy barrel sorted")
   local logText = table.concat(F.defragPlan or {}, "\n") .. "\n" .. table.concat(F.defragLog or {}, "\n")
-  check(logText:find("plan: ") and logText:find("step %d+: ") and logText:find("  in "),
+  check(logText:find("plan: %d+ moves") and logText:find("move %d+/%d+: "),
     "it logs its plan and every step (/defrag.log): " .. #(F.defragLog or {}) .. " lines")
   F.defrag = nil
   W.inv = keepInv
@@ -2546,9 +2548,16 @@ do
   end
   local t0 = totals()
   F.deps.storage.forget()
+  net.calls = {}
   factory.toggleDefrag(F)
+  F.defragResult = nil
   runUntil(function() return F.defrag == nil end, 20000)
-  check((F.note or ""):find("Defrag done") ~= nil and not (F.note or ""):find("not enough"), "all sorted: " .. tostring(F.note))
+  local doneNote = F.defragResult
+  local moves = net.calls.pushItems or 0
+  -- (planned at once, items kept where most of them are: 78; sorting A..Z
+  -- across barrels, one step at a time, took 358-411)
+  check(moves <= 100, "few moves: " .. moves)
+  check((doneNote or ""):find("Defrag done") ~= nil and not (doneNote or ""):find("no room"), "all sorted: " .. tostring(doneNote))
   local bad = {}
   for _, I in pairs(W.inv) do
     local last, gap = "", false

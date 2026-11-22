@@ -377,7 +377,9 @@ local function chests(api)
     local view = { invs = {}, drawers = {}, maxOf = cache.maxOf }
     for _, inv in ipairs(names) do
       local drawer = M.drawerSlots(inv) ~= nil
-      local entry = { name = inv, size = sizes[inv] or 0, slots = {} }
+      -- (loose: a Sophisticated inventory places what goes in itself)
+      local entry = { name = inv, size = sizes[inv] or 0, slots = {},
+                      loose = inv:find("^sophisticatedstorage:") ~= nil }
       for slot = 1, entry.size do
         local it = slots[inv][slot]
         if it and it.count > 0 then
