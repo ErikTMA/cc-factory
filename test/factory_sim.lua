@@ -2308,7 +2308,8 @@ do
   for i = 1, 30 do text = text .. (screen[i] or "") .. "\n" end
   if os.getenv("DUMP") then print(text) end
   check(ok, "ORES tab draws (" .. tostring(err) .. ")")
-  check(text:find("iron%s+9%s+2") ~= nil, "iron: 9 known (both block kinds), 2 held")
+  check(text:find("iron%s+9%s+2") ~= nil, "iron: 9 known (both block kinds), 2 in a job")
+  check(text:find("in job") ~= nil and not text:find("held"), "the column says 'in job'")
   check(text:find("gold%s+2%s+%-") ~= nil, "gold: 2 known")
   check(not text:find("amethyst"), "only ores listed")
   local ironRow = text:find("iron") and text:find("gold") and text:find("iron") < text:find("gold")

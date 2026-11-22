@@ -196,7 +196,8 @@ local function drawOres(UI, out, w, row, h)
   for _ in pairs(F.map.scans) do scans = scans + 1 end
   put(out, 1, row, ("ORE MAP  %d ore kinds, %d blocks known, %d scans"):format(#list, F.map.n, scans), colors.yellow)
   row = row + 1
-  put(out, 1, row, ("%-18s %6s %6s  %-11s"):format("ore", "known", "held", "Y"), colors.lightGray)
+  -- (in job: known ones on a queued or running job's list, not mined yet)
+  put(out, 1, row, ("%-18s %6s %6s  %-11s"):format("ore", "known", "in job", "Y"), colors.lightGray)
   row = row + 1
   if #list == 0 then
     put(out, 1, row, "Nothing yet: miners report every scan when they come home.", colors.lightGray)
