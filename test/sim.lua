@@ -780,6 +780,69 @@ do
   check(fleet[1].T.x == 0 and fleet[1].T.y == 0 and fleet[1].T.z == 0, ("home (%d,%d,%d)"):format(fleet[1].T.x, fleet[1].T.y, fleet[1].T.z))
 end
 
+print("scenario: out past a bedrock wall whose only hole is far beyond any detour it may search:")
+print("          it walks its trail back (the way it came) and gets home; it can't be sealed in")
+do
+  local W = newWorld(67, 1, { span = 60, ymin = -30, ymax = 6 })
+  -- home faces east (h 1). A wall across x = 10, floor to ceiling; its only
+  -- hole 20 blocks south, at z = 20
+  for y = -30, 5 do for z = -60, 60 do W.set(10, y, z, "minecraft:bedrock") end end
+  W.set(10, -10, 20, nil)
+  -- the tunnel it came by: down the shaft, south 20, east through the hole, north 20
+  local trail = {}
+  local function dig(x, y, z) W.set(x, y, z, nil); trail[#trail + 1] = x .. "," .. y .. "," .. z end
+  for y = -1, -10, -1 do dig(0, y, 0) end
+  for z = 1, 20 do dig(0, -10, z) end
+  for x = 1, 15 do dig(x, -10, 20) end
+  for z = 19, 0, -1 do dig(15, -10, z) end
+  local T, api, sc = newTurtle(W, 1, 4000)
+  T.x, T.y, T.z = 15, -10, 0
+  local textutils = {}
+  function textutils.serialize(v)
+    if type(v) == "table" then
+      local p = {}
+      for k, x in pairs(v) do p[#p + 1] = "[" .. textutils.serialize(k) .. "]=" .. textutils.serialize(x) end
+      return "{" .. table.concat(p, ",") .. "}"
+    elseif type(v) == "string" then return string.format("%q", v) end
+    return tostring(v)
+  end
+  local files = {
+    ["oreminer.state"] = textutils.serialize({ pos = { x = 15, y = -10, z = 0 }, heading = 1, homeHeading = 1,
+      lane = 1, lanes = 1, progress = 0, length = 16, dy = -10, mined = 0, job = { y = -10 } }),
+    ["oreminer.trail"] = textutils.serialize(trail),
+    ["oreminer.cfg"] = textutils.serialize({ detourMargin = 8 }),
+  }
+  local ok, err = runProgram(makeEnv(T, api, sc, files), "resume")
+  check(ok, "resumed and finished (" .. tostring(err) .. ")")
+  check(T.x == 0 and T.y == 0 and T.z == 0, ("home, by its trail (%d,%d,%d)"):format(T.x, T.y, T.z))
+end
+
+print("scenario: other turtles in its way (across the lane) for a while: it waits for them and")
+print("          goes on, rather than digging around them")
+do
+  local W = newWorld(69, 0, { span = 60, ymin = -30, ymax = 6 })
+  for x = -8, 8 do for y = -28, -12 do W.set(x, y, -6, "computercraft:turtle_advanced") end end
+  local gone, still, lastPos = false, 0, nil
+  local B, fleet = runFleet(W, { { x = 0, z = 0, h = 0 } }, function(Base, B)
+    Base.queueJob(B, { only = "diamond", y = -20, quantity = 999, lanes = 1, length = 16 })
+  end, {
+    onTick = function(Base, B, fleet, tick)
+      if gone then return end
+      local T = fleet[1].T
+      local pos = T.x .. "," .. T.y .. "," .. T.z
+      if T.z == -5 and pos == lastPos then still = still + 1 else still = 0 end
+      lastPos = pos
+      if still > 5 then -- it stood waiting in front of them: they move on
+        for x = -8, 8 do for y = -28, -12 do W.set(x, y, -6, nil) end end
+        gone = true
+      end
+    end,
+  })
+  check(not fleet[1].err, "ran without error: " .. tostring(fleet[1].err))
+  check(gone, "it waited in front of the other turtles until they left")
+  check(fleet[1].T.x == 0 and fleet[1].T.y == 0 and fleet[1].T.z == 0, "and got home")
+end
+
 print("scenario: modded stone (darkstone) with no tags in the scan stays out of the map; real")
 print("          ores and odd blocks go in; a raw scan entry is kept as scan.sample")
 do

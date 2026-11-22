@@ -37,6 +37,9 @@ local CFG = {
   fuelMargin = 100,    -- head home when fuel < distance home + this
   travelSteps = 2000,  -- replans one trip may take going around what it can't dig
   orePatience = 6,     -- ... and one ore (under a bedrock layer: not worth more)
+  detourMargin = 64,   -- how far around start and target a detour is searched
+  turtleWait = 30,     -- s it waits for another turtle in its way before going around
+  trailFile = "oreminer.trail", -- the way it came (its way out, whatever the planner finds)
   askFuelBelow = 1000, -- at home, ask the base for fuel below this
   minDepth = 16,       -- a job's level is at least this far below home (never up through the base)
   mapEvery = 3,        -- out on a job: send the base its scans every this many (wireless modem)
@@ -253,15 +256,42 @@ end
 
 -- One step, digging through whatever is in the way. Returns false if blocked
 -- by something we may not or cannot break.
+-- The trail: the cells it moved through since it left home, loops cut out
+-- (so it is the direct way it came). Whatever happens, that is a way out.
+local TRAIL, TRAIL_AT = {}, {}
+local function trailAdd()
+  local k = key(S.pos.x, S.pos.y, S.pos.z)
+  if S.pos.x == 0 and S.pos.y == 0 and S.pos.z == 0 then TRAIL, TRAIL_AT = {}, {}; return end
+  local i = TRAIL_AT[k]
+  if i then -- back on its own trail: the loop since then is cut out
+    for j = #TRAIL, i + 1, -1 do TRAIL_AT[TRAIL[j]] = nil; TRAIL[j] = nil end
+  else
+    TRAIL[#TRAIL + 1] = k
+    TRAIL_AT[k] = #TRAIL
+  end
+end
+local function saveTrail() writeFile(CFG.trailFile, TRAIL) end
+local function loadTrail()
+  TRAIL, TRAIL_AT = readFile(CFG.trailFile) or {}, {}
+  for i, k in ipairs(TRAIL) do TRAIL_AT[k] = i end
+end
+
+local function isTurtle(name) return name:find("^computercraft:turtle") ~= nil end
+
 local function step(kind)
   local m = MOVES[kind]
-  for _ = 1, 30 do
-    if tmove.move(S, save, kind, m.move, applyMove) then return true end
+  local waited, tries = 0, 0
+  while tries < 30 do
+    tries = tries + 1
+    if tmove.move(S, save, kind, m.move, applyMove) then trailAdd(); return true end
     if m.detect() then
       local ok, info = m.inspect()
-      if ok and isProtected(info.name) then return false end
-      if not m.dig() then return false end -- bedrock or unbreakable
-      if ok then
+      -- another turtle in the way moves on: wait for it (a while), then go around
+      if ok and isTurtle(info.name) and waited < CFG.turtleWait then
+        sleep(1); waited = waited + 1; tries = tries - 1
+      elseif ok and isProtected(info.name) then return false
+      elseif not m.dig() then return false -- bedrock or unbreakable
+      elseif ok then
         local d = kind == "fwd" and DIRS[S.heading] or { 0, m.dy, 0 }
         noteDug(S.pos.x + d[1], S.pos.y + d[2], S.pos.z + d[3], info)
       end
@@ -272,7 +302,6 @@ local function step(kind)
   end
   return false
 end
-
 -- The shortest way from `from` to `to` through cells not known to be
 -- blocked (everything else is assumed diggable), inside the box around both
 -- plus `margin`: a list of { kind, h } moves, or nil if there is none. A*
@@ -347,6 +376,28 @@ end
 -- a step fails it remembers that cell and plans again from where it is. Each
 -- failure rules out a cell for good, so it either gets there or finds it is
 -- sealed in (or runs out of CFG.travelSteps).
+-- Back the way it came: its trail, cell by cell, to home. (What blocks a
+-- trail cell now was put there since: dug, or another turtle waited for.)
+local function retrace()
+  log("No way found around: back the way I came")
+  for i = #TRAIL - 1, 0, -1 do
+    local x, y, z = 0, 0, 0
+    if i > 0 then
+      local a, b, c = TRAIL[i]:match("^(-?%d+),(-?%d+),(-?%d+)$")
+      x, y, z = tonumber(a), tonumber(b), tonumber(c)
+    end
+    local kind
+    if y > S.pos.y then kind = "up" elseif y < S.pos.y then kind = "down"
+    else
+      for h = 0, 3 do
+        if S.pos.x + DIRS[h][1] == x and S.pos.z + DIRS[h][3] == z then turnTo(h); kind = "fwd" end
+      end
+    end
+    if not kind or not step(kind) then return false end
+  end
+  return S.pos.x == 0 and S.pos.y == 0 and S.pos.z == 0
+end
+
 local function goAround(t, blocked, patience)
   blocked = blocked or {}
   local margin = 8
@@ -354,8 +405,14 @@ local function goAround(t, blocked, patience)
     if S.pos.x == t.x and S.pos.y == t.y and S.pos.z == t.z then return true end
     local moves = plan(S.pos, t, blocked, margin)
     if not moves then
-      if margin >= 32 then return false end
-      margin = margin * 2 -- a wider detour
+      if margin >= CFG.detourMargin then
+        -- (only for the long ways: an ore isn't worth the trip back)
+        if patience or #TRAIL == 0 or not retrace() then return false end
+        if t.x == 0 and t.y == 0 and t.z == 0 then return true end
+        blocked, margin = {}, 8 -- from home, a fresh start
+      else
+        margin = margin * 2 -- a wider detour
+      end
     else
       for _, m in ipairs(moves) do
         if m.h then turnTo(m.h) end
@@ -648,6 +705,7 @@ local function mineVisible()
     PEND.scans[#PEND.scans + 1] = { x = S.pos.x, y = S.pos.y, z = S.pos.z, r = CFG.radius, ores = seen }
     savePend()
   end
+  saveTrail() -- (its way out, kept through a restart)
   local n = mineList(ores)
   if MAPPING and #PEND.scans >= SEND_AT then sendMap() end
   return n
@@ -722,6 +780,7 @@ end
 -- A job: { only = "diamond" | nil, y = <absolute Y> | nil, quantity = n | nil,
 --          lanes = n | nil, length = n | nil, sector = first lane | nil, id = n | nil }
 local function newJob(job, home, known)
+  TRAIL, TRAIL_AT = {}, {}
   S = { pos = { x = 0, y = 0, z = 0 }, heading = home.heading, homeHeading = home.heading,
         known = known or {},
         lane = 0, progress = 0, lanes = job.lanes or CFG.lanes, length = job.length or CFG.length,
@@ -776,8 +835,11 @@ local function resumeUnfinished()
 end
 
 -- ---------------------------------------------------------------- main --
+-- oreminer.cfg (optional): settings over the defaults above
+for k, v in pairs(readFile("oreminer.cfg") or {}) do CFG[k] = v end
 if not ensureScanner() then error("No Geo Scanner equipped (or in inventory)", 0) end
 loadPend()
+loadTrail()
 
 local args = { ... }
 if args[1] == "resume" then
