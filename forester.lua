@@ -51,6 +51,8 @@ local CFG = {
   keepLogs = 16,       -- logs it keeps for fuel when unloading
   keepSaplings = 64,   -- saplings it keeps of each kind when unloading
   keepFuel = 64,       -- fuel items (charcoal...) it keeps when unloading
+  treeFuel = 2 * 40 + 10, -- fuel one tree may take (climb up and down, maxHeight)
+  minRoundFuel = 60,   -- below this (after filling up at home) it waits at home
   boneMealTries = 8,   -- bone meal uses per sapling before giving up
   stateFile = "forester.state",
   areaFile = "forester.area",
@@ -612,10 +614,9 @@ end
 
 -- Measuring ran low on fuel: home, take the mailbox (the base keeps fuel in
 -- the chest), drop the clutter, burn what it has, and ask the base for more.
-fuelTrip = function(need)
-  log("Low on fuel: going home to fill up")
-  while S.up > 0 do forceDown() end
-  if not walkTo({ x = 0, z = 0 }) then error("Cannot find my way home through the pen", 0) end
+-- At home: take the mailbox (the base keeps fuel in the chest), drop the
+-- clutter, burn what it has, ask the base for more. True when it has `need`.
+local function fillUp(need)
   unload()
   refuel()
   local f = turtle.getFuelLevel()
@@ -623,7 +624,14 @@ fuelTrip = function(need)
     local got, why = link.requestFuel(math.max(need, CFG.fuelTarget) - f)
     log(got and ("The base gave me %d fuel"):format(got) or ("No fuel from the base: " .. tostring(why)))
   end
-  if turtle.getFuelLevel() < need then
+  return turtle.getFuelLevel() == "unlimited" or turtle.getFuelLevel() >= need
+end
+
+fuelTrip = function(need)
+  log("Low on fuel: going home to fill up")
+  while S.up > 0 do forceDown() end
+  if not walkTo({ x = 0, z = 0 }) then error("Cannot find my way home through the pen", 0) end
+  if not fillUp(need) then
     error(("Out of fuel while measuring the pen (%s, need %d): put coal or logs in me (I'm home)")
       :format(tostring(turtle.getFuelLevel()), need), 0)
   end
@@ -641,6 +649,12 @@ local function dist(a, x, z) return math.abs(a.x - x) + math.abs(a.z - z) end
 local function round()
   select(WORK_SLOT)
   refuel()
+  -- (at home) too little fuel to go out at all: fill up, else wait here
+  local f0 = turtle.getFuelLevel()
+  if f0 ~= "unlimited" and f0 < CFG.fuelLow and not fillUp(CFG.fuelLow) and turtle.getFuelLevel() < CFG.minRoundFuel then
+    log(("Fuel %d: waiting at home for fuel (put coal or logs in me, or in my chest)"):format(turtle.getFuelLevel()))
+    return false
+  end
   -- the kinds changed (the base's selection, what it carries): new grid
   local spacing, soilAround = treeNeeds()
   if spacing ~= AREA.spacing then
@@ -658,6 +672,18 @@ local function round()
       if d < bd then bi, bd = i, d end
     end
     local sk = table.remove(todo, bi)
+    -- enough fuel to get there, fell a tree and walk home? else home now
+    local sx0, sz0 = unkey(sk)
+    local there = path(S.pos, { x = sx0, z = sz0 }) or {}
+    local back = path({ x = sx0, z = sz0 }, { x = 0, z = 0 }) or there
+    local need = #there + #back + CFG.treeFuel
+    if turtle.getFuelLevel() ~= "unlimited" and turtle.getFuelLevel() < need then
+      refuel()
+      if turtle.getFuelLevel() < need then
+        log(("Fuel %d: not enough for the next tree and the way home, going home early"):format(turtle.getFuelLevel()))
+        break
+      end
+    end
     local sx, sz = unkey(sk)
     -- a spot without soil: stand on it and lay dirt, if we have some now
     if not isSoil(AREA.cells[sk]) and dirtSlot() and walkTo({ x = sx, z = sz }) then

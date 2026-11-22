@@ -568,6 +568,25 @@ do
     ("carried on (%d cells known) and finished: %s, %d spots"):format(cellsBefore, tostring(err), plantedSpots(W)))
 end
 
+print("scenario: a round with little fuel and nothing to burn: it turns back in time and waits at home")
+do
+  local W = newWorld()
+  -- the pen is already measured: a round needs ~100 moves, it has 150
+  local files = {}
+  do
+    local T0, api0 = newTurtle(W, 3000)
+    T0.inv[1] = { name = SAP, count = 64 }
+    run(makeEnv(T0, api0, files, sleeper(W, 1)), "10") -- measures and plants, stops at its first rest
+  end
+  local T, api = newTurtle(W, 30) -- (no trees grown: nothing to burn; below the 60 a round needs)
+  T.inv[1] = { name = SAP, count = 64 }
+  local moved0 = T.moves
+  local ok, err = run(makeEnv(T, api, files, sleeper(W, 3)), "10")
+  check(T.fuel == 30, "it didn't set out: waits at home with its 30 fuel (fuel now " .. T.fuel .. ")")
+  check(T.x == 0 and T.z == 0, ("at home, not stranded in the pen (%d,%d), fuel %d"):format(T.x, T.z, T.fuel))
+  check(T.fuel >= 0 and tostring(err):find("END OF TEST") ~= nil, "no 'out of fuel' error: " .. tostring(err))
+end
+
 local MENRIL = "integrateddynamics:menril_sapling"
 local function plantedAt(W, list)
   local n = 0
