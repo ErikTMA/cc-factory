@@ -2321,8 +2321,11 @@ do
   local ironRow = text:find("iron") and text:find("gold") and text:find("iron") < text:find("gold")
   check(ironRow, "most first")
   local mine
-  for _, b in ipairs(UI.buttons) do if b.label == "MINE 7" then mine = b end end
-  check(mine ~= nil, "a MINE 7 button for the 7 free iron")
+  for _, b in ipairs(UI.buttons) do if b.label == "mine iron" then mine = b end end
+  check(mine ~= nil and mine.x1 == 1 and mine.x2 == 57 and text:find("tap a row"),
+    "the whole iron row is a button (tap to mine its 7 free)")
+  local hit = UIlib.touch(UI, 30, mine and mine.y or 0)
+  check(hit == "mine iron", "a tap anywhere on the row hits it: " .. tostring(hit))
   local before = #F.queue
   if mine then mine.action() end
   local job = F.queue[#F.queue]

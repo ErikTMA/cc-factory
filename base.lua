@@ -201,9 +201,6 @@ local function drawOres(UI, out, w, row, h)
   for _ in pairs(F.map.scans) do scans = scans + 1 end
   put(out, 1, row, ("ORE MAP  %d ore kinds, %d blocks known, %d scans"):format(#list, F.map.n, scans), colors.yellow)
   row = row + 1
-  -- (in job: known ones on a queued or running job's list, not mined yet)
-  put(out, 1, row, ("%-18s %6s %6s  %-11s"):format("ore", "known", "in job", "Y"), colors.lightGray)
-  row = row + 1
   -- SCOUT: a miner maps a level without mining (factory.scout)
   local sy = F.sel.scoutY or -24
   put(out, 1, row, ("Scout Y %4d"):format(sy))
@@ -239,6 +236,10 @@ local function drawOres(UI, out, w, row, h)
     put(out, 1, row, "Nothing yet: miners report every scan when they come home.", colors.lightGray)
     return row + 2
   end
+  -- (in job: known ones on a queued or running job's list, not mined yet)
+  put(out, 1, row, ("%-18s %6s %6s  %-11s  tap a row to mine it"):format("ore", "known", "in job", "Y"):sub(1, w),
+    colors.lightGray)
+  row = row + 1
   local per = math.max(1, h - row - 2)
   local pages = math.ceil(#list / per)
   UI.orePage = math.max(1, math.min(UI.orePage or 1, pages))
@@ -247,11 +248,12 @@ local function drawOres(UI, out, w, row, h)
     local e = list[i]
     local free = e.count - e.held
     put(out, 1, row, ("%-18s %6d %6s  %4d..%-5d"):format(e.kind:sub(1, 18), e.count,
-      e.held > 0 and tostring(e.held) or "-", e.minY, e.maxY):sub(1, w - 12),
+      e.held > 0 and tostring(e.held) or "-", e.minY, e.maxY):sub(1, w),
       free > 0 and colors.white or colors.gray)
     if free > 0 then
-      local label = "MINE " .. free
-      button(UI, out, w - #label - 1, row, #label + 2, label, false, function() factory.mineOre(F, e.kind) end)
+      -- the whole row: tap it to mine the free ones
+      UI.buttons[#UI.buttons + 1] = { x1 = 1, x2 = w, y = row, label = "mine " .. e.kind,
+                                      action = function() factory.mineOre(F, e.kind) end }
     end
     row = row + 1
   end
