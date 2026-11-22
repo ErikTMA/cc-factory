@@ -49,12 +49,13 @@ local CFG = {
   maxArea = 1024,      -- more open cells than this: the pen is not closed
   fuelLow = 300,       -- refuel from logs below this ...
   fuelTarget = 600,    -- ... up to this
-  keepLogs = 16,       -- logs it keeps for fuel when unloading (all kinds together)
+  keepLogs = 0,        -- logs it keeps when unloading: none, its fuel comes from the base
   keepSaplings = 16,   -- saplings it keeps of each kind when unloading
   keepFuel = 16,       -- fuel items (charcoal...) it keeps when unloading (all kinds)
   minFree = 3,         -- free slots below this during a round: home to unload first
   sweepDelay = 90,     -- s after a round that felled trees: the next round starts this soon
   sweepRounds = 2,     -- rounds that sweep around a felled tree (leaves decay for minutes)
+  sweepRadius = 4,     -- cells around a felled trunk its leaves reach (cherry, acacia: 4)
   supply = { fuel = 16, saplings = 16, bonemeal = 32 }, -- what it asks the base for at home
   treeFuel = 2 * 40 + 10, -- fuel one tree may take (climb up and down, maxHeight)
   minRoundFuel = 60,   -- below this (after filling up at home) it waits at home
@@ -788,20 +789,33 @@ local function visitSpot(sk, soilAround)
   end
 end
 
--- Sweep around the trees felled lately: stand on each path cell within 2 of
--- them and take what lies in the 4 cells around it (saplings, apples, sticks
--- from the decaying leaves). Each felled tree is swept CFG.sweepRounds times.
+-- Sweep under the trees felled lately, where their leaves drop saplings
+-- (the next trees: without them it runs out of kinds), apples and sticks:
+-- every cell within CFG.sweepRadius of the trunk. It stands on path cells
+-- and takes what lies in the 4 cells around; a cell is checked once. Each
+-- felled tree is swept CFG.sweepRounds times.
 local function sweep()
   if not S.sweep or not next(S.sweep) then return end
-  local cells = {}
+  local r = CFG.sweepRadius
+  local want, cells = {}, {}
   for k in pairs(AREA.cells) do
     local x, z = unkey(k)
-    if not isSpot[k] then
-      for t in pairs(S.sweep) do
-        local tx, tz = unkey(t)
-        if math.abs(tx - x) <= 2 and math.abs(tz - z) <= 2 then cells[k] = true; break end
-      end
+    for t in pairs(S.sweep) do
+      local tx, tz = unkey(t)
+      if math.abs(tx - x) <= r and math.abs(tz - z) <= r then want[k] = true; break end
     end
+  end
+  -- stand on path cells next to (or in) the area
+  for k in pairs(want) do
+    local x, z = unkey(k)
+    for h = -1, 3 do
+      local nk = h < 0 and k or key(x + DIRS[h][1], z + DIRS[h][3])
+      if AREA.cells[nk] and not isSpot[nk] then cells[nk] = true end
+    end
+  end
+  local function needed(k)
+    local x, z = unkey(k)
+    for h = 0, 3 do if want[key(x + DIRS[h][1], z + DIRS[h][3])] then return true end end
   end
   while next(cells) do
     local best, bd
@@ -811,13 +825,18 @@ local function sweep()
       if not bd or d < bd or (d == bd and k < best) then best, bd = k, d end
     end
     cells[best] = nil
-    local x, z = unkey(best)
-    local back = path({ x = x, z = z }, { x = 0, z = 0 })
-    local f = turtle.getFuelLevel()
-    if f ~= "unlimited" and f < bd + (back and #back or bd) + 10 then break end
-    if freeSlots() < 1 then break end
-    if walkTo({ x = x, z = z }) then
-      for h = 0, 3 do turnTo(h); collect() end
+    if needed(best) then
+      local x, z = unkey(best)
+      local back = path({ x = x, z = z }, { x = 0, z = 0 })
+      local f = turtle.getFuelLevel()
+      if f ~= "unlimited" and f < bd + (back and #back or bd) + 10 then break end
+      if freeSlots() < 1 then break end
+      if walkTo({ x = x, z = z }) then
+        for h = 0, 3 do
+          local nk = key(x + DIRS[h][1], z + DIRS[h][3])
+          if want[nk] then turnTo(h); collect(); want[nk] = nil end
+        end
+      end
     end
   end
   for t, n in pairs(S.sweep) do S.sweep[t] = n > 1 and n - 1 or nil end

@@ -146,7 +146,7 @@ local function newWorld(opts)
     for _, g in ipairs(gone) do
       W.set(g[1], g[2], g[3], nil)
       decayed = decayed + 1
-      if decayed % 2 == 0 then
+      if decayed % 2 == 0 and not W.get(g[1], 0, g[3]) then -- (onto a fence/chest: out of reach)
         W.drop(g[1], g[3], (g[4]:gsub("_leaves$", "_sapling")), 1)
         W.items[#W.items].t = start + math.min(secs, 10) -- (leaves start decaying within seconds)
       end
@@ -763,7 +763,7 @@ do
   end
   local most = 0
   for _, n in pairs(perKind) do most = math.max(most, n) end
-  check(logs <= 16, "16 logs at most, all kinds together: " .. logs)
+  check(logs == 0, "no logs kept: they go to the chest (fuel comes from the base): " .. logs)
   check(most <= 16, "16 saplings at most of each kind: " .. most)
   check(free >= 5, "room for its haul: " .. free .. " free slots")
 end
@@ -840,7 +840,20 @@ do
   end
   local function sl()
     n = n + 1
-    if n == 1 then W.growAll(); return end          -- round 2 fells them all
+    if n == 1 then                                    -- round 2 fells it
+      -- ONE tree, at the spot (0,-2), with a wide canopy (cherry, acacia):
+      -- leaves out to 4 cells from the trunk
+      for key, v in pairs(W.b) do
+        local x, y, z = key:match("^(-?%d+),(-?%d+),(-?%d+)$")
+        if isSap(v) and not (tonumber(x) == 0 and tonumber(z) == -2) then W.b[key] = nil end
+      end
+      W.growAll()
+      for dx = -4, 4 do for dz = -4, 4 do
+        local lx, lz = dx, -2 + dz
+        if lx >= -4 and lx <= 4 and lz >= -9 and lz <= 0 and not W.get(lx, 4, lz) then W.set(lx, 4, lz, LEAF) end
+      end end
+      return
+    end
     if n == 2 then                                    -- the leaves have decayed by now
       for _, it in ipairs(W.items) do it.old = true; dropped = dropped + it.count end
       sapsBefore = saps()
