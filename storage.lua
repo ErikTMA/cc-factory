@@ -53,6 +53,9 @@ end
 
 local function base(api)
   local S = {}
+  -- a new decision: what was read before may have changed (the barrel
+  -- backend also drops its journal)
+  function S.forget() if S.forgetTurtles then S.forgetTurtles() end end
   function S.inputs() return inventories(api, "input") end
   function S.furnaces()
     local out = {}
@@ -64,11 +67,22 @@ local function base(api)
   function S.slots(name) return api.call(name, "list") or {} end
   -- A turtle on the wired network (a modem touching it, enabled) by its
   -- computer ID: its network name, or nil. Its inventory takes pushItems.
+  -- (remembered per ID, and checked once per decision: a name is one call, a
+  -- search one per turtle)
+  local turtleName, checked = {}, {}
+  S.forgetTurtles = function() checked = {} end
   function S.findTurtle(id)
+    local known = turtleName[id]
+    if known and checked[id] then return known end
+    if known then
+      local ok, tid = pcall(api.call, known, "getID")
+      if ok and tid == id then checked[id] = true; return known end
+      turtleName[id] = nil
+    end
     for _, n in ipairs(api.getNames()) do
       if api.hasType(n, "turtle") then
         local ok, tid = pcall(api.call, n, "getID")
-        if ok and tid == id then return n end
+        if ok and tid == id then turtleName[id] = n; checked[id] = true; return n end
       end
     end
   end
@@ -82,82 +96,214 @@ local function base(api)
 end
 
 -- ---------------------------------------------------------------- chests --
+-- Run peripheral calls side by side: CC (parallel API, coroutines) lets
+-- calls from several coroutines complete in the same tick, where one after
+-- the other each waits for its own (every call over a wired network does).
+local function runAll(fns)
+  if #fns == 0 then return end
+  if parallel and parallel.waitForAll and #fns > 1 then
+    parallel.waitForAll(table.unpack(fns))
+  else
+    for _, f in ipairs(fns) do f() end
+  end
+end
+M.runAll = runAll
+
 local function chests(api)
   local S = base(api)
   S.kind = "barrels"
 
+  -- The journal: what sits where in storage. CC has no event for an
+  -- inventory changing (players and hoppers change barrels too), so the only
+  -- truth is a read, and every read waits for a tick. So: one listing of all
+  -- inventories side by side (one tick, however many barrels), kept for one
+  -- decision (S.forget() at each message and tick), with every move the base
+  -- makes in that decision written into it (what it stores goes into a slot
+  -- it picks). A send that finds less than the journal said lists again.
+  --   slots[inv][slot] = { name, count }
+  local slots, sizes
+  local function forget() slots = nil; S.forgetTurtles() end
+  S.forget = forget
+
+  local function refresh()
+    local invs = inventories(api, "storage")
+    local lists, fns = {}, {}
+    sizes = sizes or {}
+    for i, n in ipairs(invs) do
+      fns[#fns + 1] = function() lists[i] = api.call(n, "list") or {} end
+      if not sizes[n] then fns[#fns + 1] = function() sizes[n] = api.call(n, "size") or 27 end end
+    end
+    runAll(fns)
+    slots = {}
+    for i, n in ipairs(invs) do
+      slots[n] = {}
+      for slot, it in pairs(lists[i] or {}) do slots[n][slot] = { name = it.name, count = it.count } end
+    end
+  end
+  local function fresh()
+    if not slots then refresh() end
+    return slots
+  end
+  local function entries(item)
+    local out = {}
+    for inv, ss in pairs(fresh()) do
+      for slot, it in pairs(ss) do if it.name == item and it.count > 0 then out[#out + 1] = { inv = inv, slot = slot } end end
+    end
+    table.sort(out, function(a, b) if a.inv ~= b.inv then return a.inv < b.inv end return a.slot < b.slot end)
+    return out
+  end
+
   function S.list()
     local total = {}
-    for _, n in ipairs(inventories(api, "storage")) do
-      for _, it in pairs(api.call(n, "list")) do
-        total[it.name] = (total[it.name] or 0) + it.count
-      end
+    for _, ss in pairs(fresh()) do
+      for _, it in pairs(ss) do total[it.name] = (total[it.name] or 0) + it.count end
     end
     return total
   end
 
-  function S.send(toName, item, count, accept, toSlot)
+  local function sendFrom(list, toName, count, accept, toSlot)
     local moved = 0
-    for _, n in ipairs(inventories(api, "storage")) do
-      for slot, it in pairs(api.call(n, "list")) do
-        if it.name == item and moved < count
-           and (not accept or accept(api.call(n, "getItemDetail", slot) or {})) then
-          moved = moved + api.call(n, "pushItems", toName, slot, count - moved, toSlot)
-        end
-      end
+    local details = {}
+    if accept then -- (the details to check, all read side by side first)
+      local fns = {}
+      for i, e in ipairs(list) do fns[#fns + 1] = function() details[i] = api.call(e.inv, "getItemDetail", e.slot) or {} end end
+      runAll(fns)
+    end
+    for i, e in ipairs(list) do
       if moved >= count then break end
+      local it = slots[e.inv] and slots[e.inv][e.slot]
+      if it and it.count > 0 and (not accept or accept(details[i] or {})) then
+        local n = api.call(e.inv, "pushItems", toName, e.slot, count - moved, toSlot)
+        it.count = it.count - n
+        if it.count <= 0 then slots[e.inv][e.slot] = nil end
+        moved = moved + n
+      end
     end
     return moved
   end
 
-  local function storeOne(fromName, slot, count, targets)
+  function S.send(toName, item, count, accept, toSlot)
+    local moved = sendFrom(entries(item), toName, count, accept, toSlot)
+    if moved < count then -- (the journal was out of date: list again, once)
+      refresh()
+      moved = moved + sendFrom(entries(item), toName, count - moved, accept, toSlot)
+    end
+    return moved
+  end
+
+  -- Where `count` of `item` should go: stacks of it first, then free slots.
+  -- (How much a slot holds isn't assumed: a drawer or an upgraded barrel
+  -- holds far more than 64. A stack that took nothing is full for the rest
+  -- of the decision.)
+  local function targetsFor(item)
+    local list = {}
+    for inv, ss in pairs(fresh()) do
+      for slot, it in pairs(ss) do
+        if it.name == item and not it.full then list[#list + 1] = { inv = inv, slot = slot, rank = 0 } end
+      end
+    end
+    for inv, ss in pairs(slots) do
+      for slot = 1, sizes[inv] or 27 do
+        if not ss[slot] then list[#list + 1] = { inv = inv, slot = slot, rank = 1 } end
+      end
+    end
+    table.sort(list, function(a, b)
+      if a.rank ~= b.rank then return a.rank < b.rank end
+      if a.inv ~= b.inv then return a.inv < b.inv end
+      return a.slot < b.slot
+    end)
+    return list
+  end
+
+  local function note(inv, slot, item, n)
+    local it = slots[inv][slot]
+    if it then it.count = it.count + n else slots[inv][slot] = { name = item, count = n } end
+  end
+
+  -- One slot of `fromName` (holding `count` of `item`) into storage, into
+  -- slots it picks (written into the journal). No room in the journal: the
+  -- old way, into any inventory, and the journal is dropped.
+  local function storeOne(fromName, slot, count, item)
     local moved, left = 0, count
-    for _, t in ipairs(targets) do
-      local n = api.call(fromName, "pushItems", t, slot, left)
-      left, moved = left - n, moved + n
+    for _, t in ipairs(targetsFor(item)) do
       if left <= 0 then break end
+      local n = api.call(fromName, "pushItems", t.inv, slot, left, t.slot)
+      if n > 0 then note(t.inv, t.slot, item, n) end
+      if n < left and t.rank == 0 then slots[t.inv][t.slot].full = true end
+      left, moved = left - n, moved + n
+    end
+    if left > 0 then
+      for _, t in ipairs(inventories(api, "storage")) do
+        local n = api.call(fromName, "pushItems", t, slot, left)
+        left, moved = left - n, moved + n
+        if left <= 0 then break end
+      end
+      forget()
     end
     return moved
   end
 
   function S.store(fromName)
     local moved = 0
-    local targets = inventories(api, "storage")
-    for slot, it in pairs(api.call(fromName, "list")) do
-      moved = moved + storeOne(fromName, slot, it.count, targets)
+    for slot, it in pairs(api.call(fromName, "list") or {}) do
+      moved = moved + storeOne(fromName, slot, it.count, it.name)
     end
     return moved
   end
 
   function S.storeSlot(fromName, slot)
-    local it = api.call(fromName, "list")[slot]
+    local it = (api.call(fromName, "list") or {})[slot]
     if not it then return 0 end
-    return storeOne(fromName, slot, it.count, inventories(api, "storage"))
+    return storeOne(fromName, slot, it.count, it.name)
   end
 
   -- Pull one slot of an inventory that can't be listed (a turtle) back into
-  -- storage. `item` is unused here (pullItems works by slot).
-  function S.takeFrom(fromName, slot)
+  -- storage. With `item` known it goes into slots the journal picks; without,
+  -- anywhere, and the journal is dropped.
+  function S.takeFrom(fromName, slot, item)
     local moved = 0
+    if item then
+      for _, t in ipairs(targetsFor(item)) do
+        local n = api.call(t.inv, "pullItems", fromName, slot, 64, t.slot)
+        if n > 0 then note(t.inv, t.slot, item, n); moved = moved + n
+        elseif t.rank == 0 then slots[t.inv][t.slot].full = true end
+        if moved > 0 and n == 0 then return moved end -- (moved some, then nothing: empty)
+      end
+      return moved
+    end
+    forget()
     for _, t in ipairs(inventories(api, "storage")) do
-      local n
+      local got = 0
       repeat
-        n = api.call(t, "pullItems", fromName, slot)
-        moved = moved + n
+        local n = api.call(t, "pullItems", fromName, slot)
+        got = got + n
       until n == 0
+      moved = moved + got
+      if got > 0 and api.call(t, "pullItems", fromName, slot) == 0 then break end
     end
     return moved
   end
 
-  function S.countWhere(item, accept)
-    local n = 0
-    for _, inv in ipairs(inventories(api, "storage")) do
-      for slot, it in pairs(api.call(inv, "list")) do
-        if it.name == item and accept(api.call(inv, "getItemDetail", slot) or {}) then n = n + it.count end
+  -- How many of each item pass its check: `checks` = { [item] = accept };
+  -- every slot's details read side by side, in one go.
+  function S.countWhereMany(checks)
+    local jobs, details, fns = {}, {}, {}
+    for item, accept in pairs(checks) do
+      for _, e in ipairs(entries(item)) do
+        local i = #jobs + 1
+        jobs[i] = { item = item, accept = accept, e = e }
+        fns[#fns + 1] = function() details[i] = api.call(e.inv, "getItemDetail", e.slot) or {} end
       end
     end
-    return n
+    runAll(fns)
+    local out = {}
+    for item in pairs(checks) do out[item] = 0 end
+    for i, j in ipairs(jobs) do
+      if j.accept(details[i] or {}) then out[j.item] = out[j.item] + slots[j.e.inv][j.e.slot].count end
+    end
+    return out
   end
+  function S.countWhere(item, accept) return S.countWhereMany({ [item] = accept })[item] end
 
   return S
 end

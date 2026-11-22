@@ -220,7 +220,12 @@ local function baseNetwork()
     if netTurtle(name) then return t == "turtle" end
     return W.inv[name] ~= nil and t == "inventory"
   end
+  api.calls, api.ticks = {}, 0
   function api.call(name, method, ...)
+    api.calls[method] = (api.calls[method] or 0) + 1
+    -- a call over a wired network waits for a tick; calls made side by side
+    -- (parallel.waitForAll) share theirs
+    if not api.inBatch then api.ticks = api.ticks + 1 end
     local a = { ... }
     if name == "drive_0" then
       if method == "hasData" then return true end
@@ -232,6 +237,7 @@ local function baseNetwork()
       error("turtle peripheral: no method " .. method)
     end
     local I = assert(W.inv[name], name)
+    if method == "size" then return I.size end
     if method == "list" then
       local out = {}
       for i, s in pairs(I.slots) do out[i] = { name = s.name, count = s.count } end
@@ -784,6 +790,15 @@ baseFiles["dist/" .. manifest.installer] = repoFile(manifest.installer)
 local baseEnv = setmetatable({}, { __index = _G })
 baseEnv.fs = newFS(baseFiles, { disk = DISK })
 baseEnv.textutils = textutils
+-- CC's parallel API as the base sees it: the functions run side by side, so
+-- their peripheral calls share one tick (counted on the network)
+baseEnv.parallel = { waitForAll = function(...)
+  local fns = { ... }
+  local net = rawget(_G, "SIM_NET")
+  if net then net.ticks = net.ticks + 1; net.inBatch = true end
+  for _, f in ipairs(fns) do f() end
+  if net then net.inBatch = false end
+end }
 baseEnv.colors = setmetatable({}, { __index = function(_, kk) return kk end })
 baseEnv.os = setmetatable({ getComputerID = function() return 0 end }, { __index = os })
 baseEnv.require = function(name) return assert(load(assert(baseFiles[name .. ".lua"], name), name, "t", baseEnv))() end
@@ -791,6 +806,7 @@ local factory = baseEnv.require("factory")
 local storage = baseEnv.require("storage")
 local dist = baseEnv.require("dist")
 local net = baseNetwork()
+SIM_NET = net
 
 local release = dist.load(manifest, "/dist")
 
@@ -1068,6 +1084,8 @@ do
   }
   for _, r in ipairs(raw) do W.inv["minecraft:barrel_0"].insert(r[1], r[2]) end
   F.failStreak, F.lastFail = 0, nil
+  net.calls, net.ticks = {}, 0
+  local sentBefore = #bus.sent
   if not F.hammer then factory.toggleHammer(F) end -- (the tab test pressed it already)
   check(F.hammer, "hammer toggle on")
   local ok = runUntil(function()
@@ -1084,6 +1102,20 @@ do
     check((c[part] or 0) >= 1, "crafted " .. part)
   end
   check((W.smelted or 0) > 30, "furnaces smelted: " .. tostring(W.smelted))
+  -- speed: the next craft comes with the "crafted" answer (no idle round trip),
+  -- and storage is read as little as it takes
+  local crafts, chained = 0, 0
+  for i = sentBefore + 1, #bus.sent do
+    local e = bus.sent[i]
+    if e.msg.state == "crafted" and e.msg.craft then
+      crafts = crafts + 1
+      if e.reply and e.reply.type == "craft" then chained = chained + 1 end
+    end
+  end
+  check(crafts >= 20 and chained >= crafts / 2,
+    ("the next craft comes with the crafted answer: %d of %d"):format(chained, crafts))
+  -- (1834 ticks before: barrels listed one after another for every send and count)
+  check(net.ticks < 1100, "storage read side by side and kept per decision: ticks waiting " .. net.ticks)
   if not ok then
     print("    missing raw:", textutils.serialize(F.prod.missing), "note:", F.note)
     print("    stock:", textutils.serialize(F.deps.storage.list()))
@@ -1112,6 +1144,7 @@ do
   B.insert("minecraft:chest", 2) -- (enough to build from scratch too)
   local computersBefore = F.crafted["computercraft:computer_advanced"] or 0
   local goldBefore = stock()["minecraft:gold_ingot"] or 0
+  F.deps.storage.forget()
   check(factory.startFor(F, "miner") == 3, "the base starts at step 3 (upgrades)")
   local ok = runUntil(function()
     for _, T in pairs(W.turtles) do if T.x == 10 and T.z == -1 and F.turtles[T.id] then return true end end
@@ -1130,6 +1163,7 @@ do
   B2.insert("computercraft:computer_advanced", 1)
   for _, st in pairs(B2.slots) do if st.name == "computercraft:computer_advanced" then st.displayName = "Advanced Computer" end end
   local Cf = baseEnv.require("oreconf")
+  F.deps.storage.forget() -- (a new decision, like every message and tick: storage read fresh)
   local first = Cf.buildSteps("miner", factory.startFor(F, "miner"))[1]
   check(factory.startFor(F, "miner") == 2 and first.grid[6] == "computercraft:computer_advanced" and not first.keep,
     "a computer in storage: starts at step 2, the computer goes into cell 6")

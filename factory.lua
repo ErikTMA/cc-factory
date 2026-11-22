@@ -418,11 +418,13 @@ end
 local function usableStock(F)
   local S = F.deps.storage
   local stock = S.list()
+  local checks = {}
   for item in pairs(stock) do
     local accept = acceptFor(item)
-    if accept then
-      stock[item] = (S.kind == "barrels" and S.countWhere) and S.countWhere(item, accept) or 0
-    end
+    if accept then checks[item] = accept; stock[item] = 0 end
+  end
+  if next(checks) and S.kind == "barrels" and S.countWhereMany then
+    for item, n in pairs(S.countWhereMany(checks)) do stock[item] = n end -- (one batch of reads)
   end
   return stock
 end
@@ -799,7 +801,8 @@ local function handleAssembler(F, from, msg)
       return { type = "continue", craft = c.id }
     elseif msg.state == "crafted" and msg.craft == c.id then
       endCraft(F, (c.made or 0) + (msg.made or 0))
-      return { type = "ok" }
+      -- the next craft right away (not after its idle round trip)
+      return startCraft(F, from) or { type = "ok" }
     elseif msg.state == "failed" then
       F.note = "Craft " .. c.item .. " failed: " .. tostring(msg.reason)
       endCraft(F, nil)
@@ -1025,8 +1028,15 @@ end
 
 -- ------------------------------------------------------------- protocol --
 -- Turtles always talk first, while at home; the reply says what to do next.
+-- Every decision starts from what storage holds now (see storage.lua).
+local function freshStorage(F)
+  local S = F.deps.storage
+  if S and S.forget then S.forget() end
+end
+
 function M.handle(F, from, msg)
   if type(msg) ~= "table" or msg.type ~= "status" then return nil end
+  freshStorage(F)
   -- what a miner saw and dug (with any status; "map" is a miner out on a job,
   -- in wireless reach: only that, its record stays as it was)
   if msg.map then M.applyMap(F, from, msg.map) end
@@ -1226,6 +1236,7 @@ end
 local DISMANTLE_TIMEOUT = 3600 -- seconds before giving up on a turtle to take apart
 
 function M.tick(F)
+  freshStorage(F)
   local S = F.deps.storage
   if F.dismantle and now(F) - (F.dismantle.since or 0) > DISMANTLE_TIMEOUT then
     F.note = ("Gave up taking %s apart (it didn't come)"):format(label(F, F.dismantle.id))

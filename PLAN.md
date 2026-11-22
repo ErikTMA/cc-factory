@@ -8,6 +8,15 @@ over rednet. Friends-only server: base-ID pinning, no signing.
 
 ## Verified facts (GamePortal ATM10 8.6: CC: Tweaked 1.120.2, AP 0.8.2a)
 
+- Inventory methods (`InventoryMethods`: `size`, `list`, `getItemDetail`,
+  `pushItems`, `pullItems`) are all `@LuaFunction(mainThread = true)`: each
+  call is queued for the server tick and the caller yields until it ran. So
+  calls one after another cost a tick each; calls from coroutines run side
+  by side (`parallel.waitForAll`) share one. `pushItems`/`pullItems` take an
+  optional target slot. CC has no event for an inventory's contents
+  changing: storage.lua reads all barrels side by side once per decision and
+  keeps a journal of its own moves within it.
+
 - `rom/startup.lua`: if an *attached* disk drive's disk has a startup file it
   runs **instead of** the computer's own startup (`shell.allow_disk_startup`).
   So the installer disk drive sits under the build spot, never next to the
