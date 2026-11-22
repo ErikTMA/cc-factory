@@ -99,8 +99,10 @@ then says the block is connected. A modem that isn't lit does nothing.
   the two modems connect to each other. Give it coal and a stack of **dirt**;
   saplings can go anywhere in it, or let the base deliver them (below).
 - First start: it walks the pen once and remembers it. On the way it fells the
-  trees already inside, clears grass, flowers and mushrooms, fills holes and
-  water with dirt, and swaps stone under tree spots for dirt. Then it plants
+  trees already inside, clears grass, flowers and mushrooms, and makes the
+  whole floor dirt or grass: holes and water get dirt, anything else (stone,
+  sand, podzol...) is dug out and replaced with dirt; modems and cables under
+  the floor are left alone. Then it plants
   a grid of tree spots counted from the pen's corner, one cell in from the
   fence (a path runs along it). The spacing depends on the tree: 3 for oak,
   birch, spruce and jungle; 4 for menril (its base is wider, and it only grows

@@ -521,9 +521,15 @@ do
   check(modemKept and not W.chest["computercraft:wireless_modem_normal"], "modem kept, not unloaded")
 end
 
-print("scenario: a rough pen: holes, water, a stone tree spot, an old tree, plants")
+print("scenario: a rough pen: holes, water, a stone tree spot, an old tree, plants;")
+print("          the whole floor ends up dirt or grass, paths too (never the modem under home)")
 do
   local W = newWorld({ rough = true })
+  W.set(-3, -1, -3, "minecraft:stone")                  -- path cells that aren't dirt or grass
+  W.set(2, -1, -4, "minecraft:sand")
+  W.set(-1, -1, -3, "minecraft:podzol")
+  W.set(0, -1, 0, "computercraft:wired_modem_full")      -- its modem, under home
+  W.set(2, -1, -1, "computercraft:cable")                -- a cable under a path cell
   local fences = W.fences()
   local T, api = newTurtle(W, 3000)
   T.inv[1] = { name = SAP, count = 64 }
@@ -533,6 +539,10 @@ do
   check(W.get(1, -1, -1) == "minecraft:dirt" and W.get(-2, -1, -7) == "minecraft:dirt", "holes filled with dirt")
   check(W.get(-1, -1, -8) == "minecraft:dirt", "the puddle filled with dirt")
   check(W.get(3, -1, -2) == "minecraft:dirt", "stone under a tree spot swapped for dirt")
+  check(W.get(-3, -1, -3) == "minecraft:dirt" and W.get(2, -1, -4) == "minecraft:dirt"
+    and W.get(-1, -1, -3) == "minecraft:dirt", "stone, sand and podzol under paths swapped for dirt")
+  check(W.get(0, -1, 0) == "computercraft:wired_modem_full" and W.get(2, -1, -1) == "computercraft:cable",
+    "the modem under home and a cable under a path left alone")
   check(isSap(W.get(3, 0, -2)) and plantedSpots(W) == #SPOTS, "every spot planted, the fixed one too")
   check(W.get(1, 0, -7) == nil and W.get(1, 4, -7) == nil and W.count(LOG) == 0, "the old tree is gone")
   check(W.get(-4, 0, -2) == nil and W.get(4, 0, -7) == nil, "grass and mushroom cleared")

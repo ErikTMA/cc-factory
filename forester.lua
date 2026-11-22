@@ -138,10 +138,10 @@ end
 -- may be removed when it is in a path or a spot (everything else is a border)
 local function isClearable(b) return isLeaves(b) or isPlant(b) or isSapling(b) end
 
--- trees grow on these
+-- the pen's floor: dirt or grass (not a dirt path); anything else under a
+-- cell is dug out and replaced with dirt
 local function isSoil(name)
-  return name and (name:find("dirt") or name:find("grass_block") or name:find("podzol")
-    or name:find("mycelium") or name:find("moss_block") or name:find("mud")) and true or false
+  return name and ((name:find("dirt") and not name:find("path")) or name:find("grass_block")) and true or false
 end
 
 -- ------------------------------------------------------------- movement --
@@ -341,21 +341,16 @@ local function dirtSlot()
   end
 end
 
--- Make the block under us floor: fill a hole (air, water, lava, a plant)
--- with dirt; on a tree spot also swap other ground (stone...) for dirt.
+-- Make the block under us dirt, unless it is dirt or grass already: fill a
+-- hole (air, water, lava, a plant), dig out anything else (stone, sand...)
+-- and put dirt there. Machines (its modem, chests) are never touched.
 -- Returns the ground block's name, or nil if it needed dirt and had none.
-local function fixGround(treeSpot)
+local function fixGround()
   local ok, b = turtle.inspectDown()
-  if ok and isSoil(b.name) then return b.name end
+  if ok and (isSoil(b.name) or isMachine(b.name)) then return b.name end
   if ok and not isFluid(b.name) then
-    if isClearable(b) then
-      turtle.digDown()
-    elseif treeSpot and not isMachine(b.name) then
-      if not dirtSlot() then return b.name end -- keep the floor until we have dirt for it
-      turtle.digDown()
-    else
-      return b.name -- solid floor; fine for a path
-    end
+    if not isClearable(b) and not dirtSlot() then return b.name end -- keep the floor until we have dirt
+    turtle.digDown()
   end
   local slot = dirtSlot()
   if not slot then return nil end
@@ -366,8 +361,8 @@ local function fixGround(treeSpot)
   return DIRT
 end
 
--- a floor cell measured as a hole (no dirt for it then): air, or a fluid
-local function isHole(name) return name == nil or name == "air" or isFluid(name) end
+-- a floor cell that still needs dirt (measured without dirt for it)
+local function needsDirt(name) return not isSoil(name) and not (name and isMachine(name)) end
 
 local function dirtCount()
   local n = 0
@@ -378,23 +373,10 @@ local function dirtCount()
   return n
 end
 
--- Cells that still need dirt: holes in the path, tree spots without soil and,
--- for kinds like menril, the side cells of a spot. { key = true }
-local function cellsNeedingDirt(soilAround)
+-- Cells whose floor still needs dirt. { key = true }
+local function cellsNeedingDirt()
   local need = {}
-  for k, g in pairs(AREA.cells) do
-    if not isSpot[k] and isHole(g) then need[k] = true end
-  end
-  for _, sk in ipairs(AREA.spots) do
-    if not isSoil(AREA.cells[sk]) then need[sk] = true end
-    if soilAround then
-      local sx, sz = unkey(sk)
-      for h = 0, 3 do
-        local nk = key(sx + DIRS[h][1], sz + DIRS[h][3])
-        if AREA.cells[nk] and not isSpot[nk] and not isSoil(AREA.cells[nk]) then need[nk] = true end
-      end
-    end
-  end
+  for k, g in pairs(AREA.cells) do if needsDirt(g) then need[k] = true end end
   return need
 end
 
@@ -608,7 +590,7 @@ local function explore()
     if ok or not move("fwd", turtle.forward) then
       AREA.border[nk] = true
     else
-      AREA.cells[nk] = fixGround(false) or "air" -- (tree spots: soil later, in the rounds)
+      AREA.cells[nk] = fixGround() or "air" -- (no dirt yet: later, in the rounds)
       if cellCount() > CFG.maxArea then
         error(("The pen is not closed: more than %d open cells. Close the fence and run 'forester rescan'.")
           :format(CFG.maxArea), 0)
@@ -656,9 +638,8 @@ local function unload()
   end
   link.claimChest() -- (once, while it has something to mark the chest with)
   local delivered = dropHaul()
-  local _, soilAround = treeNeeds()
   local dirt = 0
-  if AREA and AREA.cells then for _ in pairs(cellsNeedingDirt(soilAround)) do dirt = dirt + 1 end end
+  if AREA and AREA.cells then for _ in pairs(cellsNeedingDirt()) do dirt = dirt + 1 end end
   local r = link.supply({ fuel = CFG.supply.fuel, saplings = CFG.supply.saplings,
                           bonemeal = CFG.supply.bonemeal, dirt = dirt })
   if r and r.plant ~= nil then setAllowed(r.plant) end
@@ -703,11 +684,11 @@ end
 
 local function dist(a, x, z) return math.abs(a.x - x) + math.abs(a.z - z) end
 
--- A hole in the path (measured without dirt): stand over it and fill it.
+-- A path cell whose floor isn't dirt or grass yet: stand on it and fix it.
 local function fillHole(k)
   local x, z = unkey(k)
-  if isHole(AREA.cells[k]) and dirtSlot() and walkTo({ x = x, z = z }) then
-    AREA.cells[k] = fixGround(false) or AREA.cells[k]
+  if needsDirt(AREA.cells[k]) and dirtSlot() and walkTo({ x = x, z = z }) then
+    AREA.cells[k] = fixGround() or AREA.cells[k]
     saveArea()
   end
 end
@@ -717,7 +698,7 @@ end
 local function visitSpot(sk, soilAround)
   local sx, sz = unkey(sk)
   if not isSoil(AREA.cells[sk]) and dirtSlot() and walkTo({ x = sx, z = sz }) then
-    AREA.cells[sk] = fixGround(true) or AREA.cells[sk]
+    AREA.cells[sk] = fixGround() or AREA.cells[sk]
     saveArea()
   end
   if soilAround and isSoil(AREA.cells[sk]) then
@@ -725,7 +706,7 @@ local function visitSpot(sk, soilAround)
       local nk = key(sx + DIRS[h][1], sz + DIRS[h][3])
       local nx, nz = unkey(nk)
       if AREA.cells[nk] and not isSoil(AREA.cells[nk]) and dirtSlot() and walkTo({ x = nx, z = nz }) then
-        AREA.cells[nk] = fixGround(true) or AREA.cells[nk]
+        AREA.cells[nk] = fixGround() or AREA.cells[nk]
         saveArea()
       end
     end
@@ -767,7 +748,7 @@ local function round()
   if dirtSlot() then
     local holes = {}
     for k, g in pairs(AREA.cells) do
-      if not isSpot[k] and isHole(g) then holes[#holes + 1] = k end
+      if not isSpot[k] and needsDirt(g) then holes[#holes + 1] = k end
     end
     table.sort(holes)
     for _, k in ipairs(holes) do todo[#todo + 1] = k end
@@ -801,7 +782,7 @@ local function round()
   save()
   -- tell the base (if it can); code updates apply here
   local cells = 0
-  for _ in pairs(cellsNeedingDirt(soilAround)) do cells = cells + 1 end
+  for _ in pairs(cellsNeedingDirt()) do cells = cells + 1 end
   if cells > dirtCount() then log(("%d cells of the pen need dirt, I carry %d"):format(cells, dirtCount())) end
   refuel()
   local f = turtle.getFuelLevel()
