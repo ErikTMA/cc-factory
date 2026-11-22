@@ -394,7 +394,8 @@ local F = factory.new(config, {
 factory.restore(F, readTable("/base.state"))
 -- the ore map: its own file (it grows with every scan the miners report)
 local oremap = require("oremap")
-F.map = oremap.load(readTable("/oremap.db"))
+-- (/oremap.tmp: a save stopped between writing it and swapping it in)
+F.map = oremap.load(readTable("/oremap.db") or readTable("/oremap.tmp"))
 if release then
   -- the installer disk gets the active build's data again (a base restart
   -- mid-build must not turn a forester into a miner)
@@ -430,8 +431,9 @@ local function saveMap(force)
     if dropped > 0 then F.note = ("Ore map full: dropped the %d blocks farthest from the base"):format(dropped) end
     local function write(path)
       local f = fs.open(path, "w")
-      f.write(data)
-      f.close()
+      local okw, errw = pcall(f.write, data)
+      pcall(f.close)
+      if not okw then error(errw, 0) end
     end
     -- the new file next to the old, then swap: a failed write keeps the old;
     -- no room for both: replace it in place

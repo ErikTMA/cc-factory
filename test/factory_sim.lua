@@ -1887,6 +1887,9 @@ do
   oremap.hold(m, { all[1] }, 7)
   check(#oremap.find(m, { x = 0, y = 0, z = 0 }, "iron", 10) == 1, "an ore held for job 7 isn't handed out again")
   check(oremap.holders(m)[7], "job 7 holds something")
+  -- another miner's scan over it, still seeing the iron: the hold stays
+  oremap.scan(m, { x = 2, y = 0, z = 0 }, 8, { { x = 1, y = 0, z = 0, name = IRON, ore = true }, { x = 8, y = 8, z = 8, name = CHEST } })
+  check(#oremap.find(m, { x = 0, y = 0, z = 0 }, "iron", 10) == 1, "a scan that still sees a held ore keeps it held")
   oremap.release(m, 7)
   check(#oremap.find(m, { x = 0, y = 0, z = 0 }, "iron", 10) == 2, "released when the job ends")
   oremap.mined(m, { { x = 1, y = 0, z = 0 } })
@@ -1972,6 +1975,12 @@ do
   factory.handle(F, 121, { type = "status", state = "done", role = "miner", label = "m-121", job = jr.job, mined = 2 })
   check(next(F.map.held) == nil or (function() for _, id in pairs(F.map.held) do if id == jr.job.id then return false end end return true end)(),
     "done: its holds released")
+  -- the build spot moves: the map (placed from homes in the old frame) is dropped
+  local had = F.map.n
+  local spot = F.buildSpot and { x = F.buildSpot.x, y = F.buildSpot.y, z = F.buildSpot.z } or { x = 0, y = 0, z = 0 }
+  factory.setBuildSpot(F, { x = spot.x + 5, y = spot.y, z = spot.z })
+  check(had > 0 and F.map.n == 0, "a new build spot clears the ore map: " .. had .. " -> " .. F.map.n)
+  factory.setBuildSpot(F, spot) -- (back, for the scenarios after this one)
   -- a job that vanished (its turtle gone without "done"): the base's tick frees its ores
   oremap.hold(F.map, { { x = 12, y = -24, z = 4 } }, 4242)
   pcall(factory.tick, F)

@@ -82,6 +82,7 @@ local function newTurtle(W, startHeading, fuel, start)
     if not b then return false end
     if b == "minecraft:bedrock" or b:find("^computercraft:") or b == "minecraft:chest" then return false end
     W.set(x, y, z, nil); addItem(drops(b))
+    if W.onDig then W.onDig(x, y, z, b) end
     if oreName(b) then W.mined = (W.mined or 0) + 1 end
     W.dug = W.dug or {}
     W.dug[b] = (W.dug[b] or 0) + 1
@@ -247,7 +248,15 @@ local function makeEnv(T, api, scanner, files, bus, id)
   env.sleep = function() yieldIfCo() end
   env.write = function() end
   env.read = function() return env.__answer end
-  env.print = os.getenv("VERBOSE") and print or function() end
+  env.print = function(...)
+    if bus then
+      bus.prints = bus.prints or {}
+      local parts = {}
+      for i = 1, select("#", ...) do parts[#parts + 1] = tostring(select(i, ...)) end
+      bus.prints[#bus.prints + 1] = table.concat(parts, " ")
+    end
+    if os.getenv("VERBOSE") then print(...) end
+  end
   local function ser(v)
     if type(v) == "table" then
       local p = {}
@@ -680,6 +689,55 @@ do
   check(not fleet[1].err, "ran without error: " .. tostring(fleet[1].err))
   check(W.get(AM.x, AM.y, AM.z) == nil, "the amethyst was dug (tunnel)")
   check(oremap.get(B.map, AM.x, AM.y, AM.z) == nil, "and left the map")
+end
+
+print("scenario: out of reach on job 1 (it backs off), in reach on job 2: back home in between")
+print("          resets the backoff, so job 2 sends mid-job again")
+do
+  local W = newWorld(47, 0, { span = 90, ymin = -40, ymax = 6 })
+  local deafFor = 1
+  local B, fleet, _, _, Base, bus = runFleet(W, { { x = 0, z = 0, h = 0 } }, function(Base, B)
+    table.insert(B.homes, { id = 1, x = 0, y = 0, z = 0, facing = "north", role = "miner", owner = 101 })
+    Base.queueJob(B, { only = "diamond", y = -20, quantity = 999, lanes = 1, length = 176 })
+    Base.queueJob(B, { only = "diamond", y = -30, quantity = 999, lanes = 1, length = 160 })
+  end, {
+    onTick = function(Base, B, fleet, tick, bus)
+      bus.deaf = function(id, msg)
+        if msg.state == "done" and msg.job and msg.job.id == 1 then deafFor = 0 end
+        return msg.state == "map" and deafFor == 1
+      end
+    end,
+  })
+  check(not fleet[1].err, "ran without error: " .. tostring(fleet[1].err))
+  local heard2 = 0
+  for _, e in ipairs(bus.log) do
+    if e.msg.state == "map" and not e.lost and e.msg.job == nil then heard2 = heard2 + 1 end
+  end
+  local sent2 = 0
+  local job2 = false
+  for _, e in ipairs(bus.log) do
+    if e.reply and e.reply.type == "job" and e.reply.job.id == 2 then job2 = true end
+    if job2 and e.msg.state == "map" and not e.lost then sent2 = sent2 + 1 end
+  end
+  check(sent2 >= 2, "job 2 sent its map mid-job again: " .. sent2 .. " times")
+end
+
+print("scenario: gravel falls into the cell of an ore just dug (and is dug too): the ore still counts")
+do
+  local W = newWorld(51, 0, { span = 70, ymin = -40, ymax = 6 })
+  local fell = 0
+  W.onDig = function(x, y, z, b)
+    if b == "minecraft:iron_ore" and fell < 3 then fell = fell + 1; W.set(x, y, z, "minecraft:gravel") end
+  end
+  local B, fleet, _, _, _, bus = runFleet(W, { { x = 0, z = 0, h = 0 } }, function(Base, B)
+    table.insert(B.homes, { id = 1, x = 0, y = 0, z = 0, facing = "north", role = "miner", owner = 101 })
+    Base.queueJob(B, { only = "iron", y = -20, quantity = 6, lanes = 1, length = 64 })
+  end)
+  check(not fleet[1].err, "ran without error: " .. tostring(fleet[1].err))
+  check(fell == 3, "gravel fell in 3 times")
+  local gone = 0
+  for _, line in ipairs(bus.prints or {}) do if line:find("any more") then gone = gone + 1 end end
+  check(gone == 0 and (B.totals.iron or 0) == 6, "every iron dug counted, none taken for gone: " .. gone .. " said gone")
 end
 
 print("scenario: a hand-run job keeps no map report (nobody to send it to)")

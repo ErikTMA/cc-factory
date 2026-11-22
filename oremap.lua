@@ -73,6 +73,8 @@ end
 -- scan doesn't list is gone.
 -- A scan at `c` (radius `r`) listing `blocks` = { { x, y, z, name, ore, kind }, ... }.
 function M.scan(map, c, r, blocks)
+  local listed = {}
+  for _, b in ipairs(blocks) do listed[key(b.x, b.y, b.z)] = true end
   for cx = cellOf(c.x - r), cellOf(c.x + r) do
     for cy = cellOf(c.y - r), cellOf(c.y + r) do
       for cz = cellOf(c.z - r), cellOf(c.z + r) do
@@ -81,7 +83,7 @@ function M.scan(map, c, r, blocks)
           local gone = {}
           for k in pairs(cell) do
             local x, y, z = unkey(k)
-            if math.abs(x - c.x) <= r and math.abs(y - c.y) <= r and math.abs(z - c.z) <= r then
+            if not listed[k] and math.abs(x - c.x) <= r and math.abs(y - c.y) <= r and math.abs(z - c.z) <= r then
               gone[#gone + 1] = { x, y, z }
             end
           end

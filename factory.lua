@@ -132,6 +132,12 @@ function M.setBuildSpot(F, p)
   for _, h in ipairs(F.homes) do
     if h.source ~= "survey" then h.x, h.y, h.z = h.x + p.x - old.x, h.y + p.y - old.y, h.z + p.z - old.z end
   end
+  -- the ore map was placed from homes in the old frame, some of which just
+  -- moved and some (surveyed) didn't: no single shift is right, start over
+  if p.x ~= old.x or p.y ~= old.y or p.z ~= old.z then
+    F.map = oremap.new()
+    F.mapDirty = true
+  end
   F.buildSpot = { x = p.x, y = p.y, z = p.z }
 end
 

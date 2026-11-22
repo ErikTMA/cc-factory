@@ -183,7 +183,12 @@ local function savePend()
   while #PEND.scans > MAX_PENDING_SCANS do table.remove(PEND.scans, 1) end
   writeFile(CFG.mapFile, PEND)
 end
-local function clearPend() PEND = { scans = {}, mined = {} }; savePend() end
+local SEND_STEP -- (the mid-job send backoff, below)
+local function clearPend()
+  PEND = { scans = {}, mined = {} }
+  savePend()
+  SEND_STEP, SEND_AT = CFG.mapEvery, CFG.mapEvery -- the base has it all: back to normal
+end
 local function pending()
   return PEND and (#PEND.scans > 0 or #PEND.mined > 0) and PEND or nil
 end
@@ -194,7 +199,12 @@ end
 -- taken it since it was scanned).
 local LASTDUG
 local function noteDug(x, y, z, info)
-  LASTDUG = { key = key(x, y, z), info = info }
+  -- (gravel or sand falling into the cell of an ore just dug, and dug too,
+  -- must not hide that the ore was there)
+  local k = key(x, y, z)
+  if not (LASTDUG and LASTDUG.key == k and anyOre(LASTDUG.info) and not anyOre(info)) then
+    LASTDUG = { key = k, info = info }
+  end
   -- every block worth a place in the map that it digs (tunnels too) leaves it
   if MAPPING and not filler(info) then
     PEND.mined[#PEND.mined + 1] = { x = x, y = y, z = z }
@@ -408,8 +418,7 @@ end
 -- reach (nothing else; no reply needed to carry on).
 -- Out of reach (deep, far): the next try waits for more scans each time
 -- (3, 6, 12, 24), not every scan, as a talk that gets no answer takes ~10 s.
-local SEND_STEP = CFG.mapEvery
-SEND_AT = CFG.mapEvery
+SEND_STEP, SEND_AT = CFG.mapEvery, CFG.mapEvery
 local function sendMap()
   if not pending() or not link.hasModem() then return end
   local r = link.talk("map", { map = PEND }, false)
@@ -419,7 +428,7 @@ local function sendMap()
     SEND_STEP, SEND_AT = CFG.mapEvery, CFG.mapEvery
   else
     SEND_STEP = math.min(SEND_STEP * 2, 8 * CFG.mapEvery)
-    SEND_AT = #PEND.scans + SEND_STEP
+    SEND_AT = math.min(#PEND.scans + SEND_STEP, MAX_PENDING_SCANS) -- (capped: it stays reachable)
   end
 end
 
