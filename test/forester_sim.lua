@@ -426,7 +426,7 @@ end
 -- storage, then sends what the turtle lacks from storage. `stock` = { [item]
 -- = n }; `plant` = the kinds to plant (nil: any). The turtle needs a modem.
 local function fakeBase(W, T, stock, plant)
-  local B = { stock = stock or {}, asks = {} }
+  local B = { stock = stock or {}, asks = {}, plant = plant }
   T.reply = function(msg)
     if msg.state == "supply" then
       B.asks[#B.asks + 1] = msg
@@ -438,14 +438,19 @@ local function fakeBase(W, T, stock, plant)
         if m > 0 then B.stock[item] = B.stock[item] - m; W.insert(item, m) end
       end
       for item in pairs(B.stock) do
-        if item:find("sapling") and (not plant or plant[item]) then send(item, req.saplings or 0) end
+        if item:find("sapling") and (not B.plant or B.plant[item]) then send(item, req.saplings or 0) end
       end
       send("minecraft:dirt", req.dirt or 0)
-      local pl = false
-      if plant then pl = {}; for k in pairs(plant) do pl[#pl + 1] = k end end
-      return { type = "supplied", sent = {}, short = {}, plant = pl }
+      return { type = "supplied", sent = {}, short = {}, plant = B.plantList() }
     end
-    if msg.state == "resting" then return { type = "ok" } end
+    if msg.state == "resting" then return { type = "ok", plant = B.plantList() } end
+  end
+  function B.plantList()
+    if not B.plant then return false end
+    local pl = {}
+    for k in pairs(B.plant) do pl[#pl + 1] = k end
+    table.sort(pl)
+    return pl
   end
   return B
 end
@@ -672,41 +677,40 @@ do
   check(W.get(3, -1, -4) == "minecraft:dirt" and isSap(W.get(3, 0, -4)), "round 2: dirt laid and the spot planted")
 end
 
-print("scenario: no dirt while measuring: the holes in the path wait, and get filled once it has dirt;")
-print("          at its chest it asks the base for the dirt the pen still needs")
+print("scenario: PREPARE before planting: measured without dirt, it asks the base for dirt for")
+print("          all 4 cells, lays what it gets, waits for more; nothing is planted until the floor is done")
 do
   local W = newWorld({ rough = true })
   local T, api = newTurtle(W, 3000)
   T.inv[1] = { name = SAP, count = 64 }
   T.inv[4] = { name = "computercraft:wireless_modem_normal", count = 1 } -- (to report)
-  fakeBase(W, T, { ["minecraft:dirt"] = 2 }) -- the base has 2 dirt (sent at the end of round 1)
-  local rounds, need1 = 0, nil
-  local function lastAsk()
-    for i = #(T.sent or {}), 1, -1 do if T.sent[i].state == "supply" then return T.sent[i] end end
+  local B = fakeBase(W, T, { ["minecraft:dirt"] = 2 }) -- the base has only 2 dirt
+  local CELLS = { { 1, -1 }, { -2, -7 }, { -1, -8 }, { 3, -4 } } -- 2 holes, a puddle, a stone spot
+  local function fixed()
+    local n = 0
+    for _, c in ipairs(CELLS) do if W.get(c[1], -1, c[2]) == "minecraft:dirt" then n = n + 1 end end
+    return n
   end
+  local n = 0
   local function sl()
-    rounds = rounds + 1
-    if rounds == 1 then
-      check(W.get(1, -1, -1) == nil and W.get(-1, -1, -8) == "minecraft:water", "round 1: no dirt, holes and puddle still open")
-      local a = lastAsk() or { supply = {}, have = {} }
-      -- 2 holes + the puddle + the stone spot; the 2 in the chest came after it asked
+    n = n + 1
+    if n == 1 then
+      local a = B.asks[1] or { supply = {}, have = {} }
       check(a.supply.dirt == 4 and (a.have["minecraft:dirt"] or 0) == 0,
-        "round 1: at its chest it asks for dirt for 4 cells, carrying none: " .. tostring(a.supply.dirt))
+        "it asks for dirt for the 4 cells, carrying none: " .. tostring(a.supply.dirt))
       check(a.supply.fuel and a.supply.saplings and a.supply.bonemeal, "and for fuel, saplings, bone meal")
-      T.inv[6] = { name = "minecraft:dirt", count = 1 } -- one more (still not enough)
+      check(fixed() == 2, "it laid the 2 the base had: " .. fixed() .. "/4")
+      check(plantedSpots(W) == 0, "nothing planted: the floor isn't done: " .. plantedSpots(W))
+      check(B.asks[#B.asks].supply.dirt == 2, "it asked again for the 2 still needed: " .. tostring(B.asks[#B.asks].supply.dirt))
+      B.stock["minecraft:dirt"] = 5 -- the base gets dirt
       return
     end
     error("END OF TEST")
   end
   local ok, err = run(makeEnv(T, api, {}, sl), "10")
   check(tostring(err):find("END OF TEST") ~= nil, "two rounds (" .. tostring(err) .. ")")
-  local filled = 0
-  for _, c in ipairs({ { 1, -1 }, { -2, -7 }, { -1, -8 }, { 3, -4 } }) do
-    if W.get(c[1], -1, c[2]) == "minecraft:dirt" then filled = filled + 1 end
-  end
-  check(filled == 3, "round 2: its 3 dirt went into 3 of the 4 cells: " .. filled)
-  local a2 = lastAsk() or { supply = {} }
-  check(a2.supply.dirt == 1, "round 2: it asks for dirt for the 1 cell left: " .. tostring(a2.supply.dirt))
+  check(fixed() == 4, "then it finished the floor: " .. fixed() .. "/4")
+  check(plantedSpots(W) == #SPOTS, ("and planted every spot: %d/%d"):format(plantedSpots(W), #SPOTS))
 end
 
 print("scenario: the live forester-4: it comes home full of haul, 7 kinds selected; the base")
@@ -879,6 +883,49 @@ do
     ("round 3 picked them all up before they despawned: %d of %d"):format(W.pickedOld or 0, dropped))
   check(saps() >= sapsBefore + dropped, "and kept them")
   check((W.chestSucks or 0) == 0, "never took from its home chest while sweeping: " .. (W.chestSucks or 0))
+end
+
+print("scenario: the base switches oak to acacia: a wider grid further from the fence; PREPARE")
+print("          first fells the old trees and digs the old saplings, then the new spots are planted")
+do
+  local ACACIA = "minecraft:acacia_sapling"
+  local W = newWorld()
+  local T, api = newTurtle(W, 8000)
+  T.inv[1] = { name = SAP, count = 64 }
+  T.inv[4] = { name = "computercraft:wireless_modem_normal", count = 1 }
+  local B = fakeBase(W, T, { [ACACIA] = 64 }, { [SAP] = true })
+  local n = 0
+  local function sl()
+    n = n + 1
+    if n == 1 then
+      check(plantedSpots(W) == #SPOTS, "oak planted: " .. plantedSpots(W))
+      B.plant = { [ACACIA] = true }  -- the monitor: acacia now (it hears so at its next report)
+      return
+    end
+    if n == 2 then
+      W.growAll()                    -- then the old oaks grow, on the old grid
+      for y = 0, 5 do for dx = -1, 1 do for dz = -1, 1 do W.set(-6 + dx, y, -13 + dz, nil) end end end
+      W.set(-6, 0, -13, SAP)         -- (and one still a sapling)
+      return
+    end
+    if n < 5 then return end
+    error("END OF TEST")
+  end
+  local ok, err = run(makeEnv(T, api, {}, sl), "10")
+  check(tostring(err):find("END OF TEST") ~= nil, "rounds ran (" .. tostring(err) .. ")")
+  local A = spotsFor(5, 4)
+  local isA, onA, stray = {}, 0, 0
+  for _, p in ipairs(A) do isA[p[1] .. "," .. p[2]] = true end
+  for key, v in pairs(W.b) do
+    local x, y, z = key:match("^(-?%d+),(-?%d+),(-?%d+)$")
+    x, y, z = tonumber(x), tonumber(y), tonumber(z)
+    if y == 0 and isSap(v) then
+      if isA[x .. "," .. z] and v == ACACIA then onA = onA + 1 else stray = stray + 1 end
+    end
+  end
+  check(#A == 4 and onA == 4, ("the %d acacia spots planted: %d"):format(#A, onA))
+  check(stray == 0, "no old sapling left: " .. stray)
+  check(W.count(LOG) == 0, "every old tree felled: " .. W.count(LOG))
 end
 
 print("scenario: starts without saplings, asks the base and takes them from its home chest")

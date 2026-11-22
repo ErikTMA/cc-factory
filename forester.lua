@@ -24,8 +24,10 @@
 -- `forester rescan` measures the pen again (e.g. after moving the fence). If
 -- the pen is not closed it stops exploring and says so.
 --
--- Each round it walks to every tree spot: plants empty ones, fells grown trees
--- (the whole tree: bent trunks, branches, 2x2 trunks) and replants, then goes home. The home chest is a
+-- Then stages. PREPARE (until done, nothing planted before): the whole floor
+-- dirt or grass, spots that dropped out of the grid cleared. PLANT/HARVEST
+-- (every round): plant empty spots, fell grown trees (the whole tree) and
+-- replant, sweep up what the leaves drop; then home. The home chest is a
 -- mailbox: it asks the base for what it wants to carry (saplings, bone meal,
 -- fuel, dirt for the floor) and takes what the base sends there, then empties
 -- wood and drops into it (keeping saplings, bone
@@ -293,13 +295,19 @@ placeSpots = function()
     end
   end
   table.sort(spots)
+  -- spots that are no more: their trees and saplings get cleared (PREPARE)
+  local now = {}
+  for _, k in ipairs(spots) do now[k] = true end
+  AREA.clear = AREA.clear or {}
+  for _, k in ipairs(AREA.spots or {}) do if not now[k] then AREA.clear[k] = true end end
+  for k in pairs(now) do AREA.clear[k] = nil end
   AREA.spots, AREA.spacing, AREA.reach = spots, spacing, reach
   saveArea()
   indexSpots()
 end
 
--- Directions from `from` to `to` over the pen's path cells (not tree spots),
--- breadth first; `from` and `to` themselves may be spots.
+-- Directions from `from` to `to` over the pen's path cells (not tree spots,
+-- nor old spots still to clear), breadth first; `from` and `to` may be spots.
 local function path(from, to)
   local start, goal = key(from.x, from.z), key(to.x, to.z)
   if start == goal then return {} end
@@ -310,7 +318,7 @@ local function path(from, to)
     local cx, cz = unkey(cur)
     for h = 0, 3 do
       local nk = key(cx + DIRS[h][1], cz + DIRS[h][3])
-      if prev[nk] == nil and AREA.cells[nk] and (not isSpot[nk] or nk == goal) then
+      if prev[nk] == nil and AREA.cells[nk] and ((not isSpot[nk] and not (AREA.clear and AREA.clear[nk])) or nk == goal) then
         prev[nk] = { cur, h }
         if nk == goal then
           local dirs, k = {}, nk
@@ -760,46 +768,61 @@ local function freeSlots()
   return n
 end
 
--- A path cell whose floor isn't dirt or grass yet: stand on it and fix it.
-local function fillHole(k)
-  local x, z = unkey(k)
-  if needsDirt(AREA.cells[k]) and dirtSlot() and walkTo({ x = x, z = z }) then
-    AREA.cells[k] = fixGround() or AREA.cells[k]
-    saveArea()
-  end
-end
-
--- A tree spot: lay soil (and under its side cells for menril) if it has
--- dirt, then tend it from the nearest path cell next to it.
-local function visitSpot(sk, soilAround)
-  local sx, sz = unkey(sk)
-  if not isSoil(AREA.cells[sk]) and dirtSlot() and walkTo({ x = sx, z = sz }) then
-    AREA.cells[sk] = fixGround() or AREA.cells[sk]
-    saveArea()
-  end
-  if soilAround and isSoil(AREA.cells[sk]) then
-    for h = 0, 3 do
-      local nk = key(sx + DIRS[h][1], sz + DIRS[h][3])
-      local nx, nz = unkey(nk)
-      if AREA.cells[nk] and not isSoil(AREA.cells[nk]) and dirtSlot() and walkTo({ x = nx, z = nz }) then
-        AREA.cells[nk] = fixGround() or AREA.cells[nk]
-        saveArea()
-      end
-    end
-  end
+-- The path cell next to `k` it can reach soonest: { x, z, h } facing `k`.
+local function nextTo(k)
+  local sx, sz = unkey(k)
   local best, bestLen
   for h = 0, 3 do
     local ax, az = sx - DIRS[h][1], sz - DIRS[h][3]
     local ak = key(ax, az)
-    if AREA.cells[ak] and not isSpot[ak] then
+    if AREA.cells[ak] and not isSpot[ak] and not (AREA.clear and AREA.clear[ak]) then
       local p = path(S.pos, { x = ax, z = az })
       if p and (not bestLen or #p < bestLen) then best, bestLen = { x = ax, z = az, h = h }, #p end
     end
   end
-  if best and isSoil(AREA.cells[sk]) and walkTo(best) then
+  return best
+end
+
+-- PREPARE: a cell whose floor isn't dirt or grass: stand on it and fix it.
+-- Out of dirt: home to ask the base; false if it has none (wait for it).
+local function fixCell(k)
+  if not needsDirt(AREA.cells[k]) then return true end
+  if not dirtSlot() then
+    goHome()
+    unload()
+    if not dirtSlot() then return false end
+  end
+  local x, z = unkey(k)
+  if walkTo({ x = x, z = z }) then
+    AREA.cells[k] = fixGround() or AREA.cells[k]
+    saveArea()
+  end
+  return true
+end
+
+-- PREPARE: a spot that dropped out of the grid (new kinds, new spacing):
+-- fell its tree or dig its sapling, from the path cell next to it.
+local function clearOld(k)
+  local best = nextTo(k)
+  if best and walkTo(best) then
+    turnTo(best.h)
+    local ok, b = turtle.inspect()
+    if ok and isLog(b) then fell(false)
+    elseif ok and isClearable(b) then turtle.dig() end
+  end
+  AREA.clear[k] = nil
+  saveArea()
+  return true
+end
+
+-- PLANT/HARVEST: a tree spot, tended from the path cell next to it.
+local function visitSpot(sk)
+  local best = nextTo(sk)
+  if best and walkTo(best) then
     turnTo(best.h)
     tend()
   end
+  return true
 end
 
 -- Sweep under the trees felled lately, where their leaves drop saplings
@@ -856,32 +879,24 @@ local function sweep()
   save()
 end
 
-local function round()
+-- (at home) Enough fuel to go out? Else fill up, or wait here (false).
+local function fueled()
   select(WORK_SLOT)
   refuel()
-  -- (at home) too little fuel to go out at all: fill up, else wait here
   local f0 = turtle.getFuelLevel()
   if f0 ~= "unlimited" and f0 < CFG.fuelLow and not fillUp(CFG.fuelLow) and turtle.getFuelLevel() < CFG.minRoundFuel then
     log(("Fuel %d: waiting at home for fuel (put coal or logs in me, or in my chest)"):format(turtle.getFuelLevel()))
     return false
   end
-  sweep()
-  -- the kinds changed (the base's selection, what it carries): new grid
-  local spacing, soilAround, reach = treeNeeds()
-  if spacing ~= AREA.spacing or reach ~= AREA.reach then
-    placeSpots()
-    log(("Tree spots now %d apart, %d from the fence: %d spots"):format(spacing, reach, #AREA.spots))
-  end
-  -- visit the spots nearest first, and the path cells whose floor needs dirt
-  -- (skipped while it has none: it may get some mid-round, at home)
+  return true
+end
+
+-- Visit `keys` nearest first with `fn(key)` (false: stop). Home to unload
+-- when its pockets are (nearly) full; home early when the fuel would not
+-- last for the next one (`cost(key)` there) and the way back.
+local function visitAll(keys, fn, cost)
   local todo = {}
-  for _, k in ipairs(AREA.spots) do todo[#todo + 1] = k end
-  local holes = {}
-  for k, g in pairs(AREA.cells) do
-    if not isSpot[k] and needsDirt(g) then holes[#holes + 1] = k end
-  end
-  table.sort(holes)
-  for _, k in ipairs(holes) do todo[#todo + 1] = k end
+  for _, k in ipairs(keys) do todo[#todo + 1] = k end
   while #todo > 0 do
     local bi, bd = 1, math.huge
     for i, k in ipairs(todo) do
@@ -889,36 +904,34 @@ local function round()
       local d = dist(S.pos, x, z)
       if d < bd then bi, bd = i, d end
     end
-    local sk = table.remove(todo, bi)
-    -- pockets (nearly) full: home to unload first, or what it digs falls on the ground
+    local k = table.remove(todo, bi)
     if freeSlots() < CFG.minFree then
       log("Inventory full: home to unload")
       goHome()
       unload()
     end
-    -- enough fuel to get there, fell a tree and walk home? else home now
-    local sx0, sz0 = unkey(sk)
-    local there = path(S.pos, { x = sx0, z = sz0 }) or {}
-    local back = path({ x = sx0, z = sz0 }, { x = 0, z = 0 }) or there
-    local need = #there + #back + (isSpot[sk] and CFG.treeFuel or 1)
+    local x0, z0 = unkey(k)
+    local there = path(S.pos, { x = x0, z = z0 }) or {}
+    local back = path({ x = x0, z = z0 }, { x = 0, z = 0 }) or there
+    local need = #there + #back + cost(k)
     if turtle.getFuelLevel() ~= "unlimited" and turtle.getFuelLevel() < need then
       refuel()
       if turtle.getFuelLevel() < need then
-        log(("Fuel %d: not enough for the next tree and the way home, going home early"):format(turtle.getFuelLevel()))
-        break
+        log(("Fuel %d: not enough for the next one and the way home, going home early"):format(turtle.getFuelLevel()))
+        return
       end
     end
-    if isSpot[sk] then visitSpot(sk, soilAround) else fillHole(sk) end
+    if fn(k) == false then return end
   end
+end
+
+-- Home: unload, ask for supplies, tell the base (code updates apply here).
+local function report()
   goHome()
   refuel()
   local delivered = unload()
   S.delivered = (S.delivered or 0) + delivered
   save()
-  -- tell the base (if it can); code updates apply here
-  local cells = 0
-  for _ in pairs(cellsNeedingDirt()) do cells = cells + 1 end
-  if cells > dirtCount() then log(("%d cells of the pen need dirt, I carry %d"):format(cells, dirtCount())) end
   refuel()
   local f = turtle.getFuelLevel()
   if f ~= "unlimited" and f < CFG.fuelLow then
@@ -927,6 +940,46 @@ local function round()
   end
   local r = link.talk("resting", { delivered = delivered, total = S.delivered })
   if type(r) == "table" and r.plant ~= nil then setAllowed(r.plant) end
+end
+
+-- The kinds changed (the base's selection, what it carries): a new grid.
+local function regrid()
+  local spacing, _, reach = treeNeeds()
+  if spacing ~= AREA.spacing or reach ~= AREA.reach then
+    placeSpots()
+    log(("Tree spots now %d apart, %d from the fence: %d spots"):format(spacing, reach, #AREA.spots))
+  end
+end
+
+local function prepared()
+  return next(cellsNeedingDirt()) == nil and next(AREA.clear or {}) == nil
+end
+
+-- Stage 1, PREPARE (until done): the whole floor dirt or grass, old spots
+-- cleared. Nothing is planted before. Without dirt from the base it waits.
+local function prepare()
+  if not fueled() then return end
+  local keys, n = {}, 0
+  for k in pairs(AREA.clear or {}) do keys[#keys + 1] = k end
+  for k in pairs(cellsNeedingDirt()) do keys[#keys + 1] = k; n = n + 1 end
+  table.sort(keys)
+  log(("Preparing the pen: %d cells need dirt, %d old spots to clear"):format(n, #keys - n))
+  visitAll(keys, function(k)
+    if AREA.clear and AREA.clear[k] then return clearOld(k) end
+    local ok = fixCell(k)
+    if not ok then log("Out of dirt and none from the base: waiting for dirt (put some in my chest)") end
+    return ok
+  end, function(k) return (AREA.clear and AREA.clear[k]) and CFG.treeFuel or 1 end)
+  report()
+end
+
+-- Stages 2 and 3, PLANT/HARVEST (a round): sweep under the trees felled
+-- lately, then every spot: plant, fell, replant.
+local function round()
+  if not fueled() then return end
+  sweep()
+  visitAll(AREA.spots, visitSpot, function() return CFG.treeFuel end)
+  report()
 end
 
 -- ------------------------------------------------------------------- main --
@@ -980,7 +1033,9 @@ end
 
 local rounds = 0
 while true do
-  round()
+  regrid()
+  if not prepared() then prepare(); regrid() end
+  if prepared() then round() end
   rounds = rounds + 1
   -- trees felled lately: come back soon, before what their leaves drop despawns
   local wait = (S.sweep and next(S.sweep)) and math.min(S.wait, CFG.sweepDelay) or S.wait

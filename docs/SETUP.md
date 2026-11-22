@@ -98,22 +98,27 @@ then says the block is connected. A modem that isn't lit does nothing.
   (right-click it) and one **under the forester** (no right-click needed);
   the two modems connect to each other. Give it coal and a stack of **dirt**;
   saplings can go anywhere in it, or let the base deliver them (below).
-- First start: it walks the pen once and remembers it. On the way it fells the
-  trees already inside, clears grass, flowers and mushrooms, and makes the
-  whole floor dirt or grass: holes and water get dirt, anything else (stone,
-  sand, podzol...) is dug out and replaced with dirt; modems and cables under
-  the floor are left alone. Then it plants
-  a grid of tree spots counted from the pen's corner, one cell in from the
-  fence (a path runs along it). The spacing depends on the tree: 3 for oak,
-  birch, spruce and jungle; 4 for menril (its base is wider, and it only grows
-  with dirt under its 4 side cells, which the forester lays); 5 for acacia,
-  cherry and mangrove (their branches reach sideways); 4 for other modded
-  saplings. Mixed kinds share the widest spacing; dark oak (needs 2x2) isn't
-  planted. It keeps its dirt (never unloads it). Holes and tree spots it had
-  no dirt for are filled in later rounds, with dirt it asks the base for at
-  its chest (below). Other solid blocks
-  inside the pen count as walls. Run `forester rescan` after changing the
-  fence.
+- First start: it walks the pen once and remembers it (fells the trees
+  already inside, clears grass, flowers and mushrooms). Then it works in
+  stages:
+  1. **Prepare** (until done): the whole floor becomes dirt or grass: holes
+     and water get dirt, anything else (stone, sand, podzol...) is dug out and
+     replaced with dirt; modems and cables under the floor are left alone. It
+     asks the base for the dirt at its chest and waits if there is none.
+     Spots that dropped out of the grid (other tree kinds selected) get their
+     trees felled and saplings dug. Nothing is planted before the pen is
+     prepared.
+  2. **Plant / harvest** (every round): it plants the tree spots, fells grown
+     trees (the whole tree) and replants, and sweeps up what the leaves drop
+     (saplings!) around trees it felled lately.
+- The grid of tree spots depends on the trees: spacing 3 for oak, birch,
+  spruce and jungle; 4 for menril (it only grows with dirt under its 4 side
+  cells); 5 for acacia, cherry and mangrove; 4 for other modded saplings.
+  Each spot keeps its canopy's reach from the fence (2 for oak-like trees, 3
+  for menril, 4 for acacia, cherry and mangrove), so leaves and the saplings
+  they drop stay inside. Mixed kinds share the widest spacing and reach; dark
+  oak (needs 2x2) isn't planted. Other solid blocks inside the pen count as
+  walls. Run `forester rescan` after changing the fence.
 - **The home chest is a mailbox.** Each time the forester comes home it asks
   the base, facing its chest, for what it wants to carry: **saplings, bone
   meal, fuel and the dirt its pen still needs**. The base sends what it lacks
