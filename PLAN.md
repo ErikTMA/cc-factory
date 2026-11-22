@@ -346,3 +346,44 @@ verify-live: furnace slot pushes with a bridge backend; real hammer durability.
   the miner's route: home shaft, connector, grid lines), then yielding in
   shafts, trunk and lanes, with a sim where turtles meet.
 
+## Scout, Ender Chest miners, chunk loading (decided 2026-11-22)
+
+Facts that set the direction (checked on the server): advanced turtles hold
+100,000 fuel (normal 20,000), so fuel is not what limits range; what does is
+(1) chunk loading (a turtle far from players freezes) and (2) haul trips
+home. EnderStorage is installed: an Ender Chest shares its contents with
+every Ender Chest of the same colour code at any distance. Advanced
+Peripherals' Chunky Turtle upgrade (chunk_controller: iron, redstone, eye of
+ender) keeps the turtle's chunk loaded.
+
+The user chose: **Ender Chest per miner**, **Chunky Turtle upgrade**,
+**scout first**. A courier role is not needed (it carries no more than a
+miner; Ender Chests move the items).
+
+Phases, each its own commit with tests that fail first:
+
+1. **Shared modules out of oreminer.lua** (no behaviour change; the miner
+   suite is the net): `blocks.lua` (filler/ore/protected classification),
+   `mapreport.lua` (pending scans and dug blocks, sendMap with backoff),
+   `walk.lua` (journaled steps, straight route then A* around, trail and
+   retrace, turtle-wait). Miner and scout both use them; nothing copied.
+2. **The shared grid, base-side** (`grid.lua`, pure): points every 16 in x,
+   y, z anchored at the build spot, levels clear of bedrock; which are
+   scanned (from the ore map's scans), which are reserved per job; hand a
+   job the nearest unscanned points at a level.
+3. **Scout role** (`scout.lua`): no mining. Takes grid points from the base,
+   tunnels the grid lines between them at their level (the tunnels miners
+   use later), scans at each point (free up to r 8), reports like a miner;
+   marks rich points. Built by the base like any role (oreconf.ROLES:
+   pickaxe + Geo Scanner). ORES tab gains "scanned N of M points".
+4. **Ender Chest miners**: the miner carries one Ender Chest (colour code
+   from factory.cfg); when full or low on fuel it places it, drops the haul,
+   takes fuel, digs it back up. The base keeps the matching Ender Chest on
+   its wired network: drained into storage, stocked with fuel. Needs, before
+   building: in the EnderStorage jar, that a dug Ender Chest keeps its
+   frequency, and its block/peripheral name for storage.classify.
+5. **Chunky Turtle**: far-ranging roles carry the chunk controller
+   permanently; the toolbelt swaps on the pickaxe side while standing still.
+   Needs, before building: the chunky upgrade's load radius and whether it
+   keeps loading while the turtle moves (AP ChunkManager).
+
