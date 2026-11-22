@@ -2024,6 +2024,24 @@ do
   check(logsIn + logFuel <= 33 - 16, "16 logs still kept: " .. (logsIn + logFuel) .. " used")
 end
 
+print("scenario: Iron Furnaces (any of its kinds) are furnaces too: same slots as vanilla (CC asks")
+print("          without a side: the mod's full view, input 1, fuel 2, output 3, augments after)")
+do
+  local st = storage.open(net)
+  local iron = newFurnace("ironfurnaces:diamond_furnace_0")
+  iron.size = 7
+  local seen = false
+  for _, f in ipairs(st.furnaces()) do
+    if f.name == "ironfurnaces:diamond_furnace_0" then seen = not f.blast end
+  end
+  check(seen, "listed among the furnaces (not a blast furnace)")
+  check(storage.classify("ironfurnaces:million_furnace_3") == "furnace" and storage.classify("ironfurnaces:iron_furnace_12") == "furnace",
+    "every kind, by its network name")
+  check(storage.classify("ironfurnaces:wireless_energy_heater_0") == nil, "not its other blocks")
+  for i = #W.furnaces, 1, -1 do if W.furnaces[i] == iron then table.remove(W.furnaces, i) end end
+  W.inv["ironfurnaces:diamond_furnace_0"] = nil
+end
+
 print("scenario: no cobblestone, only coal (it was carried there and dropped its things): it marks")
 print("          the home chest with a piece of coal")
 do

@@ -6,7 +6,8 @@
 --   chests         input (turtle home chests); drained into storage. Only the
 --                  plain vanilla chest, so players' modded chests on the same
 --                  network are left alone.
---   furnaces       vanilla furnaces and blast furnaces, run by production.lua
+--   furnaces       vanilla furnaces and blast furnaces, and Iron Furnaces (all
+--                  kinds), run by production.lua
 -- If an AE2 ME Bridge or Refined Storage RS Bridge is on the network it becomes
 -- the storage instead of the barrels.
 --
@@ -28,8 +29,14 @@
 
 local M = {}
 
+-- Iron Furnaces (iron, copper, gold, silver, diamond, emerald, crystal,
+-- obsidian, netherite, allthemodium, vibranium, unobtainium, million) burn
+-- fuel and look like vanilla to CC: it asks for the item capability without
+-- a side first, and the mod answers with its whole inventory (InvWrapper):
+-- input 1, fuel 2, output 3, its augments after (checked in both jars).
 function M.classify(name)
-  if name:find("^minecraft:furnace_%d+$") or name:find("^minecraft:blast_furnace_%d+$") then return "furnace" end
+  if name:find("^minecraft:furnace_%d+$") or name:find("^minecraft:blast_furnace_%d+$")
+     or name:find("^ironfurnaces:%w+_furnace_%d+$") then return "furnace" end
   if name:find("^minecraft:chest_%d+$") then return "input" end
   if name:find("barrel") then return "storage" end
   return nil
