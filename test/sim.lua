@@ -379,6 +379,33 @@ do
   check((W.chest["minecraft:diamond_ore"] or 0) > 0, "diamonds delivered after resume")
 end
 
+print("scenario: resumed boxed in on all four sides by blocks it can't dig (live miner-5: reinforced")
+print("          deepslate?), open above: it uses its saved heading and climbs home instead of giving up")
+do
+  local W = newWorld(7, 1)
+  local T, api, sc = newTurtle(W, 1, 0)
+  T.inv[1] = { name = "minecraft:coal", count = 64 }
+  local files = {}
+  local budget = 150
+  local realForward = api.forward
+  api.forward = function()
+    budget = budget - 1
+    if budget == 0 then error("CHUNK UNLOADED") end
+    return realForward()
+  end
+  local ok, err = runProgram(makeEnv(T, api, sc, files), "lanes=2", "length=32")
+  check(not ok and tostring(err):find("CHUNK UNLOADED"), "first run interrupted")
+  api.forward = realForward
+  -- box it in: bedrock on all four sides; the way it came (up/along) open
+  for _, d in ipairs({ { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } }) do
+    W.set(T.x + d[1], T.y, T.z + d[2], "minecraft:bedrock")
+  end
+  for y = T.y + 1, 0 do W.set(T.x, y, T.z, nil) end -- (a shaft straight up)
+  ok, err = runProgram(makeEnv(T, api, sc, files), "resume")
+  check(ok, "resume completed, no 'need room' error (" .. tostring(err) .. ")")
+  check(T.x == 0 and T.y == 0 and T.z == 0, ("back home (%d,%d,%d)"):format(T.x, T.y, T.z))
+end
+
 -- Scenario 3: inventory fills up -> service trips to the chest
 print("scenario: small inventory budget forces trips home")
 do

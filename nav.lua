@@ -53,7 +53,20 @@ function N.scanHeading(mayDig)
     if moved then break end
     turtle.turnRight()
   end
-  if not moved then error("Need room to move 1 block in some direction to find my heading", 0) end
+  if not moved then
+    -- (what is around it, for the log: why it can't move)
+    local around = {}
+    for _ = 1, 4 do
+      local ok, info = turtle.inspect()
+      around[#around + 1] = ok and info.name or "nothing"
+      turtle.turnRight()
+    end
+    local okU, up = turtle.inspectUp()
+    local okD, down = turtle.inspectDown()
+    error(("Need room to move 1 block in some direction to find my heading (fuel %s; around: %s; up %s, down %s)"):format(
+      tostring(turtle.getFuelLevel()), table.concat(around, ", "), okU and up.name or "nothing",
+      okD and down.name or "nothing"), 0)
+  end
   local b = {}
   for _, blk in ipairs(N.scan(8)) do b[key(blk.x, blk.y, blk.z)] = blk.name end
   local best, bestScore = nil, -1

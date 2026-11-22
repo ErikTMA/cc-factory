@@ -842,7 +842,11 @@ local function resumeUnfinished()
       if not found then error("At home but no chest around me", 0) end
       S.heading = (S.homeHeading + 2) % 4
     else
-      S.heading = detectHeading()
+      -- re-measured (a turn may not have been saved); boxed in sideways it
+      -- can't be: then the saved heading (the way out may be up or down)
+      local ok, h = pcall(detectHeading)
+      if ok then S.heading = h
+      else log("Keeping my saved heading: " .. tostring(h)) end
     end
     save()
     log("Resuming at " .. key(S.pos.x, S.pos.y, S.pos.z) .. " facing " .. HEADING_NAME[S.heading])
