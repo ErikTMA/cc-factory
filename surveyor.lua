@@ -40,6 +40,7 @@ local CFG = {
                      -- earth that has never been seen)
   unknownCost = 3,   -- an unknown cell counts as this many steps when planning
   maxTries = 3,      -- give up on a side after its way was blocked this often
+  findRadius = 8,    -- no cable or modem seen yet: look this far around the start
   maxSteps = 4000,
   minFuel = 100,     -- refuel from its inventory below this
   askMargin = 150,   -- go ask the base for fuel while this much above the need is left
@@ -443,11 +444,45 @@ local function walkSeeing(moves)
   return true
 end
 
+-- Is any cable or modem known yet?
+local function cableKnown()
+  for _, name in pairs(MAP) do
+    if name and (name:find("^computercraft:cable") or name:find("^computercraft:wired_modem")) then return true end
+  end
+  return false
+end
+
+-- No cable or modem seen yet (the chain broke right at the start: e.g. the
+-- modem behind the base computer sits inside a wall): unknown cells around
+-- the start, next to open air, to look at until one turns up.
+local function searchTargets()
+  local want, R = {}, CFG.findRadius
+  for k, name in pairs(MAP) do
+    if name == false then
+      local x, y, z = unkey(k)
+      for _, n in ipairs(SIX) do
+        local nx, ny, nz = x + n[1], y + n[2], z + n[3]
+        local nk = key(nx, ny, nz)
+        if MAP[nk] == nil and not given[nk] and math.abs(nx) <= R and math.abs(nz) <= R
+           and math.abs(ny) <= 4 and inBounds(nx, ny, nz) then
+          want[nk] = true
+        end
+      end
+    end
+  end
+  return want
+end
+
 local function explore()
   log("Mapping the network around the base computer...")
   look()
   while (S.steps or 0) < CFG.maxSteps do
     local targets = unseenSides()
+    if next(targets) == nil and not cableKnown() then
+      if not S.searching then log("No cable found from here: looking around for one...") end
+      S.searching = true
+      targets = searchTargets()
+    end
     if next(targets) == nil then break end
     local moves, target = planToSee(targets)
     if not moves then

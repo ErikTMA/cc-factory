@@ -1480,6 +1480,27 @@ local function withoutInStorage(item)
   return function() for _, h in ipairs(held) do h[1].insert(item, h[2]) end end
 end
 
+print("scenario: like the real base: the modem behind the computer sits INSIDE a wall (can't be")
+print("          seen); the cable carries on behind the wall to a home: it looks around the hidden")
+print("          cell, finds the cable and follows it")
+do
+  local ox, oz = 900, 900
+  for x = ox - 8, ox + 8 do for z = oz - 16, oz + 6 do W.set(x, -1, z, "minecraft:stone") end end
+  W.set(ox, 0, oz, "computercraft:computer_advanced")
+  W.set(ox - 1, 0, oz, "computercraft:monitor_advanced")
+  for x = ox - 4, ox + 4 do for y = 0, 2 do W.set(x, y, oz - 1, "minecraft:cobblestone") end end
+  W.set(ox, 0, oz - 1, "computercraft:wired_modem_full")          -- in the wall, behind the computer
+  for z = oz - 10, oz - 2 do W.set(ox, 0, z, "computercraft:cable") end -- on the ground behind the wall
+  W.set(ox, 0, oz - 11, "computercraft:wired_modem_full")
+  newInv("minecraft:chest_92", ox, 0, oz - 13)                    -- home spot (ox,0,oz-12)
+  local T = surveyorOnTop(92, ox, oz, 32)
+  bootTurtle(T)
+  local ok = runUntil(function() return T.files["surveyor.state"] and T.files["surveyor.state"]:find("done") end, 400000)
+  check(ok, "the survey finished")
+  check(homeAt("minecraft:chest_92") ~= nil, "found the home behind the wall: " .. tostring((T.files["surveyor.log"] or ""):match("Mapped:[^\n]*")))
+  check(T.x == ox and T.y == 1 and T.z == oz, "back on the computer")
+end
+
 print("scenario: the same with only 4 coal and none in storage: it stops exploring in time,")
 print("          marks the home, gets back")
 do

@@ -1,0 +1,175 @@
+scenario: the base builds a miner (no wireless modems: wired at home), it installs itself,
+          flies home and fills a stock rule
+  ok   reached: miner built, installed, home, rule filled
+  ok   build order #1 built: built
+  ok   a new turtle was placed on the build spot
+  ok   it has a pickaxe and a Geo Scanner
+  ok   installed as a miner pinned to the base
+  ok   installed the base's code version
+  ok   labelled miner-2: miner-2
+  ok   walked to its home slot facing north (4,0,-1 h0)
+  ok   home Y recorded from the base config
+  ok   it has no wireless modem: talks over the wired one at home
+  ok   its reserved home now belongs to it
+  ok   raw iron drained into storage: 13
+  ok   home chest emptied by the base
+  ok   14 gold used: 26
+  ok   geo scanner used
+  ok   assembler inventory empty
+  ok   build spot free again
+  ok   the assembler fitted a pickaxe from storage itself, after the build
+scenario: every monitor tab renders with live data
+  ok   TURTLES tab draws (nil)
+  ok   lists the miner and the assembler
+  ok   GATHERING/MINING tab draws (nil)
+  ok   MINING sub-tab: the job buttons
+  ok   GATHERING/FORESTRY tab draws (nil)
+  ok   FORESTRY sub-tab: sapling choice and bone meal
+  ok   FACTORY tab draws (nil)
+  ok   shows the stock rule
+  ok   shows the fleet target met
+  ok   shows the build
+scenario: a code update reaches the idle miner
+  ok   new release has a new version
+  ok   miner installed the update and reports the new version
+  ok   new file content on the turtle
+  ok   it rebooted into the new code
+scenario: a lost reply to the assembler does not stall the next build
+  ok   the step-2 reply was lost on the way
+  ok   the second miner was still built and flew to home slot 2
+  ok   two miner orders built: 2
+scenario: a lost 'done' neither blocks the stock rule nor counts twice
+  ok   a done reply was lost
+  ok   the miner said done again, went idle, the rule is free
+  ok   a done was repeated (3 dones for 2 jobs)
+  ok   iron counted once per job: 16, expected 16
+scenario: a damaged pickaxe in storage is not used; the base asks for diamonds instead
+  ok   no order placed with only a damaged pickaxe
+  ok   it needs 3 diamonds to make a pickaxe: 3
+  ok   nothing left on the build spot
+  ok   assembler holds nothing
+scenario: from raw materials only: smelt, craft every part, double gold with a hammer, build
+  ok   hammer toggle on
+  ok   a miner was built from raw materials and flew to home slot 3
+  ok   crafted a copper ore hammer
+  ok   hammered 7 raw gold into 14 gold dust: 14
+  ok   crafted advancedperipherals:geo_scanner
+  ok   crafted advancedperipherals:peripheral_casing
+  ok   crafted computercraft:wired_modem_full
+  ok   crafted minecraft:observer
+  ok   crafted minecraft:diamond_pickaxe
+  ok   crafted minecraft:chest
+  ok   crafted minecraft:glass_pane
+  ok   crafted minecraft:iron_bars
+  ok   crafted minecraft:redstone_block
+  ok   furnaces smelted: 136
+scenario: AE2-style: a plain turtle in storage is used, the build only fits the upgrades;
+          an upgraded turtle in storage is left alone
+  ok   the base starts at step 3 (upgrades)
+  ok   a miner was built and flew to its new home
+  ok   no gold used: 20 before, 20 after
+  ok   no computer crafted
+  ok   the upgraded and the labelled turtle are still in storage
+  ok   the stripped, used one (plain name) was the one used
+  ok   a computer in storage: starts at step 2, the computer goes into cell 6
+scenario: the factory builds a surveyor: it surveys from the build spot and parks next to
+          a modem, off the build spot
+  ok   a surveyor was built, surveyed and checks in
+  ok   parked next to a modem, off the build spot (1,0,-1)
+  ok   built with a compass
+scenario: DISMANTLE miner-2: it flies to the build spot, hands everything over and switches
+          off; the assembler picks it up; parts and the plain turtle go to storage
+  ok   asked to take miner-2 apart
+  ok   taken apart: miner-2 taken apart: its parts and the plain turtle are in storage
+  ok   it switched off with its label cleared
+  ok   its pickaxe and Geo Scanner are in storage
+  ok   and the turtle itself
+  ok   gone from the fleet
+  ok   assembler empty, build spot free
+scenario: DISMANTLE a turtle with no way to the build spot (the surveyor): it switches off
+          where it is, upgrades off, for you to pick up
+  ok   switched off, upgrades off, label cleared: surveyor-6 switched off where it is (its things in the chest next to it, or in itself): pick it up
+  ok   its compass is in its own inventory (no chest next to it)
+  ok   gone from the fleet
+scenario: a plain turtle next to the base computer climbs the wall the cable goes through,
+          maps the network, finds the build spot and registers homes
+  ok   the survey finished
+  ok   found the build spot above the disk drive: {["y"]=0,["x"]=2,["z"]=1}
+  ok   home behind the wall at chest_3, facing away from it: -2,0,-4 south
+  ok   home a level up at chest_4: -5,1,-4
+  FAIL only those two homes added (8 -> 11)
+  ok   new homes wait for a role
+  ok   earlier homes moved along with the build spot
+  ok   surveyor back where it started (-2,0,-2)
+  ok   nothing dug: it went over the wall
+  ok   the monitor sets its role: miner
+  ok   a new miner is sent to it from the build spot: {["y"]=0,["x"]=-4,["facing"]="south",["z"]=-5}
+  ok   the marker got drained into storage afterwards
+scenario: a surveyor with a compass in its inventory starts by itself, any facing
+  ok   it surveyed without being told its facing
+  ok   it fitted the compass itself
+  ok   found the same homes again, no duplicates (11)
+  ok   both surveyed homes still there
+  ok   back where it started
+scenario: BUILD GPS: the factory builds four GPS host turtles above the base
+  ok   four GPS hosts are running: 4
+  ok   every host announces its real position in the home frame
+  ok   the four hosts are not in one plane
+  ok   they fly up high above the base
+scenario: with GPS, a turtle placed by hand runs `home miner` and lives there
+  ok   registered and rebooted into its role (REBOOT)
+  ok   home at its spot in the home frame, facing east, owned by it: {["owner"]=60,["facing"]="east",["x"]=14,["z"]=8,["y"]=0,["id"]=12,["source"]="gps",["role"]="miner"}
+  ok   agent.cfg: role miner, home Y and heading: {["home"]={["y"]=64,["heading"]=1},["base"]=0,["role"]="miner"}
+scenario: chat fallback: $build on the build spot, then $home on a home spot
+  ok   $home before $build asks for $build
+  ok   $build: build spot set at 100 70 200
+  ok   home from the player's block and look direction: home 1 at 104 71 197 facing north: miner
+  ok   no detector: says so
+  ok   $homes lists it
+  ok   the build spot's Y comes from $build
+  ok   ordinary chat is ignored
+scenario: the monitor shows what is on the network; a queued build can be removed
+  ok   devices: barrels 2 furnaces 3 drives 1 home chests 6
+  ok   FACTORY tab lists the network
+  ok   no warning when there are barrels
+  ok   FLEET lists assemblers and surveyors
+  ok   warns when there are no barrels
+  ok   a queued build is removed
+scenario: the installer leaves turtles that aren't on the build spot alone
+  ok   installer exited (nil)
+  ok   nothing installed on it
+scenario: an update with a path in a file name is rejected
+  ok   disk and turtle untouched
+scenario: the installer disk never installs onto the base
+  ok   installer exits quietly on a computer (nil)
+  ok   and runs the base's own startup instead
+  ok   nothing copied onto the base
+scenario: surveyor on TOP of the computer, no fuel but coal; modem behind the computer a
+          level down, cable over a 4-high wall to a home, a branch running out of range
+  turtle 60 crashed: [string "surveyor.lua"]:486: attempt to get length of local 'moves' (a nil value)
+  FAIL the survey finished
+  ok   it fuelled itself from its coal
+  ok   it climbed down off the computer: lowest y -2
+  ok   it climbed over the wall: highest y 6
+  ok   stayed within range of where it started: furthest z 72
+  FAIL registered the home behind the wall, facing away from its chest
+  FAIL one new home
+  FAIL back on the computer (39,4,47)
+  ok   nothing dug
+  FAIL it keeps a log: surveyor.log
+scenario: like the real base: the modem behind the computer sits INSIDE a wall (can't be
+          seen); the cable carries on behind the wall to a home: it looks around the hidden
+          cell, finds the cable and follows it
+  ok   the survey finished
+  ok   found the home behind the wall: Mapped: 11 cable/modem blocks, 1 chests, 21 sides out of reach, 201 steps.
+  ok   back on the computer
+scenario: the same with only 4 coal and none in storage: it stops exploring in time,
+          marks the home, gets back
+  ok   the survey finished
+  ok   back on the computer (140,1,40)
+  ok   registered the home
+  ok   never ran dry: lowest fuel 86
+  ok   said it stopped exploring for fuel
+  ok   it asked the base first (storage had none)
+scenario: with 2 coal it makes a fuel run: the base pushes coal into it at a modem
+  turtle 64 crashed: [string "surveyor.lua"]:486: attempt to get length of local 'moves' (a nil value)
