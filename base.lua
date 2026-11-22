@@ -519,12 +519,28 @@ end
 -- (Advanced Peripherals). "$help" in chat lists the commands.
 -- Chat Box and Player Detector: looked up again whenever a peripheral is
 -- connected (no restart needed after placing them)
+-- /chat.log: the last 30 chat events and replies, raw (to see what a Chat
+-- Box really sends on a given server)
+local chatLog = {}
+local function logChat(...)
+  local parts = {}
+  for i = 1, select("#", ...) do parts[#parts + 1] = tostring((select(i, ...))) end
+  chatLog[#chatLog + 1] = table.concat(parts, " | ")
+  while #chatLog > 30 do table.remove(chatLog, 1) end
+  pcall(function()
+    local f = fs.open("/chat.log", "w")
+    f.write(table.concat(chatLog, "\n") .. "\n")
+    f.close()
+  end)
+end
+
 local chatBox, detector
 local function findChatPeripherals()
   chatBox = peripheral.find("chat_box") or peripheral.find("chatBox")
   detector = peripheral.find("player_detector") or peripheral.find("playerDetector")
 end
 findChatPeripherals()
+logChat("start", "chatBox=" .. tostring(chatBox ~= nil), "detector=" .. tostring(detector ~= nil))
 
 -- verify-live: which method/fields the Player Detector has in this AP version
 local function playerPos(user)
@@ -543,13 +559,19 @@ end
 
 local function say(user, text)
   if not chatBox or not text then return end
-  local ok = chatBox.sendMessageToPlayer and pcall(chatBox.sendMessageToPlayer, text, user, "cc-factory")
-  if not ok then pcall(chatBox.sendMessage, text, "cc-factory") end
+  local ok, r1, r2 = false, nil, nil
+  if chatBox.sendMessageToPlayer then ok, r1, r2 = pcall(chatBox.sendMessageToPlayer, text, user, "cc-factory") end
+  logChat("reply to", user, "sendMessageToPlayer", ok, r1, r2)
+  if not ok or r1 == false or r1 == nil then
+    local ok2, s1, s2 = pcall(chatBox.sendMessage, text, "cc-factory")
+    logChat("reply", "sendMessage", ok2, s1, s2)
+  end
 end
 
 local function chatter()
   while true do
-    local ev, a, b, c = os.pullEvent()
+    local ev, a, b, c, d = os.pullEvent()
+    if ev == "chat" then logChat("chat event", a, b, c, d, "chatBox=" .. tostring(chatBox ~= nil)) end
     -- AP 0.8.2a: "chat", uuid, username, message, hidden (checked in the
     -- jar); older APs: "chat", username, message, uuid, hidden
     local user, message = a, b
@@ -557,6 +579,7 @@ local function chatter()
     if ev == "peripheral" or ev == "peripheral_detach" then
       local had = chatBox ~= nil
       findChatPeripherals()
+      logChat(ev, a, "chatBox=" .. tostring(chatBox ~= nil), "detector=" .. tostring(detector ~= nil))
       if chatBox and not had then F.note = "Chat Box connected: $help in chat" end
     elseif ev == "chat" and chatBox and type(message) == "string" and message:sub(1, 1) == "$" then
       local pos = (message:match("^%$build") or message:match("^%$home")) and playerPos(user) or nil
