@@ -14,6 +14,22 @@
 local link = require("link")
 local cfg = link.config()
 
+-- Every error a program shows (shell prints them with printError) also goes
+-- to crash.log, with the time: readable on the server when nobody watches the
+-- turtle's screen.
+local printErrorOrig = printError
+printError = function(...)
+  local args = { n = select("#", ...), ... }
+  pcall(function()
+    local parts = {}
+    for i = 1, args.n do parts[#parts + 1] = tostring(args[i]) end
+    local f = fs.open("crash.log", "a")
+    f.write(("[day %d %s] %s\n"):format(os.day(), textutils.formatTime(os.time(), true), table.concat(parts, " ")))
+    f.close()
+  end)
+  return printErrorOrig(...)
+end
+
 -- installs from before agent.cfg existed: work the role out from the files
 if not cfg.role then
   if fs.exists("forester.state") then cfg.role = "forester"
