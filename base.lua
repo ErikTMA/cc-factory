@@ -573,9 +573,17 @@ local function chatter()
     local ev, a, b, c, d = os.pullEvent()
     if ev == "chat" then logChat("chat event", a, b, c, d, "chatBox=" .. tostring(chatBox ~= nil)) end
     -- AP 0.8.2a: "chat", uuid, username, message, hidden (checked in the
-    -- jar); older APs: "chat", username, message, uuid, hidden
+    -- jar); a "$" message is hidden from chat and arrives WITHOUT its "$"
+    -- (seen live: "help", hidden = true). Older APs: "chat", username,
+    -- message, uuid, hidden, with the "$" kept.
     local user, message = a, b
-    if ev == "chat" and type(c) == "string" and c:sub(1, 1) == "$" then user, message = b, c end
+    if ev == "chat" then
+      if d == true and type(c) == "string" then
+        user, message = b, (c:sub(1, 1) == "$") and c or ("$" .. c)
+      elseif type(c) == "string" and c:sub(1, 1) == "$" then
+        user, message = b, c
+      end
+    end
     if ev == "peripheral" or ev == "peripheral_detach" then
       local had = chatBox ~= nil
       findChatPeripherals()

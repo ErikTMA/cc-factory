@@ -193,8 +193,8 @@ do
   files["release"] = "aaa"; githubSha = "aaa"
   boot(400, function(step)
     if step == 100 then attached = true; queue[#queue + 1] = { "peripheral", "chat_box_0" } end
-    -- AP 0.8.2a's order: uuid, username, message, hidden, message
-    if step == 120 then queue[#queue + 1] = { "chat", "6a1e-uuid", "Erik", "$help", true, "$help" } end
+    -- AP 0.8.2a, as seen live: uuid, username, the message WITHOUT its "$", hidden = true
+    if step == 120 then queue[#queue + 1] = { "chat", "6a1e-uuid", "Erik", "help", true } end
   end)
   periph.find = oldFind
   check(#said >= 1 and said[1][1]:find("%$build"), "answered $help after the Chat Box was connected: " .. tostring(said[1] and said[1][1]))
