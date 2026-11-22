@@ -204,6 +204,12 @@ local function drawFactory(UI, out, w, row)
       put(out, 1, row, ("No storage! Add barrels with a wired modem (chests are turtle homes)."):sub(1, w), colors.red)
       row = row + 1
     end
+    if F.deps.storage.layout then
+      -- pack storage into as few slots as possible (factory.toggleDefrag)
+      button(UI, out, 1, row, 16, F.defrag and "DEFRAG: STOP" or "DEFRAG", F.defrag ~= nil,
+        function() factory.toggleDefrag(F) end)
+      row = row + 1
+    end
     local unused = {}
     for _, n in ipairs(d.other) do if not n:find("^turtle_") then unused[#unused + 1] = n end end
     if #unused > 0 then
@@ -511,6 +517,22 @@ end
 --   worker    answers them in order (may touch storage)
 --   ticker    drains inputs, rules, fleet every 10 s (its own sleep timer)
 --   screen    touches and redraws
+-- One decision at a time. Every peripheral call yields until the server
+-- tick, and the other coroutines run meanwhile: without this, a turtle's
+-- message is decided while the ticker's decision is halfway, both on the
+-- same state (storage's journal, the factory's tables). Every decision goes
+-- through here: turtle messages, the tick, chat commands. Returns what
+-- pcall returns.
+local deciding = false
+local function decide(fn, ...)
+  while deciding do os.pullEvent("factory_decided") end
+  deciding = true
+  local res = table.pack(pcall(fn, ...))
+  deciding = false
+  os.queueEvent("factory_decided")
+  return table.unpack(res, 1, res.n)
+end
+
 local inbox = {}
 local function receiver()
   while true do
@@ -525,7 +547,7 @@ local function worker()
     if #inbox == 0 then os.pullEvent("factory_inbox") end
     local item = table.remove(inbox, 1)
     if item then
-      local ok, reply = pcall(factory.handle, F, item[1], item[2])
+      local ok, reply = decide(factory.handle, F, item[1], item[2])
       if ok and reply then rednet.send(item[1], reply, C.PROTOCOL)
       elseif not ok then F.note = "handle: " .. tostring(reply) end
       persist()
@@ -538,12 +560,13 @@ local function ticker()
   while true do
     local okd, devices = pcall(storage.devices, peripheral)
     if okd then UI.devices = devices end
-    local ok, stock = pcall(factory.tick, F)
+    local ok, stock, missing = decide(function()
+      local st, miss = factory.tick(F), {}
+      for role in pairs(F.cfg.fleet) do miss[role] = factory.missingParts(F, role) end
+      return st, miss
+    end)
     if ok then
-      UI.stock = stock
-      local missing = {}
-      for role in pairs(F.cfg.fleet) do missing[role] = factory.missingParts(F, role) end
-      UI.missing = missing
+      UI.stock, UI.missing = stock, missing
     else
       F.note = "tick: " .. tostring(stock)
     end
@@ -642,7 +665,8 @@ local function chatter()
       if chatBox and not had then F.note = "Chat Box connected: $help in chat" end
     elseif ev == "chat" and chatBox and type(message) == "string" and message:sub(1, 1) == "$" then
       local pos = (message:match("^%$build") or message:match("^%$home")) and playerPos(user) or nil
-      say(user, factory.chatCommand(F, user, message, pos))
+      local ok, answer = decide(factory.chatCommand, F, user, message, pos)
+      say(user, ok and answer or ("Error: " .. tostring(answer)))
       persist()
       os.queueEvent("factory_redraw")
     end

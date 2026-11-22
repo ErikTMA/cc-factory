@@ -5,9 +5,13 @@ local DIR = PROGRAM:match("^(.*)/[^/]*$") or "."
 local function readAll(path) return assert(io.open(path)):read("*a") end
 local BASE_SRC = readAll(DIR .. "/base.lua")
 local FACTORY_SRC = readAll(os.getenv("FACTORY") or (DIR .. "/factory.lua"))
-MODULES_EXTRA = { factory = FACTORY_SRC, production = readAll(DIR .. "/production.lua"),
-                  recipes = readAll(DIR .. "/recipes.lua"), homes = readAll(DIR .. "/homes.lua"),
-                  oremap = readAll(DIR .. "/oremap.lua") }
+-- the base's modules: every file the manifest installs on the base (one
+-- list, so a new module needs no edit here)
+MODULES_EXTRA = { factory = FACTORY_SRC }
+for _, f in ipairs(load(readAll(DIR .. "/manifest.lua"), "manifest", "t", {})().base) do
+  local name = f:match("^(.+)%.lua$")
+  if name and not MODULES_EXTRA[name] then MODULES_EXTRA[name] = readAll(DIR .. "/" .. f) end
+end
 local MODULES = { oreconf = readAll(DIR .. "/oreconf.lua"), tmove = readAll(DIR .. "/tmove.lua"),
                   link = readAll(DIR .. "/link.lua"), nav = readAll(DIR .. "/nav.lua") }
 

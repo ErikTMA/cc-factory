@@ -75,17 +75,35 @@ local function sleep(t)
 end
 
 -- peripherals: a wired modem with a barrel on its network; no monitor, no chat box
-local barrel = { slots = { [1] = { name = "minecraft:cobblestone", count = 10 } } }
+local barrel = { slots = { [1] = { name = "minecraft:cobblestone", count = 10 },
+                           [2] = { name = "minecraft:diamond_pickaxe", count = 1 } } }
 local sent = {}
 local periph = {}
 function periph.getNames() return { "back", "minecraft:barrel_0" } end
 function periph.getType(n) if n == "back" then return "modem" end; if n == "minecraft:barrel_0" then return "inventory" end end
 function periph.hasType(n, t) return periph.getType(n) == t end
+-- As strict as CC: an inventory method is a main-thread task: the caller
+-- yields until the next server tick, and other coroutines (the ticker, the
+-- worker) run meanwhile.
+local function serverTick()
+  local id = os2.startTimer(0.05)
+  repeat local _, tid = os2.pullEvent("timer") until tid == id
+end
 function periph.call(n, m, ...)
   if n == "minecraft:barrel_0" then
-    if m == "list" then return barrel.slots end
-    if m == "getItemDetail" then return barrel.slots[...] end
-    if m == "pushItems" then return 0 end
+    serverTick()
+    if m == "size" then return 27 end
+    if m == "list" then
+      local out = {}
+      for i, st in pairs(barrel.slots) do out[i] = { name = st.name, count = st.count } end
+      return out
+    end
+    if m == "getItemDetail" then
+      local st = barrel.slots[...]
+      return st and { name = st.name, count = st.count, displayName = "Diamond Pickaxe", damage = 0, maxCount = 1 }
+    end
+    if m == "getItemLimit" then return 64 end
+    if m == "pushItems" or m == "pullItems" then return 0 end
   end
 end
 function periph.find(t) return nil end
@@ -126,6 +144,14 @@ end
 local env = setmetatable({}, { __index = _G })
 env.fs, env.os, env.sleep, env.peripheral, env.rednet, env.term = fs, os2, sleep, periph, rednet, term
 env.parallel = parallel
+-- every decision that failed (base.lua catches them with pcall and only
+-- shows them on the monitor): none may
+local failed = {}
+env.pcall = function(f, ...)
+  local res = table.pack(pcall(f, ...))
+  if not res[1] and tostring(res[2]):find(":%d+: ") then failed[#failed + 1] = tostring(res[2]) end
+  return table.unpack(res, 1, res.n)
+end
 env.textutils = { serialize = ser, unserialize = function(s) return load("return " .. s)() end }
 env.colors = setmetatable({}, { __index = function(_, k) return k end })
 env.print = function() end
@@ -220,6 +246,24 @@ githubSha = "ccc"
 downloads = 0
 crashed = boot(20000)
 check(downloads == 1 and crashed == "REBOOT", ("downloaded %d time(s), then: %s"):format(downloads, tostring(crashed)))
+
+print("scenario: turtles talking while the base ticks: no decision runs into another")
+do
+  -- a turtle every 0.3 s for two minutes: its messages land while the
+  -- ticker's decision waits on storage, and the other way round
+  files["release"] = "aaa"; githubSha = "aaa"
+  failed = {}
+  local talks = 0
+  local crashed2 = boot(60000, function(step)
+    if clock < 120 and step % 6 == 0 then
+      talks = talks + 1
+      queue[#queue + 1] = { "rednet_message", 8, { type = "status", state = "idle", role = "assembler", label = "asm", fuel = 500 }, "oreminer" }
+    end
+  end)
+  check(not crashed2, "no crash: " .. tostring(crashed2))
+  check(clock >= 60 and talks > 100, ("%d messages over %d s of ticks"):format(talks, clock))
+  check(#failed == 0, "no decision failed: " .. tostring(failed[1]))
+end
 
 print(failures == 0 and "ALL PASSED" or (failures .. " FAILURE(S)"))
 os.exit(failures == 0 and 0 or 1)
