@@ -222,7 +222,7 @@ local function drawOres(UI, out, w, row, h)
   -- ~ under way, . not yet); areas side by side, then further out
   local cols = math.max(1, math.min(factory.SCOUT_MAX_AREAS, w - 8))
   local last = math.min(cols, (factory.nextScoutArea(F) or cols) + 6)
-  put(out, 1, row, ("scouted, areas 1..%d (# done + part ~ busy . not yet)"):format(last):sub(1, w), colors.lightGray)
+  put(out, 1, row, ("covered, areas 1..%d (# mined  s scouted  + part  ~ busy  . not yet)"):format(last):sub(1, w), colors.lightGray)
   row = row + 1
   for i = #factory.SCOUT_LEVELS, 1, -1 do
     local y = factory.SCOUT_LEVELS[i]

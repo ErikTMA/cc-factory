@@ -2354,13 +2354,26 @@ do
   check(#F.queue == q0 + 1 and mj.auto == "mine" and not mj.scout and not mj.only and not mj.quantity
         and mj.y == -51 and mj.sector == 0 and mj.along == 0 and mj.lanes == 4,
     ("AUTO MINE: one job, all ores, area 1 at Y -51, scan and dig: %s"):format(factory.jobText(mj)))
-  -- done (all 4 lanes): the next level; a level already scouted is skipped
+  -- done (all 4 lanes): the next level; a level only SCOUTED is mined too
+  -- (its ores are still in the ground): area 1 first
   table.remove(F.queue)
   factory.scoutDone(F, mj, 4)
   F.scouted["-35|0"] = { [0] = true, [1] = true, [2] = true, [3] = true }
   factory.tick(F)
   local mj2 = F.queue[#F.queue]
-  check(mj2 and mj2.auto == "mine" and mj2.y == -19, "then Y -19 (-51 mined, -35 already scouted): " .. tostring(mj2 and mj2.y))
+  check(mj2 and mj2.auto == "mine" and mj2.y == -35 and mj2.sector == 0,
+    "then Y -35 of area 1 (scouted, not mined: its ores are still there): " .. tostring(mj2 and mj2.y))
+  -- and AUTO SCOUT skips what was mined (it was scanned)
+  local sbefore = #F.queue
+  F.scoutAuto = { on = true }
+  factory.tick(F)
+  local sj2 = F.queue[#F.queue]
+  check(#F.queue == sbefore + 1 and sj2.scout and not (sj2.y == -51 and sj2.sector == 0) and not (sj2.y == -35 and sj2.sector == 0),
+    ("AUTO SCOUT skips lanes already mined or scouted: %s"):format(factory.jobText(sj2)))
+  table.remove(F.queue)
+  F.scoutAuto = nil
+  check(factory.scoutCell(F, 0, -51) == "#" and factory.scoutCell(F, 0, -35) == "~" and factory.scoutCell(F, 0, 45) == ".",
+    "coverage map: -51 mined (#), -35 being mined (~), 45 nothing (.)")
   table.remove(F.queue)
   factory.toggleAutoMine(F)
   factory.tick(F)
@@ -2442,8 +2455,8 @@ do
   local t2 = ""
   for i = 1, 40 do t2 = t2 .. (screen2[i] or "") .. "\n" end
   if os.getenv("DUMP") then print(t2) end
-  check(t2:find("Y %-35 #") and t2:find("Y %-51 ~") and t2:find("Y  45 %."),
-    "coverage map: Y -35 area 1 done (#), Y -51 under way (~), Y 45 not yet (.)")
+  check(t2:find("Y %-35 s") and t2:find("Y %-51 ~") and t2:find("Y  45 %."),
+    "coverage map: Y -35 area 1 scouted (s), Y -51 under way (~), Y 45 not yet (.)")
   factory.toggleAutoScout(F)
   F.queue, F.scoutAuto, F.scouted = {}, nil, nil
   F.cfg.build.y, F.buildSpot = keepBuildY, keepSpot

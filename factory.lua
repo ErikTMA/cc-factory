@@ -25,7 +25,7 @@ M.QTY = { 8, 16, 32, 64, 128, 256, 0 } -- job sizes on the monitor; 0 = no limit
 local PERSIST = { "turtles", "queue", "nextJobId", "nextSector", "totals", "counted", "toolWants",
                   "orders", "nextOrderId", "homes", "nextHomeId", "buildSpot", "gpsWanted", "anchor", "ruleJobs", "lastFail", "failStreak",
                   "hammer", "tinyFuel", "craft", "nextCraftId", "crafted",
-                  "saplings", "boneMeal", "dismantle", "scoutAuto", "scouted", "mineAuto" }
+                  "saplings", "boneMeal", "dismantle", "scoutAuto", "scouted", "mineAuto", "minedLanes" }
 
 local CRAFT_PAUSE = 60      -- seconds without craft jobs after one failed
 
@@ -362,13 +362,16 @@ local function scoutArea(F, area)
   return (area % across(F)) * M.SCOUT_LANES, math.floor(area / across(F)) * M.SCOUT_LENGTH
 end
 local function scoutKey(y, along) return y .. "|" .. along end
--- lanes of `area` at level `y`: done, being done (queued or out), to do
-local function laneStates(F, area, y)
+-- lanes of `area` at level `y`: done, being done (queued or out), to do.
+-- For scouting, done = scanned (scouted or mined: F.scouted); for AUTO MINE,
+-- done = mined (F.minedLanes): a scouted lane still has its ores to dig.
+local function laneStates(F, area, y, mine)
   local sector, along = scoutArea(F, area)
-  local done = (F.scouted or {})[scoutKey(y, along)] or {}
+  local done = ((mine and F.minedLanes or F.scouted) or {})[scoutKey(y, along)] or {}
   local busy = {}
   local function mark(j)
-    if j and j.area and j.y == y and (j.along or 0) == along then
+    if j and (j.area or j.scout) and j.y == y and (j.along or 0) == along
+       and (not mine or j.auto == "mine") then
       for l = j.sector or 0, (j.sector or 0) + (j.lanes or 0) - 1 do busy[l] = true end
     end
   end
@@ -380,21 +383,26 @@ local function laneStates(F, area, y)
   end
   return st, sector, along
 end
--- '#' scouted, '+' partly, '~' under way, '.' not yet
+-- '#' mined, 's' scouted (not mined), '+' partly, '~' under way, '.' not yet
 function M.scoutCell(F, area, y)
-  local st = laneStates(F, area, y)
-  local done, busy = 0, 0
-  for _, x in ipairs(st) do
-    if x == "done" then done = done + 1 elseif x == "busy" then busy = busy + 1 end
+  local function count(st)
+    local done, busy = 0, 0
+    for _, x in ipairs(st) do
+      if x == "done" then done = done + 1 elseif x == "busy" then busy = busy + 1 end
+    end
+    return done, busy, #st
   end
-  if done == #st then return "#" end
-  if busy > 0 then return "~" end
-  if done > 0 then return "+" end
+  local mDone, mBusy, n = count(laneStates(F, area, y, true))
+  local sDone, sBusy = count(laneStates(F, area, y, false))
+  if mDone == n then return "#" end
+  if mBusy > 0 or sBusy > 0 then return "~" end
+  if sDone == n then return "s" end
+  if sDone > 0 or mDone > 0 then return "+" end
   return "."
 end
 -- A job for the lanes of (area, y) still to do (the first run of them), or nil.
 local function scoutGap(F, area, y, mine)
-  local st, sector, along = laneStates(F, area, y)
+  local st, sector, along = laneStates(F, area, y, mine)
   local first, n
   for i, x in ipairs(st) do
     if x == "todo" then
@@ -411,21 +419,25 @@ local function scoutState(F)
   F.scoutAuto = F.scoutAuto or { on = false }
   return F.scoutAuto
 end
--- (done) what a scout job covered: its lanes up to the ones it finished
+-- (done) what a scout or AUTO MINE job covered: its lanes up to the ones it
+-- finished, scanned; an AUTO MINE job's mined too
 function M.scoutDone(F, job, lanesDone)
-  -- (a scout job, or an AUTO MINE area job: its lanes were scanned)
   if not (job and (job.scout or job.area)) then return end
-  F.scouted = F.scouted or {}
   local k = scoutKey(job.y, job.along or 0)
-  F.scouted[k] = F.scouted[k] or {}
   local n = math.min(lanesDone or job.lanes or 0, job.lanes or 0)
-  for l = job.sector or 0, (job.sector or 0) + n - 1 do F.scouted[k][l] = true end
+  local function record(t)
+    t[k] = t[k] or {}
+    for l = job.sector or 0, (job.sector or 0) + n - 1 do t[k][l] = true end
+  end
+  F.scouted = F.scouted or {}
+  record(F.scouted)
+  if job.auto == "mine" then F.minedLanes = F.minedLanes or {}; record(F.minedLanes) end
 end
 -- the first area with something still to do (at any level)
 function M.nextScoutArea(F)
   for area = 0, M.SCOUT_MAX_AREAS - 1 do
     for _, y in ipairs(M.SCOUT_LEVELS) do
-      for _, x in ipairs((laneStates(F, area, y))) do if x == "todo" then return area end end
+      for _, x in ipairs((laneStates(F, area, y, false))) do if x == "todo" then return area end end
     end
   end
 end
