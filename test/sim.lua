@@ -183,7 +183,7 @@ local function newTurtle(W, startHeading, fuel, start)
       if b then
         local tags = {}
         if oreName(b) then tags = { "c:ores", "c:ores/" .. b:match(":(.-)_ore") } end
-        out[#out + 1] = { name = b, tags = tags, x = x, y = y, z = z }
+        out[#out + 1] = { name = b, tags = (not W.untagged) and tags or nil, x = x, y = y, z = z }
       end
     end end end
     W.scans = (W.scans or 0) + 1
@@ -744,6 +744,50 @@ do
   local gone = 0
   for _, line in ipairs(bus.prints or {}) do if line:find("any more") then gone = gone + 1 end end
   check(gone == 0 and (B.totals.iron or 0) == 6, "every iron dug counted, none taken for gone: " .. gone .. " said gone")
+end
+
+print("scenario: the job ends with the turtle below its job level, next to bedrock (the live miner-5")
+print("          at Y -61): it climbs back to the job level before heading for the shaft, and gets home")
+do
+  local W = newWorld(61, 0, { span = 70, ymin = -30, ymax = 6 })
+  -- bedrock 3 below the job level (-20) everywhere (random bedrock, as at Y -61)
+  for x = -70, 70 do for z = -70, 70 do W.set(x, -23, z, "minecraft:bedrock") end end
+  -- but two ores in it near the end of the lane: digging them leaves it there
+  -- and no other iron around the lane's last scans: those two are the last digs
+  for x = -12, 12 do for y = -30, -10 do for z = -75, -40 do
+    if W.get(x, y, z) == "minecraft:iron_ore" then W.set(x, y, z, "minecraft:stone") end
+  end end end
+  W.set(3, -23, -60, "minecraft:iron_ore"); W.set(3, -23, -62, "minecraft:iron_ore")
+  local B, fleet = runFleet(W, { { x = 0, z = 0, h = 0 } }, function(Base, B)
+    Base.queueJob(B, { only = "iron", y = -20, quantity = 999, lanes = 1, length = 64 })
+  end)
+  check(not fleet[1].err, "no 'Cannot reach home': " .. tostring(fleet[1].err))
+  check(fleet[1].T.x == 0 and fleet[1].T.y == 0 and fleet[1].T.z == 0, ("home (%d,%d,%d)"):format(fleet[1].T.x, fleet[1].T.y, fleet[1].T.z))
+end
+
+print("scenario: modded stone (darkstone) with no tags in the scan stays out of the map; real")
+print("          ores and odd blocks go in; a raw scan entry is kept as scan.sample")
+do
+  local W = newWorld(63, 0, { span = 70, ymin = -40, ymax = 6 })
+  for x = -10, 10 do for y = -28, -12 do for z = -40, 0 do
+    if W.get(x, y, z) == "minecraft:stone" and (x + y + z) % 3 == 0 then W.set(x, y, z, "forbidden_arcanus:darkstone") end
+  end end end
+  W.set(2, -20, -12, "minecraft:spawner")
+  W.untagged = true -- (the live scans came without usable tags)
+  local B, fleet = runFleet(W, { { x = 0, z = 0, h = 0 } }, function(Base, B)
+    table.insert(B.homes, { id = 1, x = 0, y = 0, z = 0, facing = "north", role = "miner", owner = 101 })
+    Base.queueJob(B, { only = "diamond", y = -20, quantity = 999, lanes = 1, length = 32 })
+  end)
+  check(not fleet[1].err, "ran without error: " .. tostring(fleet[1].err))
+  local dark, spawner, ores = 0, false, 0
+  oremap.each(B.map, function(_, _, _, v)
+    if v == "forbidden_arcanus:darkstone" then dark = dark + 1 end
+    if v == "minecraft:spawner" then spawner = true end
+    if v:find("_ore$") then ores = ores + 1 end
+  end)
+  check(dark == 0, "no darkstone in the map: " .. dark)
+  check(spawner and ores > 10, ("the spawner and %d ores are"):format(ores))
+  check(fleet[1].files["scan.sample"] ~= nil, "a raw scan entry kept for checking")
 end
 
 print("scenario: a hand-run job keeps no map report (nobody to send it to)")

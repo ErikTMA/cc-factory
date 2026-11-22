@@ -142,8 +142,15 @@ local FILLER = { ["minecraft:gravel"] = true, ["minecraft:sand"] = true, ["minec
                  ["minecraft:stone"] = true, ["minecraft:deepslate"] = true, ["minecraft:tuff"] = true,
                  ["minecraft:granite"] = true, ["minecraft:diorite"] = true, ["minecraft:andesite"] = true,
                  ["minecraft:netherrack"] = true }
+-- natural stone and ground by name (modded stones like darkstone, deepslate
+-- variants), never an ore: the live scans came without usable tags
+local FILLER_NAMES = { "stone$", "slate$", "deepslate", "tuff$", "basalt$", "granite$", "diorite$",
+                       "andesite$", "netherrack$", "gravel$", "dirt$", "sand$", "clay$", "calcite$" }
 local function filler(b)
   if FILLER[b.name] then return true end
+  if not anyOre(b) and not b.name:find("_ore") then
+    for _, pat in ipairs(FILLER_NAMES) do if b.name:find(pat) then return true end end
+  end
   for _, t in ipairs(tagList(b)) do if FILLER_TAGS[t] then return true end end
   return false
 end
@@ -172,7 +179,7 @@ end
 -- ores = { { x, y, z, name } } } }, mined = { { x, y, z } } }, from its home,
 -- world axes. Its own file (not the job state, which is saved every move),
 -- written only when it changes; kept across jobs until the base has it.
-local PEND, SEND_AT
+local PEND, SEND_AT, PEND_DIRTY
 local MAPPING = false -- only for the base's jobs (serve): a hand-run job keeps no map
 local MAX_PENDING_SCANS = 200 -- the base out of reach for long: the oldest scans go
 local function loadPend()
@@ -182,6 +189,7 @@ end
 local function savePend()
   while #PEND.scans > MAX_PENDING_SCANS do table.remove(PEND.scans, 1) end
   writeFile(CFG.mapFile, PEND)
+  PEND_DIRTY = false
 end
 local SEND_STEP -- (the mid-job send backoff, below)
 local function clearPend()
@@ -208,7 +216,7 @@ local function noteDug(x, y, z, info)
   -- every block worth a place in the map that it digs (tunnels too) leaves it
   if MAPPING and not filler(info) then
     PEND.mined[#PEND.mined + 1] = { x = x, y = y, z = z }
-    savePend()
+    PEND_DIRTY = true -- (saved at the next scan or talk, not on every dig)
   end
 end
 
@@ -294,7 +302,11 @@ local function goTo(t)
   local viaShaft = S.dy ~= 0 and t.y ~= S.pos.y
                    and (t.y == HOME.y or S.pos.y == HOME.y or math.abs(t.y - S.pos.y) > SHAFT_SWITCH)
   if not viaShaft then return goDirect(t) end
-  return goDirect({ x = 0, y = S.pos.y, z = 0 })
+  -- to the shaft at the job's level at least: below it (digging an ore a
+  -- few blocks down) may be bedrock, which can't be dug through
+  local level = math.max(S.pos.y, math.min(S.dy, 0))
+  return goDirect({ x = S.pos.x, y = level, z = S.pos.z })
+     and goDirect({ x = 0, y = level, z = 0 })
      and goDirect({ x = 0, y = t.y, z = 0 })
      and goDirect(t)
 end
@@ -408,6 +420,7 @@ end
 -- Report to the base (only at home). Code updates wait until the job is done.
 -- A reply means the base has the map report too.
 talk = function(state)
+  if PEND_DIRTY then savePend() end
   local had = pending()
   local r = link.talk(state, status(), state == "idle" or state == "done")
   if r and had then clearPend() end
@@ -505,9 +518,16 @@ end
 
 -- Scan here: every block but filler goes into the map report (flagged if an
 -- ore); the job's ores get dug.
+local sampled = false
 local function mineVisible()
   local seen, ores = {}, {}
-  for _, b in ipairs(scan()) do
+  local blocks = scan()
+  if not sampled and #blocks > 0 then
+    -- one raw entry, as AP gave it, to check against the code's assumptions
+    sampled = true
+    pcall(writeFile, "scan.sample", { blocks[1], blocks[#blocks] })
+  end
+  for _, b in ipairs(blocks) do
     local ore = anyOre(b)
     if ore or not filler(b) then
       local o = { x = S.pos.x + math.floor(b.x + 0.5), y = S.pos.y + math.floor(b.y + 0.5),
