@@ -726,8 +726,10 @@ end
 function M.defragStep(F)
   local d = F.defrag
   if not d then return false end
-  -- what it does, for /defrag.log (base.lua writes it): the last 200 lines
+  -- what it does, for /defrag.log (base.lua writes it): the plan, then the
+  -- last 200 step lines
   F.defragLog = F.defragLog or {}
+  F.defragPlan = F.defragPlan or {}
   local function log(line)
     table.insert(F.defragLog, line)
     while #F.defragLog > 200 do table.remove(F.defragLog, 1) end
@@ -757,11 +759,12 @@ function M.defragStep(F)
     end
     d.order, d.shares, d.i, d.stage, d.from = order, shares, 1, "drawers", usedSlots(view)
     F.defragLog = {}
-    log("plan: " .. table.concat(order, ", "))
+    F.defragPlan = { "plan: " .. table.concat(order, ", ") }
     for _, name in ipairs(order) do
       local parts = {}
       for _, e in ipairs(shares[name]) do parts[#parts + 1] = e.n .. " " .. e.key end
-      log(("  %s (%d slots, limit %d): %s"):format(name, byName[name].size, byName[name].limit, table.concat(parts, ", ")))
+      table.insert(F.defragPlan, ("  %s (%d slots, limit %d): %s"):format(name, byName[name].size,
+        byName[name].limit, table.concat(parts, ", ")))
     end
     d.shareOf, d.messy = {}, {}
     for name, share in pairs(shares) do

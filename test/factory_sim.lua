@@ -2512,7 +2512,7 @@ do
     if st then if gap or st.name < last then ok = false end; last = st.name else gap = true end
   end
   check(ok, "the messy barrel sorted")
-  local logText = table.concat(F.defragLog or {}, "\n")
+  local logText = table.concat(F.defragPlan or {}, "\n") .. "\n" .. table.concat(F.defragLog or {}, "\n")
   check(logText:find("plan: ") and logText:find("step %d+: ") and logText:find("  in "),
     "it logs its plan and every step (/defrag.log): " .. #(F.defragLog or {}) .. " lines")
   F.defrag = nil

@@ -706,7 +706,8 @@ local function defragger()
       if F.defragLog then
         pcall(function()
           local f = fs.open("/defrag.log", "w")
-          f.write(table.concat(F.defragLog, "\n") .. "\n" .. tostring(F.note) .. "\n")
+          f.write(table.concat(F.defragPlan or {}, "\n") .. "\n" .. table.concat(F.defragLog, "\n")
+            .. "\n" .. tostring(F.note) .. "\n")
           f.close()
         end)
       end
