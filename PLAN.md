@@ -152,7 +152,7 @@ rednet. Turtles never need http.
         (free cell next to a home chest with a modem in front or below)
   - [x] M10d chat fallback: Chat Box + Player Detector at the base; `$build`
         on the build spot, `$home [role]` on a home spot (player position and
-        facing); verify-live: Player Detector's return fields
+        facing); Player Detector checked in AP 0.8.2a: Lua `getPlayer(name)` -> x, y, z, yaw, pitch, dimension (server: enablePlayerPosFunction and morePlayerInformation on, no random error); Chat Box event is `chat, uuid, username, message, hidden`
 - [x] M9 production: furnaces on the wired network run by the base (raw ore/dust
       -> ingots, logs -> charcoal, cobble -> stone, sand -> glass); a recipe
       planner crafts every part of a turtle through the assembler (craft jobs,
