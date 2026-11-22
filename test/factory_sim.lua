@@ -1863,6 +1863,8 @@ do
   check(text:find("stock: logs 60 %(keep 16%), charcoal 0") and text:find("furnace_a: in %-") and text:find("given %d+ minecraft:cherry_log"),
     "the production report says so:\n" .. text)
   check(logs <= 60 - 16, "16 logs in all kept: " .. logs .. " smelted")
+end
+
 print("scenario: the ore map: scans add what they see and drop what is gone, digs remove,")
 print("          jobs find the nearest of their kind (ores only), packed for disk, pruned to fit")
 do

@@ -265,7 +265,7 @@ verify-live: furnace slot pushes with a bridge backend; real hammer durability.
   single shaft is gridlock: turtles are solid and can't pass in a 1x1 tunnel.)
 - **Several miners may share a home (and its shaft).** When two meet, the one
   going down (outbound) digs a pocket aside, waits there until the way is
-  clear, then goes on; in tunnels the outbound one yields to the one coming
+  clear, then goes on; in tunnels and lanes the outbound one yields to the one coming
   back.
 - **The ore map** (branch `oremap-wip`, reviewed; fixes before it ships):
   every scanned block but filler and liquids, in the base's frame; scans

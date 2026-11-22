@@ -570,6 +570,8 @@ do
   end
   check(asked, "asked for fuel at its chest")
   check(not pushed, "no wired-network fuel push")
+end
+
 print("scenario: the ore map: job 1 reports every non-filler block it scans (with its wireless")
 print("          modem, mid-job too); job 2 gets the known iron and digs it first; dug iron leaves the map")
 do
