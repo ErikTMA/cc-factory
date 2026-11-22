@@ -628,7 +628,7 @@ end
 local function serviceTrip(reason)
   log("Returning home: " .. reason)
   local back = { x = S.pos.x, y = S.pos.y, z = S.pos.z }
-  if not goTo(HOME) then error("Cannot reach home", 0) end
+  if not goTo(HOME) then error("Cannot reach home (" .. nav.surroundings() .. ")", 0) end
   unload()
   refuel()
   local reply = talk("unloading")
@@ -773,7 +773,7 @@ local function run()
     if not finished() then S.lane, S.progress = S.lane + 1, 0 end
     save()
   end
-  if not goTo(HOME) then error("Cannot reach home", 0) end
+  if not goTo(HOME) then error("Cannot reach home (" .. nav.surroundings() .. ")", 0) end
   unload()
   turnTo(S.homeHeading)
   S.done = true

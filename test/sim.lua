@@ -406,6 +406,29 @@ do
   check(T.x == 0 and T.y == 0 and T.z == 0, ("back home (%d,%d,%d)"):format(T.x, T.y, T.z))
 end
 
+print("scenario: sealed in for real (bedrock on all six sides): the crash says why: fuel and what's around")
+do
+  local W = newWorld(7, 1)
+  local T, api, sc = newTurtle(W, 1, 0)
+  T.inv[1] = { name = "minecraft:coal", count = 64 }
+  local files = {}
+  local budget = 150
+  local realForward = api.forward
+  api.forward = function()
+    budget = budget - 1
+    if budget == 0 then error("CHUNK UNLOADED") end
+    return realForward()
+  end
+  runProgram(makeEnv(T, api, sc, files), "lanes=2", "length=32")
+  api.forward = realForward
+  for _, d in ipairs({ { 1, 0, 0 }, { -1, 0, 0 }, { 0, 0, 1 }, { 0, 0, -1 }, { 0, 1, 0 }, { 0, -1, 0 } }) do
+    W.set(T.x + d[1], T.y + d[2], T.z + d[3], "minecraft:bedrock")
+  end
+  local ok, err = runProgram(makeEnv(T, api, sc, files), "resume")
+  check(not ok and tostring(err):find("fuel %d+") and tostring(err):find("bedrock"),
+    "the error names the fuel and the blocks around: " .. tostring(err))
+end
+
 -- Scenario 3: inventory fills up -> service trips to the chest
 print("scenario: small inventory budget forces trips home")
 do
