@@ -40,6 +40,10 @@ over rednet. Friends-only server: base-ID pinning, no signing.
   (insertIntoSlotsThatMatchStack), then the lowest empty slot (emptySlots is
   a TreeSet). So nothing can be placed in a chosen slot: DEFRAG rebuilds an
   inventory (empty it, fill it in name order) instead of moving slots.
+- Confirmed live (2026-11-22, probe_slot on the base): pushItems into a
+  Sophisticated barrel asking for slot 61 landed in slot 3, its lowest empty
+  slot. Its own sort runs only from the open GUI (StorageContainerMenuBase
+  .handlePacket); no CC integration, nothing else calls it.
 - CC's pushItems/pullItems (ForgeContainerTransfer.moveItem): simulated
   extract, then the REAL insert, then the real extract. A push from an
   inventory into itself can land back in the source stack: useless for

@@ -63,16 +63,14 @@ local function stable(invs, totals, maxOf, withReserve)
     end
     freeNow[inv.name] = inv.size - used
   end
-  local most, second
+  -- two slots kept free to move through, in the plain inventory with the
+  -- most room (only what it has free: never pushing its own items out)
+  local roomy
   for _, inv in ipairs(invs) do
-    if not most or freeNow[inv.name] > freeNow[most.name] then most = inv end
-  end
-  -- (a plain one: an upgraded one's slots are worth more)
-  for _, inv in ipairs(invs) do
-    if inv ~= most and inv.limit <= 64 and (not second or freeNow[inv.name] > freeNow[second.name]) then second = inv end
+    if inv.limit <= 64 and freeNow[inv.name] > 0 and (not roomy or freeNow[inv.name] > freeNow[roomy.name]) then roomy = inv end
   end
   local reserve = {}
-  if second and withReserve then reserve[second.name] = math.min(2, second.size) end
+  if roomy and withReserve then reserve[roomy.name] = math.min(2, freeNow[roomy.name]) end
   local order = {}
   for _, inv in ipairs(invs) do order[#order + 1] = inv end
   table.sort(order, function(a, b) return a.name < b.name end)
@@ -88,24 +86,6 @@ local function stable(invs, totals, maxOf, withReserve)
     table.insert(shares[inv.name], { key = k, n = n })
     free[inv.name] = free[inv.name] - math.ceil(n / c)
     left[k] = left[k] - n
-  end
-  -- upgraded inventories: the items with the most stacks
-  for _, inv in ipairs(order) do
-    if inv.limit > 64 then
-      while free[inv.name] > 0 do
-        local best, bestStacks
-        for _, k in ipairs(keys) do
-          if left[k] > 0 then
-            local stacks = left[k] / (maxOf[k] or 64)
-            if not best or stacks > bestStacks then best, bestStacks = k, stacks end
-          end
-        end
-        if not best then break end
-        local was = left[best]
-        put(inv, best)
-        if left[best] == was then break end
-      end
-    end
   end
   -- the rest stays where most of it is; the biggest items first
   local byTotal = {}
@@ -133,6 +113,36 @@ local function stable(invs, totals, maxOf, withReserve)
   end
   for _, k in ipairs(keys) do
     if left[k] > 0 then return nil, ("it doesn't all fit: %d %s left over"):format(left[k], k:match("^[^|]*")) end
+  end
+  -- room left in an upgraded inventory (its own items compacted): the
+  -- items with the most stacks in plain ones move in (they save slots
+  -- there); what it holds already is never pushed out for them
+  for _, up in ipairs(order) do
+    if up.limit > 64 then
+      while free[up.name] > 0 do
+        local best, bestStacks, from
+        for _, inv in ipairs(order) do
+          if inv.limit <= 64 then
+            for _, e in ipairs(shares[inv.name]) do
+              local stacks = e.n / (maxOf[e.key] or 64)
+              if stacks > 1 and (not best or stacks > bestStacks) then best, bestStacks, from = e, stacks, inv end
+            end
+          end
+        end
+        if not best then break end
+        local c = M.cap(up.limit, maxOf[best.key])
+        local n = math.min(best.n, free[up.name] * c)
+        local cPlain = M.cap(from.limit, maxOf[best.key])
+        -- (only if it saves a slot)
+        if math.ceil(n / c) >= math.ceil(n / cPlain) then break end
+        table.insert(shares[up.name], { key = best.key, n = n })
+        free[up.name] = free[up.name] - math.ceil(n / c)
+        best.n = best.n - n
+        if best.n == 0 then
+          for i, e in ipairs(shares[from.name]) do if e == best then table.remove(shares[from.name], i); break end end
+        end
+      end
+    end
   end
   local names = {}
   for _, inv in ipairs(order) do
@@ -278,9 +288,12 @@ function M.moves(invs, shares, maxOf, maxMoves)
           culprit = p -- (another item in the slot)
         elseif w and I.loose then
           -- a part stack of it further on, or the only stacks of it are in here
+          -- (also its own last, part stack further on, though that one is
+          -- in place: what comes in would land on it, never in p)
           for q = 1, I.size do
             local o = I.slots[q]
-            if q ~= p and o and o.key == w.key and loose(I, q) then culprit = q; break end
+            if q ~= p and o and o.key == w.key
+               and (loose(I, q) or (q > p and o.count < capOf(I, o.key))) then culprit = q; break end
           end
         end
         if culprit then
@@ -307,6 +320,52 @@ function M.moves(invs, shares, maxOf, maxMoves)
       end
     end
     return false
+  end
+  -- first, merge: in an inventory that places items itself, several part
+  -- stacks of one item become as few as can be: each goes out to a free
+  -- slot elsewhere and straight back in, landing on the first part stack of
+  -- it (one free slot outside is enough, used again and again). An upgraded
+  -- barrel full of 64s becomes a few 512s this way, freeing its slots.
+  local function partsOf(I)
+    local by = {}
+    for q = 1, I.size do
+      local o = I.slots[q]
+      if o and o.count < capOf(I, o.key) then
+        by[o.key] = by[o.key] or {}
+        table.insert(by[o.key], q)
+      end
+    end
+    return by
+  end
+  local function scratchFor(I, key)
+    for _, B in ipairs(order) do
+      if B ~= I then
+        if B.loose then
+          for q = 1, B.size do if not B.slots[q] then return B, q end end
+        else
+          for q = B.size, 1, -1 do if not B.slots[q] then return B, q end end
+        end
+      end
+    end
+  end
+  for _, I in ipairs(order) do
+    if I.loose then
+      for _ = 1, I.size do
+        local by, q = partsOf(I), nil
+        for _, list in pairs(by) do if #list >= 2 then q = list[#list]; break end end
+        if not q or #moves >= maxMoves then break end
+        local B, land = scratchFor(I, I.slots[q].key)
+        if not B then break end
+        local n = I.slots[q].count
+        if move(I, q, B, n, land) < n then break end
+        -- and back in: onto the first part stack of it (what doesn't fit
+        -- there goes on to the next one, or the lowest empty slot)
+        for _ = 1, 8 do
+          if not B.slots[land] then break end
+          if move(B, land, I, B.slots[land].count) == 0 then break end
+        end
+      end
+    end
   end
   while #moves < maxMoves do
     if not direct() and not park() then break end

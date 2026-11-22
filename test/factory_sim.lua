@@ -2662,5 +2662,44 @@ do
   F.deps.storage.forget()
 end
 
+print("scenario: the live storage: an upgraded gold barrel (512 a slot) full of 64-stacks, four plain")
+print("          barrels full, 5 free slots: its stacks are merged to 512s; nothing stuck")
+do
+  local keepInv = W.inv
+  W.inv = {}
+  local plain = {}
+  local n = 0
+  for b = 0, 3 do
+    plain[b] = newInv("sophisticatedstorage:barrel_" .. b, nil, nil, nil, 27, { loose = true })
+    for i = 1, (b == 0) and 22 or 27 do n = n + 1; plain[b].slots[i] = { name = ("minecraft:item_%03d"):format(n), count = 30 } end
+  end
+  local gold = newInv("sophisticatedstorage:gold_barrel_4", nil, nil, nil, 81, { loose = true, limit = 512 })
+  -- (made-up items: the base's own work doesn't take them while it runs)
+  local kinds = { "minecraft:thing_a", "minecraft:thing_b", "minecraft:thing_c", "minecraft:thing_d" }
+  for i = 1, 81 do gold.slots[i] = { name = kinds[(i - 1) % #kinds + 1], count = 64 } end
+  local function totals()
+    local t = {}
+    for _, I in pairs(W.inv) do for _, st in pairs(I.slots) do t[st.name] = (t[st.name] or 0) + st.count end end
+    return t
+  end
+  local t0 = totals()
+  F.deps.storage.forget()
+  F.defragResult = nil
+  factory.toggleDefrag(F)
+  runUntil(function() return F.defrag == nil end, 20000)
+  local doneNote = F.defragResult
+  check((doneNote or ""):find("Defrag done") ~= nil, "done: " .. tostring(doneNote))
+  local goldSlots = 0
+  for _ in pairs(gold.slots) do goldSlots = goldSlots + 1 end
+  -- (1344 + 3 x 1280 at 512 a slot: 3 + 3 + 3 + 3)
+  check(goldSlots <= 12, "the gold barrel's 81 stacks of 64 merged into 512s: " .. goldSlots .. " slots")
+  local t1, same = totals(), true
+  for k2, v in pairs(t0) do if t1[k2] ~= v then same = false end end
+  check(same, "nothing lost or made")
+  F.defrag = nil
+  W.inv = keepInv
+  F.deps.storage.forget()
+end
+
 print(failures == 0 and "ALL PASSED" or (failures .. " FAILURE(S)"))
 os.exit(failures == 0 and 0 or 1)

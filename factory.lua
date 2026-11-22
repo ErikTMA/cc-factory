@@ -838,7 +838,7 @@ function M.defragStep(F)
     local moves, wrong = defrag.moves(view.invs, shares, view.maxOf)
     d.moves, d.k, d.wrong = moves, 1, wrong
     F.defragLog = {}
-    F.defragPlan = { ("plan: %d moves%s; order %s"):format(#moves, wrong > 0 and (", " .. wrong .. " slots it can't fix") or "",
+    F.defragPlan = { ("plan: %d moves%s; order %s"):format(#moves, wrong > 0 and (", " .. wrong .. " slots it can't put in order") or "",
       table.concat(order, ", ")) }
     local byName = {}
     for _, inv in ipairs(view.invs) do byName[inv.name] = inv end
@@ -873,7 +873,7 @@ function M.defragStep(F)
   end
   F.defrag = nil
   F.note = ("Defrag done: %d moves, storage uses %d slots (was %d)%s"):format(#d.moves, usedSlots(view) , d.from,
-    (d.wrong or 0) > 0 and ("; " .. d.wrong .. " slots it had no room to fix") or "")
+    (d.wrong or 0) > 0 and ("; " .. d.wrong .. " slots left out of order (no room to move them through)") or "")
   F.defragResult = F.note -- (the note line is shared; this is the run's own)
   return false
 end
