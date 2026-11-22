@@ -182,6 +182,23 @@ check(#sent >= 1 and sent[1].to == 7 and sent[1].msg.type == "ok", "answered the
 check(files["base.state"] ~= nil, "saved its state")
 check(files["factory.cfg"] ~= nil, "wrote factory.cfg with defaults on first start")
 
+print("scenario: a Chat Box connected while it runs is picked up (no restart): $help gets an answer")
+do
+  local said = {}
+  local chat = { sendMessageToPlayer = function(text, user) said[#said + 1] = { text, user } return true end,
+                 sendMessage = function(text) said[#said + 1] = { text } return true end }
+  local attached = false
+  local oldFind = periph.find
+  periph.find = function(t) if attached and t == "chat_box" then return chat end return oldFind(t) end
+  files["release"] = "aaa"; githubSha = "aaa"
+  boot(400, function(step)
+    if step == 100 then attached = true; queue[#queue + 1] = { "peripheral", "chat_box_0" } end
+    if step == 120 then queue[#queue + 1] = { "chat", "Erik", "$help", "uuid", true } end
+  end)
+  periph.find = oldFind
+  check(#said >= 1 and said[1][1]:find("%$build"), "answered $help after the Chat Box was connected: " .. tostring(said[1] and said[1][1]))
+end
+
 print("scenario: new files copied in while it runs: the updater restarts it (no download)")
 files["release"] = "aaa"
 githubSha = "bbb"

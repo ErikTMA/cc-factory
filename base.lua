@@ -517,8 +517,14 @@ end
 
 -- Chat fallback for homes: a Chat Box and a Player Detector next to the base
 -- (Advanced Peripherals). "$help" in chat lists the commands.
-local chatBox = peripheral.find("chat_box") or peripheral.find("chatBox")
-local detector = peripheral.find("player_detector") or peripheral.find("playerDetector")
+-- Chat Box and Player Detector: looked up again whenever a peripheral is
+-- connected (no restart needed after placing them)
+local chatBox, detector
+local function findChatPeripherals()
+  chatBox = peripheral.find("chat_box") or peripheral.find("chatBox")
+  detector = peripheral.find("player_detector") or peripheral.find("playerDetector")
+end
+findChatPeripherals()
 
 -- verify-live: which method/fields the Player Detector has in this AP version
 local function playerPos(user)
@@ -542,12 +548,13 @@ local function say(user, text)
 end
 
 local function chatter()
-  if not chatBox then -- no Chat Box: nothing to do, ever (CC's sleep refuses math.huge)
-    while true do os.pullEvent("cc_factory_never") end
-  end
   while true do
-    local _, user, message = os.pullEvent("chat")
-    if type(message) == "string" and message:sub(1, 1) == "$" then
+    local ev, user, message = os.pullEvent()
+    if ev == "peripheral" or ev == "peripheral_detach" then
+      local had = chatBox ~= nil
+      findChatPeripherals()
+      if chatBox and not had then F.note = "Chat Box connected: $help in chat" end
+    elseif ev == "chat" and chatBox and type(message) == "string" and message:sub(1, 1) == "$" then
       local pos = (message:match("^%$build") or message:match("^%$home")) and playerPos(user) or nil
       say(user, factory.chatCommand(F, user, message, pos))
       persist()
