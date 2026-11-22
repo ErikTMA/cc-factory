@@ -30,7 +30,10 @@ local function newWorld(opts)
   local W = { b = {}, saplingsPlanted = 0, clock = 0 }
   -- items lying on the floor (in the air cell at y 0): { x, z, name, count, t }
   W.items = {}
-  function W.drop(x, z, name, n) W.items[#W.items + 1] = { x = x, z = z, name = name, count = n, t = W.clock } end
+  function W.drop(x, z, name, n, spill)
+    W.items[#W.items + 1] = { x = x, z = z, name = name, count = n, t = W.clock, spill = spill }
+    if spill then W.spilled = (W.spilled or 0) + n end
+  end
   function W.ground(name)
     local c = 0
     for _, it in ipairs(W.items) do if not name or it.name == name then c = c + it.count end end
@@ -121,6 +124,37 @@ local function newWorld(opts)
       W.growAt(tonumber(x), tonumber(y), tonumber(z))
     end
   end
+  -- time passes: leaves with no log within 2 decay; every 2nd drops its
+  -- sapling onto the floor below; items lying 300 s despawn (like the game)
+  local decayed = 0
+  function W.tick(secs)
+    local start = W.clock
+    W.clock = W.clock + secs
+    local gone = {}
+    for key, v in pairs(W.b) do
+      if v:find("_leaves$") then
+        local x, y, z = key:match("^(-?%d+),(-?%d+),(-?%d+)$")
+        x, y, z = tonumber(x), tonumber(y), tonumber(z)
+        local near = false
+        for dx = -2, 2 do for dy = -2, 2 do for dz = -2, 2 do
+          local o = W.get(x + dx, y + dy, z + dz)
+          if o and o:find("_log$") then near = true end
+        end end end
+        if not near then gone[#gone + 1] = { x, y, z, v } end
+      end
+    end
+    for _, g in ipairs(gone) do
+      W.set(g[1], g[2], g[3], nil)
+      decayed = decayed + 1
+      if decayed % 2 == 0 then
+        W.drop(g[1], g[3], (g[4]:gsub("_leaves$", "_sapling")), 1)
+        W.items[#W.items].t = start + math.min(secs, 10) -- (leaves start decaying within seconds)
+      end
+    end
+    local keep = {}
+    for _, it in ipairs(W.items) do if W.clock - it.t < 300 then keep[#keep + 1] = it end end
+    W.items = keep
+  end
   function W.count(name)
     local n = 0
     for _, v in pairs(W.b) do if v == name then n = n + 1 end end
@@ -138,7 +172,7 @@ local function newWorld(opts)
 end
 
 local function newTurtle(W, fuel)
-  local T = { x = 0, y = 0, z = 0, h = 0, fuel = fuel, sel = 1, inv = {} }
+  local T = { x = 0, y = 0, z = 0, h = 0, fuel = fuel, sel = 1, inv = {}, W = W }
   local function front() local d = DIRS[T.h]; return T.x + d[1], T.y, T.z + d[2] end
   -- like CC: dug items go into the selected slot first, then onwards, wrapping
   -- (stacks of 64); what doesn't fit drops on the ground, where the turtle is
@@ -155,7 +189,7 @@ local function newTurtle(W, fuel)
         end
       end
     end
-    if n > 0 then W.drop(T.x, T.z, name, n) end
+    if n > 0 then W.drop(T.x, T.z, name, n, true) end -- (spilled: its inventory is full)
   end
   local leafDigs = 0
   local function dig(x, y, z)
@@ -171,6 +205,7 @@ local function newTurtle(W, fuel)
   end
   local function move(x, y, z)
     if W.get(x, y, z) or T.fuel < 1 then return false end
+    W.clock = W.clock + 0.4
     T.fuel = T.fuel - 1; T.x, T.y, T.z = x, y, z
     if T.onMove then T.onMove() end -- may throw: stopped after the move, before the save
     return true
@@ -190,8 +225,9 @@ local function newTurtle(W, fuel)
   function api.back() local d = DIRS[T.h]; return move(T.x - d[1], T.y, T.z - d[2]) end
   function api.up() return move(T.x, T.y + 1, T.z) end
   function api.down() return move(T.x, T.y - 1, T.z) end
-  function api.turnLeft() T.h = (T.h + 3) % 4; if T.onTurn then T.onTurn() end; return true end
-  function api.turnRight() T.h = (T.h + 1) % 4; if T.onTurn then T.onTurn() end; return true end
+  -- (a turtle move or turn takes 8 ticks: 0.4 s; items on the ground age meanwhile)
+  function api.turnLeft() W.clock = W.clock + 0.4; T.h = (T.h + 3) % 4; if T.onTurn then T.onTurn() end; return true end
+  function api.turnRight() W.clock = W.clock + 0.4; T.h = (T.h + 1) % 4; if T.onTurn then T.onTurn() end; return true end
   function api.dig() return dig(front()) end
   function api.digUp() return dig(T.x, T.y + 1, T.z) end
   function api.digDown() return dig(T.x, T.y - 1, T.z) end
@@ -206,7 +242,24 @@ local function newTurtle(W, fuel)
   -- from the home chest in front, like CC: the FIRST non-empty slot, into
   -- the turtle from the selected slot on (stacking); false if none fits
   function api.suck(limit)
-    if W.get(front()) ~= "minecraft:chest" then return false end
+    local fx, fy, fz = front()
+    if W.get(fx, fy, fz) ~= "minecraft:chest" then
+      -- no inventory there: the items lying in that cell (CC: ItemEntity in its box)
+      if fy ~= 0 then return false end
+      local alive = {}
+      for _, it in ipairs(W.items) do if W.clock - it.t < 300 then alive[#alive + 1] = it end end
+      W.items = alive -- (despawned: 300 s on the ground)
+      for i, it in ipairs(W.items) do
+        if it.x == fx and it.z == fz then
+          table.remove(W.items, i)
+          if it.old then W.pickedOld = (W.pickedOld or 0) + it.count end
+          add(it.name, it.count)
+          return true
+        end
+      end
+      return false
+    end
+    W.chestSucks = (W.chestSucks or 0) + 1
     local ci
     for i = 1, 27 do if W.slots[i] then ci = i; break end end
     if not ci then return false end
@@ -342,7 +395,7 @@ local function makeEnv(T, api, files, onSleep)
     end,
   }
   env.print = os.getenv("VERBOSE") and print or function() end
-  env.sleep = onSleep
+  env.sleep = function(secs) T.W.tick(tonumber(secs) or 0); return onSleep(secs) end
   local function ser(v)
     if type(v) == "table" then
       local p = {}
@@ -736,7 +789,7 @@ do
   end
   local ok, err = run(makeEnv(T, api, {}, sl), "10")
   check(tostring(err):find("END OF TEST") ~= nil, "two rounds (" .. tostring(err) .. ")")
-  check(W.ground() == 0, "nothing dropped on the ground: " .. W.ground())
+  check((W.spilled or 0) == 0, "nothing it dug dropped on the ground: " .. (W.spilled or 0))
   check(W.count(LOG) == 0, "every tree felled")
 end
 
@@ -771,6 +824,37 @@ do
   check(W.count(LOG) == 0, "every log felled: " .. W.count(LOG) .. " left")
   check(T.x == 0 and T.y == 0 and T.z == 0, ("home again (%d,%d,%d)"):format(T.x, T.y, T.z))
   check(W.fences() == fences, "no fence touched")
+end
+
+print("scenario: after felling, the leaves decay and drop saplings on the ground: the next")
+print("          round comes back soon and picks them all up")
+do
+  local W = newWorld()
+  local T, api = newTurtle(W, 5000)
+  T.inv[1] = { name = SAP, count = 64 }
+  local n, dropped, sapsBefore = 0, 0, 0
+  local function saps()
+    local c = 0
+    for i = 1, 16 do if T.inv[i] and T.inv[i].name == SAP then c = c + T.inv[i].count end end
+    return c + (W.chest[SAP] or 0)
+  end
+  local function sl()
+    n = n + 1
+    if n == 1 then W.growAll(); return end          -- round 2 fells them all
+    if n == 2 then                                    -- the leaves have decayed by now
+      for _, it in ipairs(W.items) do it.old = true; dropped = dropped + it.count end
+      sapsBefore = saps()
+      return
+    end
+    error("END OF TEST")
+  end
+  local ok, err = run(makeEnv(T, api, {}, sl), "300")
+  check(tostring(err):find("END OF TEST") ~= nil, "three rounds (" .. tostring(err) .. ")")
+  check(dropped > 0, "the leaves dropped saplings on the ground: " .. dropped)
+  check((W.pickedOld or 0) == dropped,
+    ("round 3 picked them all up before they despawned: %d of %d"):format(W.pickedOld or 0, dropped))
+  check(saps() >= sapsBefore + dropped, "and kept them")
+  check((W.chestSucks or 0) == 0, "never took from its home chest while sweeping: " .. (W.chestSucks or 0))
 end
 
 print("scenario: starts without saplings, asks the base and takes them from its home chest")

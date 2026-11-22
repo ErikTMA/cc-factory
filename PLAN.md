@@ -12,6 +12,11 @@ over rednet. Friends-only server: base-ID pinning, no signing.
   runs **instead of** the computer's own startup (`shell.allow_disk_startup`).
   So the installer disk drive sits under the build spot, never next to the
   assembler.
+- `TurtleSuckCommand` (decompiled, 1.120.2): with an inventory in that
+  direction it takes from it (first slot); otherwise it takes the
+  `ItemEntity`s inside that block's box (x..x+1, y..y+1, z..z+1), "No items
+  to take" if none. Items on the floor lie in the air cell above it: face
+  that cell with `suck()`; `suckDown()` only reaches inside the floor block.
 - Space limits (server `config/computercraft-server.toml`):
   `computer_space_limit = 1000000`, `floppy_space_limit = 125000` bytes;
   writing past it fails with "Out of space". All turtle files (~130 KB) don't

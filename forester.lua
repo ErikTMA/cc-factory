@@ -53,6 +53,8 @@ local CFG = {
   keepSaplings = 16,   -- saplings it keeps of each kind when unloading
   keepFuel = 16,       -- fuel items (charcoal...) it keeps when unloading (all kinds)
   minFree = 3,         -- free slots below this during a round: home to unload first
+  sweepDelay = 90,     -- s after a round that felled trees: the next round starts this soon
+  sweepRounds = 2,     -- rounds that sweep around a felled tree (leaves decay for minutes)
   supply = { fuel = 16, saplings = 16, bonemeal = 32 }, -- what it asks the base for at home
   treeFuel = 2 * 40 + 10, -- fuel one tree may take (climb up and down, maxHeight)
   minRoundFuel = 60,   -- below this (after filling up at home) it waits at home
@@ -180,12 +182,21 @@ local function move(kind, fn)
 end
 
 -- Forward one cell, clearing plants/leaves/logs in the way; false at a border.
+-- Take the items lying in the cell in front (CC: suck() with no inventory
+-- there takes the ItemEntities in that block; checked in the jar). Never
+-- from a chest, modem or turtle in front: suck would empty an inventory.
+local function collect()
+  local ok, b = turtle.inspect()
+  if ok and isMachine(b.name) then return end
+  for _ = 1, 8 do
+    if not turtle.suck() then break end
+  end
+end
+
 local function step()
   for _ = 1, 20 do
-    if move("fwd", turtle.forward) then
-      turtle.suckDown() -- saplings and apples lying around
-      return true
-    end
+    collect() -- saplings and apples lying in the way
+    if move("fwd", turtle.forward) then return true end
     local ok, b = turtle.inspect()
     if ok then
       if not (isClearable(b) or isLog(b)) then return false end
@@ -536,6 +547,10 @@ fell = function(replant)
   local facing = S.heading
   turtle.dig()
   if not move("fwd", turtle.forward) then return end
+  -- its leaves will decay and drop saplings around it: sweep there soon
+  S.sweep = S.sweep or {}
+  S.sweep[key(S.pos.x, S.pos.z)] = CFG.sweepRounds
+  save()
   chop()
   while S.up > 0 do
     if not forceDown() then error("Cannot get back down", 0) end
@@ -773,6 +788,42 @@ local function visitSpot(sk, soilAround)
   end
 end
 
+-- Sweep around the trees felled lately: stand on each path cell within 2 of
+-- them and take what lies in the 4 cells around it (saplings, apples, sticks
+-- from the decaying leaves). Each felled tree is swept CFG.sweepRounds times.
+local function sweep()
+  if not S.sweep or not next(S.sweep) then return end
+  local cells = {}
+  for k in pairs(AREA.cells) do
+    local x, z = unkey(k)
+    if not isSpot[k] then
+      for t in pairs(S.sweep) do
+        local tx, tz = unkey(t)
+        if math.abs(tx - x) <= 2 and math.abs(tz - z) <= 2 then cells[k] = true; break end
+      end
+    end
+  end
+  while next(cells) do
+    local best, bd
+    for k in pairs(cells) do
+      local x, z = unkey(k)
+      local d = dist(S.pos, x, z)
+      if not bd or d < bd or (d == bd and k < best) then best, bd = k, d end
+    end
+    cells[best] = nil
+    local x, z = unkey(best)
+    local back = path({ x = x, z = z }, { x = 0, z = 0 })
+    local f = turtle.getFuelLevel()
+    if f ~= "unlimited" and f < bd + (back and #back or bd) + 10 then break end
+    if freeSlots() < 1 then break end
+    if walkTo({ x = x, z = z }) then
+      for h = 0, 3 do turnTo(h); collect() end
+    end
+  end
+  for t, n in pairs(S.sweep) do S.sweep[t] = n > 1 and n - 1 or nil end
+  save()
+end
+
 local function round()
   select(WORK_SLOT)
   refuel()
@@ -782,6 +833,7 @@ local function round()
     log(("Fuel %d: waiting at home for fuel (put coal or logs in me, or in my chest)"):format(turtle.getFuelLevel()))
     return false
   end
+  sweep()
   -- the kinds changed (the base's selection, what it carries): new grid
   local spacing, soilAround = treeNeeds()
   if spacing ~= AREA.spacing then
@@ -898,6 +950,8 @@ local rounds = 0
 while true do
   round()
   rounds = rounds + 1
-  log(("Round %d done. Fuel %s. Next in %ds."):format(rounds, tostring(turtle.getFuelLevel()), S.wait))
-  sleep(S.wait)
+  -- trees felled lately: come back soon, before what their leaves drop despawns
+  local wait = (S.sweep and next(S.sweep)) and math.min(S.wait, CFG.sweepDelay) or S.wait
+  log(("Round %d done. Fuel %s. Next in %ds."):format(rounds, tostring(turtle.getFuelLevel()), wait))
+  sleep(wait)
 end
