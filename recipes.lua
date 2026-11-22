@@ -48,6 +48,10 @@ R.CRAFT = {
     [5] = "minecraft:diamond", [6] = "advancedperipherals:peripheral_casing", [7] = "minecraft:diamond",
     [9] = "minecraft:redstone_block", [10] = "minecraft:observer", [11] = "minecraft:redstone_block" } },
   ["minecraft:shears"] = { count = 1, grid = { [2] = "minecraft:iron_ingot", [5] = "minecraft:iron_ingot" } },
+  ["computercraft:wireless_modem_advanced"] = { count = 1, grid = {
+    [1] = "minecraft:gold_ingot", [2] = "minecraft:gold_ingot", [3] = "minecraft:gold_ingot",
+    [5] = "minecraft:gold_ingot", [6] = "minecraft:ender_eye", [7] = "minecraft:gold_ingot",
+    [9] = "minecraft:gold_ingot", [10] = "minecraft:gold_ingot", [11] = "minecraft:gold_ingot" } },
   ["computercraft:wireless_modem_normal"] = { count = 1, grid = {
     [1] = "minecraft:stone", [2] = "minecraft:stone", [3] = "minecraft:stone",
     [5] = "minecraft:stone", [6] = "minecraft:ender_pearl", [7] = "minecraft:stone",

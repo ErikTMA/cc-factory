@@ -1050,10 +1050,8 @@ local function dropHaul(keepFuel)
   end
   for i = 1, 16 do
     local d = turtle.getItemDetail(i)
-    -- (the shears and the core only while it shears: else back to storage)
-    local shearTool = d and (d.name == C.SHEARS_ITEM or d.name == C.AUTOMATA_ITEM)
-    if shearTool and not S.shear then select(i); turtle.drop()
-    elseif d and not (shearTool or link.isKeptItem(d.name) or d.name == DIRT or (i == BONEMEAL_SLOT and d.name == "minecraft:bone_meal")) then
+    -- (accessories: kept while it is to carry them, link.isKeptItem)
+    if d and not (link.isKeptItem(d.name) or d.name == DIRT or (i == BONEMEAL_SLOT and d.name == "minecraft:bone_meal")) then
       if isSaplingItem(d.name) and allowed(d.name) then keepUpTo(i, d, CFG.keepSaplings)
       elseif isLog(d) then delivered = delivered + keepUpTo(i, d, CFG.keepLogs, "logs")
       elseif C.isFuel(d.name) then keepUpTo(i, d, keepFuel or CFG.keepFuel, "fuel")
@@ -1086,7 +1084,6 @@ local function unload(fuelNeed)
   -- Detector (find dropped saplings), asked for until it has them
   local tools = {}
   local toolbelt = { C.SCANNER_ITEM, C.DETECTOR_ITEM }
-  if S.shear then toolbelt[3], toolbelt[4] = C.SHEARS_ITEM, C.AUTOMATA_ITEM end
   for _, item in ipairs(toolbelt) do
     if not link.findItem(function(n) return n == item end) then tools[#tools + 1] = item end
   end

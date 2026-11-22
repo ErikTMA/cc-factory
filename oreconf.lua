@@ -26,12 +26,14 @@ local C = {
   -- tools a turtle may ask the base for (sent from storage, else crafted)
   TOOLS = { ["advancedperipherals:geo_scanner"] = true, ["advancedperipherals:environment_detector"] = true,
             ["minecraft:compass"] = true, ["computercraft:wireless_modem_normal"] = true,
-            ["minecraft:shears"] = true, ["advancedperipherals:weak_automata_core"] = true },
+            ["minecraft:shears"] = true, ["advancedperipherals:weak_automata_core"] = true,
+            ["computercraft:wireless_modem_advanced"] = true },
   -- a forester that shears leaves: the Weak Automata Core digs with the item
   -- in the selected slot (AP 0.8.2a AutomataBlockHandPlugin.digBlock, 1 fuel
   -- and 1 s each), and that is the shears. The core can't be crafted by the
   -- base (its recipe takes a potion): it comes from storage.
   SHEARS_ITEM = "minecraft:shears",
+  ENDER_MODEM_ITEM = "computercraft:wireless_modem_advanced",
   AUTOMATA_ITEM = "advancedperipherals:weak_automata_core",
 }
 
@@ -130,6 +132,21 @@ C.ROLES = {
 C.GPS_POINTS = {
   { x = -4, y = 20, z = -4 }, { x = 4, y = 20, z = -4 }, { x = -4, y = 20, z = 4 }, { x = 4, y = 26, z = 4 },
 }
+
+-- Accessories: what the player picks per turtle (TURTLES tab). The turtle
+-- asks the base for the ones it lacks at its next stop home (sent from
+-- storage, else crafted), keeps them, and puts back into its chest any it is
+-- no longer meant to carry. `roles`: who may have it.
+C.ACCESSORIES = {
+  { name = "MODEM", items = { "computercraft:wireless_modem_normal" }, roles = { miner = true, forester = true },
+    what = "wireless modem: talks to the base within 64 blocks, GPS" },
+  { name = "ENDER", items = { "computercraft:wireless_modem_advanced" }, roles = { miner = true, forester = true },
+    what = "ender modem: talks to the base from anywhere (same dimension)" },
+  { name = "SHEAR", items = { "minecraft:shears", "advancedperipherals:weak_automata_core" }, roles = { forester = true },
+    what = "shears + Weak Automata Core: shears leaves before felling" },
+}
+C.ACCESSORY_ITEMS = {}
+for _, a in ipairs(C.ACCESSORIES) do for _, item in ipairs(a.items) do C.ACCESSORY_ITEMS[item] = true end end
 
 -- The assembler's crafting steps for a role. Each step: `grid` = items the base
 -- delivers, by cell; `keep` = the previous result already in its cell;

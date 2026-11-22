@@ -822,10 +822,9 @@ function M.supply(F, from, req, have)
   local tools = {}
   for _, item in ipairs(req.tools or {}) do tools[#tools + 1] = item end
   local t = F.turtles[from]
-  if t and t.role == "forester" and t.shear then
-    tools[#tools + 1] = C.SHEARS_ITEM
-    tools[#tools + 1] = C.AUTOMATA_ITEM
-  end
+  -- the accessories picked for it (TURTLES tab): the ones it lacks too
+  local accessories = M.accessoryItems(F, from)
+  for _, item in ipairs(accessories) do tools[#tools + 1] = item end
   local asked = {}
   for _, item in ipairs(tools) do
     if not asked[item] and C.TOOLS[item] and (have[item] or 0) == 0 and give(item, 1) == 0 then
@@ -843,9 +842,10 @@ function M.supply(F, from, req, have)
     F.held[chest] = { untilTime = now(F) + HOLD, by = from }
   end
   local reply = { type = "supplied", chest = chest, sent = sent, short = short }
+  reply.accessories = accessories -- (what it keeps; the rest goes back)
   if t and t.role == "forester" then
     reply.plant = (F.saplings and #F.saplings > 0) and F.saplings or false
-    reply.shear = t.shear == true
+    reply.shear = M.hasAccessory(F, from, "SHEAR")
   end
   return reply
 end
@@ -996,15 +996,39 @@ function M.defragStep(F)
   return false
 end
 
--- TURTLES tab: the selected forester shears its trees' leaves before
--- felling them (the leaves as blocks), or not.
-function M.toggleShear(F)
-  local t = F.selected and F.turtles[F.selected]
-  if not (t and t.role == "forester") then F.note = "Select a forester to shear with"; return end
-  t.shear = not t.shear
-  F.note = ("%s shears leaves: %s%s"):format(label(F, F.selected), t.shear and "ON" or "OFF",
-    t.shear and " (it gets shears and a Weak Automata Core at home; the core comes from storage)" or "")
+-- TURTLES tab: accessories per turtle (oreconf C.ACCESSORIES): picked here,
+-- asked for at its next stop home, put back when unpicked.
+-- t.accessories = { [name] = true }; an older t.shear counts as SHEAR.
+local function accessoriesOf(t)
+  if not t then return {} end
+  t.accessories = t.accessories or {}
+  if t.shear then t.accessories.SHEAR, t.shear = true, nil end
+  return t.accessories
 end
+function M.hasAccessory(F, id, name) return accessoriesOf(F.turtles[id])[name] == true end
+-- the items to carry (sorted): what the supply answer tells the turtle
+function M.accessoryItems(F, id)
+  local t, items = F.turtles[id], {}
+  local picked = accessoriesOf(t)
+  for _, a in ipairs(C.ACCESSORIES) do
+    if picked[a.name] and t and a.roles[t.role] then
+      for _, item in ipairs(a.items) do items[#items + 1] = item end
+    end
+  end
+  table.sort(items)
+  return items
+end
+function M.toggleAccessory(F, name)
+  local t = F.selected and F.turtles[F.selected]
+  local acc
+  for _, a in ipairs(C.ACCESSORIES) do if a.name == name then acc = a end end
+  if not (t and acc and acc.roles[t.role]) then F.note = ("A %s can't have %s"):format(t and t.role or "?", name); return end
+  local picked = accessoriesOf(t)
+  picked[name] = not picked[name] or nil
+  F.note = ("%s: %s %s (%s; at its next stop home)"):format(label(F, F.selected), name,
+    picked[name] and "ON" or "OFF", acc.what)
+end
+function M.toggleShear(F) return M.toggleAccessory(F, "SHEAR") end
 
 function M.toggleHammer(F)
   F.hammer = not F.hammer

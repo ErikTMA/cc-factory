@@ -378,7 +378,8 @@ local function makeEnv(T, api, files, onSleep)
   local PTYPE = { ["minecraft:compass"] = "compass", ["computercraft:wireless_modem_normal"] = "modem",
                   ["advancedperipherals:geo_scanner"] = "geo_scanner",
                   ["advancedperipherals:environment_detector"] = "environment_detector",
-                  ["advancedperipherals:weak_automata_core"] = "weak_automata" }
+                  ["advancedperipherals:weak_automata_core"] = "weak_automata",
+                  ["computercraft:wired_modem_full"] = "modem" }
   -- like AP 0.8.2a's Weak Automata Core: digBlock({ pitch }) breaks the block
   -- ahead (pitch -90 above, 90 below) as a player holding the item in the
   -- turtle's SELECTED slot; 1 fuel, then 1 s cooldown. Leaves broken with
@@ -533,7 +534,9 @@ local function fakeBase(W, T, stock, plant)
       if B.shear then
         send("minecraft:shears", 1); send("advancedperipherals:weak_automata_core", 1)
       end
-      return { type = "supplied", sent = {}, short = {}, plant = B.plantList(), shear = B.shear }
+      -- (like factory.supply: the accessories it is to carry, sorted)
+      local acc = B.shear and { "advancedperipherals:weak_automata_core", "minecraft:shears" } or {}
+      return { type = "supplied", sent = {}, short = {}, plant = B.plantList(), shear = B.shear, accessories = acc }
     end
     if msg.state == "resting" then return { type = "ok", plant = B.plantList() } end
   end
@@ -1232,6 +1235,27 @@ do
   local ok, err = run(makeEnv(T, api, {}, sl), "10")
   check(tostring(err):find("END OF TEST") ~= nil, "two rounds (" .. tostring(err) .. ")")
   check(hanging > 0 and W.count(LOG) == 0, ("%d hanging trees, every log felled: %d left"):format(hanging, W.count(LOG)))
+end
+
+print("scenario: accessories: kept while picked; an unpicked one goes back, but never the modem a turtle")
+print("          talks through (no wired modem at its home)")
+do
+  local W = newWorld()
+  local T, api = newTurtle(W, 100)
+  local files = {}
+  local env = makeEnv(T, api, files, function() end)
+  local link = env.require("link")
+  local MODEM, SHEARS = "computercraft:wireless_modem_normal", "minecraft:shears"
+  local function told(list) files["agent.cfg"] = env.textutils.serialize({ role = "forester", accessories = list }) end
+  told({})
+  check(link.isKeptItem(MODEM), "no wired modem at home: its wireless modem is kept, even unpicked")
+  check(not link.isKeptItem(SHEARS), "unpicked shears: not kept (they go back into the chest)")
+  T.back = "computercraft:wired_modem_full" -- (its home's wired modem, behind it)
+  check(not link.isKeptItem(MODEM), "a wired modem at home: an unpicked wireless modem goes back")
+  told({ MODEM, SHEARS })
+  check(link.isKeptItem(MODEM) and link.isKeptItem(SHEARS), "picked: both kept")
+  files["agent.cfg"] = env.textutils.serialize({ role = "forester" })
+  check(link.isKeptItem(MODEM), "never told (an older turtle): its modem kept as before")
 end
 
 print("scenario: with an Environment Detector it finds every item lying in the pen after each tree")

@@ -97,11 +97,29 @@ function L.findItem(pred)
 end
 
 -- Items a turtle must never unload: its modem and the upgrade it swaps.
-function L.isKeptItem(name) return C.MODEM_ITEMS[name] or SWAPPABLE[name] or false end
+local adjacentModem -- (below)
+
+-- Kept (never unloaded): its tools, and the accessories the base says it is
+-- to carry (agent.cfg `accessories`, from the last supply answer). One it is
+-- no longer meant to carry goes into the chest with the rest. Never told
+-- (an older turtle): everything as before.
+function L.isKeptItem(name)
+  if C.ACCESSORY_ITEMS[name] then
+    -- (a modem it talks through: no wired modem at its home: always kept,
+    -- or it couldn't even ask for it back)
+    if C.MODEM_ITEMS[name] and not adjacentModem() then return true end
+    local wanted = L.config().accessories
+    if wanted then
+      for _, item in ipairs(wanted) do if item == name then return true end end
+      return false
+    end
+  end
+  return C.MODEM_ITEMS[name] or SWAPPABLE[name] or false
+end
 
 -- A modem block next to the turtle (wired or wireless). Left and right are a
 -- turtle's upgrade slots, so only these sides can be blocks.
-local function adjacentModem()
+adjacentModem = function()
   for _, side in ipairs({ "front", "back", "top", "bottom" }) do
     if peripheral.getType(side) == "modem" then return side end
   end
@@ -275,6 +293,12 @@ function L.supply(want)
     r = L.talk("supply", { supply = want, have = carried() }, false)
   end
   if r and r.type == "supplied" then
+    -- which accessories it is to carry (the base sends the missing ones)
+    if r.accessories then
+      local cfg = L.config()
+      cfg.accessories = r.accessories
+      L.saveConfig(cfg)
+    end
     L.takeSupplies()
     local miss = {}
     for k, n in pairs(r.short or {}) do miss[#miss + 1] = ("%d %s"):format(n, k) end

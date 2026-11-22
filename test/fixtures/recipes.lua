@@ -270,6 +270,23 @@ return {
    },
    ["type"] = "minecraft:crafting_shapeless"
   },
+  ["computercraft:wireless_modem_advanced"] = {
+   ["category"] = "redstone",
+   ["key"] = {
+    ["#"] = {
+     ["tag"] = "c:ingots/gold"
+    },
+    ["E"] = {
+     ["item"] = "minecraft:ender_eye"
+    }
+   },
+   ["pattern"] = { "###", "#E#", "###" },
+   ["result"] = {
+    ["count"] = 1,
+    ["id"] = "computercraft:wireless_modem_advanced"
+   },
+   ["type"] = "minecraft:crafting_shaped"
+  },
   ["computercraft:wireless_modem_normal"] = {
    ["category"] = "redstone",
    ["key"] = {

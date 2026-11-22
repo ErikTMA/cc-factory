@@ -2423,7 +2423,7 @@ do
   B.insert("minecraft:shears", 1); B.insert("advancedperipherals:weak_automata_core", 1)
   F.selected = id
   factory.toggleShear(F)
-  check(F.turtles[id].shear == true, "SHEAR on for forester-77: " .. tostring(F.note))
+  check(factory.hasAccessory(F, id, "SHEAR"), "SHEAR on for forester-77: " .. tostring(F.note))
   F.deps.storage.forget()
   local r = factory.supply(F, id, { fuel = 0 }, {})
   local chest = W.inv[r.chest] -- (its home's chest, if it has a home)
@@ -2445,7 +2445,22 @@ do
   F.turtles[78] = { role = "miner", label = "miner-78" }
   F.selected = 78
   factory.toggleShear(F)
-  check(not F.turtles[78].shear, "a miner can't be set to shear")
+  check(not factory.hasAccessory(F, 78, "SHEAR"), "a miner can't be set to shear")
+  -- a miner's MODEM: sent with its supply and named in the answer; unpicked,
+  -- the answer no longer names it (the turtle puts it back)
+  F.turtles[78].chest = "minecraft:chest_77"
+  local B2 = W.inv["minecraft:barrel_1"]
+  B2.insert("computercraft:wireless_modem_normal", 1)
+  factory.toggleAccessory(F, "MODEM")
+  F.held = nil; F.deps.storage.forget()
+  local rm = factory.supply(F, 78, { fuel = 0 }, {})
+  local mchest = W.inv[rm.chest]
+  check(mchest.count("computercraft:wireless_modem_normal") == 1 and rm.accessories[1] == "computercraft:wireless_modem_normal",
+    "MODEM picked: a wireless modem sent to the miner's chest, and it is told to keep it")
+  factory.toggleAccessory(F, "MODEM")
+  F.held = nil; F.deps.storage.forget()
+  local rm2 = factory.supply(F, 78, { fuel = 0 }, { ["computercraft:wireless_modem_normal"] = 1 })
+  check(#rm2.accessories == 0, "MODEM unpicked: it is told to carry none (so it puts it back)")
   F.selected, F.turtles[id], F.turtles[78] = nil, nil, nil
 end
 
