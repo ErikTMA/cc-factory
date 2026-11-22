@@ -12,6 +12,11 @@ over rednet. Friends-only server: base-ID pinning, no signing.
   runs **instead of** the computer's own startup (`shell.allow_disk_startup`).
   So the installer disk drive sits under the build spot, never next to the
   assembler.
+- Space limits (server `config/computercraft-server.toml`):
+  `computer_space_limit = 1000000`, `floppy_space_limit = 125000` bytes;
+  writing past it fails with "Out of space". All turtle files (~130 KB) don't
+  fit a floppy, so the installer disk carries only `manifest.boot` plus the
+  built role's program; the rest arrives as a code update (version "boot").
 - `ComputerPeripheral` (computers and turtles as peripherals): `turnOn`,
   `shutdown`, `reboot`, `getID`, `isOn`, `getLabel`.
 - AP storage bridges (ME + RS, both enabled): `getItems`, `getItem`,

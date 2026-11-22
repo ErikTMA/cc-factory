@@ -30,7 +30,14 @@ local textutils = { serialize = ser, unserialize = function(s) return load("retu
 
 -- ------------------------------------------------------------------- vfs --
 -- A computer's filesystem: a flat table path -> content, plus mounts
--- (e.g. disk -> the disk's table).
+-- (e.g. disk -> the disk's table). A table in SPACE has CC's space limit:
+-- writing past it fails with "Out of space", like the game.
+local SPACE = setmetatable({}, { __mode = "k" })
+local function used(t, skip)
+  local n = 0
+  for k, c in pairs(t) do if k ~= skip then n = n + #c end end
+  return n
+end
 local function newFS(files, mounts)
   mounts = mounts or {}
   local function norm(p) p = p:gsub("^/+", ""):gsub("/+$", ""); return p end
@@ -73,7 +80,13 @@ local function newFS(files, mounts)
       return { readAll = function() return c end, close = function() end }
     end
     local buf = { mode == "a" and t[r] or nil }
-    return { write = function(s) buf[#buf + 1] = s end, close = function() t[r] = table.concat(buf) end }
+    local size = #(buf[1] or "")
+    return { write = function(s)
+               size = size + #s
+               if SPACE[t] and used(t, r) + size > SPACE[t] then error("Out of space", 2) end
+               buf[#buf + 1] = s
+             end,
+             close = function() t[r] = table.concat(buf) end }
   end
   function fs.delete(p)
     local t, r = resolve(p)
@@ -170,6 +183,7 @@ end
 -- ----------------------------------------------------- peripheral network --
 -- The base's view: every inventory plus the disk drive, by name.
 local DISK = {}
+SPACE[DISK] = 125000 -- floppy_space_limit on the server (computercraft-server.toml)
 local function baseNetwork()
   local api = {}
   -- A turtle touching a full wired modem is on the network as turtle_<id>

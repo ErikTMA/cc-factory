@@ -39,23 +39,30 @@ function M.load(manifest, dir)
     files[name] = content
     h = hash(name .. "\0" .. content, h)
   end
-  return { files = files, version = ("%08x"):format(h),
+  return { files = files, version = ("%08x"):format(h), boot = manifest.boot or manifest.turtle,
+           programs = manifest.programs or {},
            installer = read(fs.combine(dir, manifest.installer)) }
 end
 
 -- Write the installer onto every disk in a drive the base can see: the disk's
--- startup.lua, the turtle files in dist/, and install.cfg for the next turtle.
+-- startup.lua, the boot files in dist/, and install.cfg for the next turtle.
+-- A floppy is too small for every turtle file: the disk carries the boot
+-- files and the program of the role in `install`; the turtle starts with
+-- version "boot", so its first status brings it the whole release.
 -- `api` is CC's peripheral API (injected for the harness).
 function M.writeDisk(api, release, install)
   local written = 0
   for _, n in ipairs(api.getNames()) do
     if api.hasType(n, "drive") and api.call(n, "hasData") then
       local mount = api.call(n, "getMountPath")
+      fs.delete(fs.combine(mount, "dist")) -- (older, larger releases)
       write(fs.combine(mount, "startup.lua"), release.installer)
-      for name, content in pairs(release.files) do write(fs.combine(mount, "dist/" .. name), content) end
+      local names = { table.unpack(release.boot) }
+      names[#names + 1] = release.programs[install.role]
+      for _, name in ipairs(names) do write(fs.combine(mount, "dist/" .. name), release.files[name]) end
       local cfg = {}
       for k, v in pairs(install) do cfg[k] = v end
-      cfg.version = release.version
+      cfg.version = "boot"
       write(fs.combine(mount, "install.cfg"), textutils.serialize(cfg))
       written = written + 1
     end
