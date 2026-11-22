@@ -49,9 +49,10 @@ local CFG = {
   maxArea = 1024,      -- more open cells than this: the pen is not closed
   fuelLow = 300,       -- refuel from logs below this ...
   fuelTarget = 600,    -- ... up to this
-  keepLogs = 16,       -- logs it keeps for fuel when unloading
-  keepSaplings = 64,   -- saplings it keeps of each kind when unloading
-  keepFuel = 64,       -- fuel items (charcoal...) it keeps when unloading
+  keepLogs = 16,       -- logs it keeps for fuel when unloading (all kinds together)
+  keepSaplings = 16,   -- saplings it keeps of each kind when unloading
+  keepFuel = 16,       -- fuel items (charcoal...) it keeps when unloading (all kinds)
+  minFree = 3,         -- free slots below this during a round: home to unload first
   supply = { fuel = 16, saplings = 16, bonemeal = 32 }, -- what it asks the base for at home
   treeFuel = 2 * 40 + 10, -- fuel one tree may take (climb up and down, maxHeight)
   minRoundFuel = 60,   -- below this (after filling up at home) it waits at home
@@ -609,9 +610,10 @@ local function dropHaul()
   -- keep: saplings it may plant (CFG.keepSaplings of each), bone meal in
   -- slot 2, fuel, a few logs, dirt; the rest goes into the chest
   local kept, delivered = {}, 0
-  local function keepUpTo(i, d, n)
-    local k = math.min(d.count, math.max(0, n - (kept[d.name] or 0)))
-    kept[d.name] = (kept[d.name] or 0) + k
+  local function keepUpTo(i, d, n, group)
+    group = group or d.name
+    local k = math.min(d.count, math.max(0, n - (kept[group] or 0)))
+    kept[group] = (kept[group] or 0) + k
     if d.count > k then select(i); turtle.drop(d.count - k) end
     return d.count - k
   end
@@ -619,8 +621,8 @@ local function dropHaul()
     local d = turtle.getItemDetail(i)
     if d and not (link.isKeptItem(d.name) or d.name == DIRT or (i == BONEMEAL_SLOT and d.name == "minecraft:bone_meal")) then
       if isSaplingItem(d.name) and allowed(d.name) then keepUpTo(i, d, CFG.keepSaplings)
-      elseif isLog(d) then delivered = delivered + keepUpTo(i, d, CFG.keepLogs)
-      elseif C.isFuel(d.name) then keepUpTo(i, d, CFG.keepFuel)
+      elseif isLog(d) then delivered = delivered + keepUpTo(i, d, CFG.keepLogs, "logs")
+      elseif C.isFuel(d.name) then keepUpTo(i, d, CFG.keepFuel, "fuel")
       else select(i); turtle.drop() end
     end
   end
@@ -684,6 +686,12 @@ end
 
 local function dist(a, x, z) return math.abs(a.x - x) + math.abs(a.z - z) end
 
+local function freeSlots()
+  local n = 0
+  for i = 1, 16 do if turtle.getItemCount(i) == 0 then n = n + 1 end end
+  return n
+end
+
 -- A path cell whose floor isn't dirt or grass yet: stand on it and fix it.
 local function fillHole(k)
   local x, z = unkey(k)
@@ -741,18 +749,16 @@ local function round()
     placeSpots()
     log(("Tree spots now %d apart: %d spots"):format(spacing, #AREA.spots))
   end
-  -- visit the spots nearest first, and the holes in the path while it has
-  -- dirt for them
+  -- visit the spots nearest first, and the path cells whose floor needs dirt
+  -- (skipped while it has none: it may get some mid-round, at home)
   local todo = {}
   for _, k in ipairs(AREA.spots) do todo[#todo + 1] = k end
-  if dirtSlot() then
-    local holes = {}
-    for k, g in pairs(AREA.cells) do
-      if not isSpot[k] and needsDirt(g) then holes[#holes + 1] = k end
-    end
-    table.sort(holes)
-    for _, k in ipairs(holes) do todo[#todo + 1] = k end
+  local holes = {}
+  for k, g in pairs(AREA.cells) do
+    if not isSpot[k] and needsDirt(g) then holes[#holes + 1] = k end
   end
+  table.sort(holes)
+  for _, k in ipairs(holes) do todo[#todo + 1] = k end
   while #todo > 0 do
     local bi, bd = 1, math.huge
     for i, k in ipairs(todo) do
@@ -761,6 +767,12 @@ local function round()
       if d < bd then bi, bd = i, d end
     end
     local sk = table.remove(todo, bi)
+    -- pockets (nearly) full: home to unload first, or what it digs falls on the ground
+    if freeSlots() < CFG.minFree then
+      log("Inventory full: home to unload")
+      goHome()
+      unload()
+    end
     -- enough fuel to get there, fell a tree and walk home? else home now
     local sx0, sz0 = unkey(sk)
     local there = path(S.pos, { x = sx0, z = sz0 }) or {}

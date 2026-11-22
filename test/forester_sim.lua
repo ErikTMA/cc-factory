@@ -27,7 +27,15 @@ local function isSap(v) return v ~= nil and v:find("sapling") ~= nil end
 local FENCE = "minecraft:oak_fence"
 local function newWorld(opts)
   opts = opts or {}
-  local W = { b = {}, saplingsPlanted = 0 }
+  local W = { b = {}, saplingsPlanted = 0, clock = 0 }
+  -- items lying on the floor (in the air cell at y 0): { x, z, name, count, t }
+  W.items = {}
+  function W.drop(x, z, name, n) W.items[#W.items + 1] = { x = x, z = z, name = name, count = n, t = W.clock } end
+  function W.ground(name)
+    local c = 0
+    for _, it in ipairs(W.items) do if not name or it.name == name then c = c + it.count end end
+    return c
+  end
   -- the home chest, like CC's: 27 ordered slots of up to 64. W.slots is the
   -- truth; W.chest[name] reads the total and setting it replaces that item.
   W.slots = {}
@@ -112,14 +120,21 @@ local function newTurtle(W, fuel)
   local T = { x = 0, y = 0, z = 0, h = 0, fuel = fuel, sel = 1, inv = {} }
   local function front() local d = DIRS[T.h]; return T.x + d[1], T.y, T.z + d[2] end
   -- like CC: dug items go into the selected slot first, then onwards, wrapping
+  -- (stacks of 64); what doesn't fit drops on the ground, where the turtle is
   local function add(name, n)
     n = n or 1
-    for k = 0, 15 do
-      local i = (T.sel - 1 + k) % 16 + 1
-      local s = T.inv[i]
-      if s and s.name == name and s.count < 64 then s.count = s.count + n; return end
-      if not s then T.inv[i] = { name = name, count = n }; return end
+    for pass = 1, 2 do
+      for k = 0, 15 do
+        local i = (T.sel - 1 + k) % 16 + 1
+        local s = T.inv[i]
+        if n > 0 and pass == 1 and s and s.name == name and s.count < 64 then
+          local m = math.min(64 - s.count, n); s.count = s.count + m; n = n - m
+        elseif n > 0 and pass == 2 and not s then
+          T.inv[i] = { name = name, count = math.min(64, n) }; n = n - math.min(64, n)
+        end
+      end
     end
+    if n > 0 then W.drop(T.x, T.z, name, n) end
   end
   local leafDigs = 0
   local function dig(x, y, z)
@@ -623,7 +638,7 @@ do
   -- a base like factory.supply: it empties the chest into storage, then sends
   T.reply = function(msg)
     if msg.state == "supply" then
-      asked = msg.supply
+      asked = asked or msg.supply -- (the first time it asks)
       for i = 1, 27 do local st = W.slots[i]; if st then stored[st.name] = (stored[st.name] or 0) + st.count end end
       W.slots = {}
       W.insert("minecraft:charcoal", 16)
@@ -636,12 +651,72 @@ do
   end
   local ok, err = run(makeEnv(T, api, {}, function() error("END OF TEST") end), "10")
   check(tostring(err):find("END OF TEST") ~= nil, "one round (" .. tostring(err) .. ")")
-  local dirt = 0
-  for i = 1, 16 do if T.inv[i] and T.inv[i].name == "minecraft:dirt" then dirt = dirt + T.inv[i].count end end
   check(asked and asked.dirt == 4, "it asked for dirt for 4 cells: " .. tostring(asked and asked.dirt))
-  check(dirt == 4, "it carries the 4 dirt the base sent: " .. dirt)
+  local fixed = 0
+  for _, c in ipairs({ { 1, -1 }, { -2, -7 }, { -1, -8 }, { 3, -2 } }) do
+    if W.get(c[1], -1, c[2]) == "minecraft:dirt" then fixed = fixed + 1 end
+  end
+  check(fixed == 4, "it took the dirt and laid it: " .. fixed .. "/4 cells")
   check(not W.chest["minecraft:dirt"], "no dirt left in the chest")
   check((stored["minecraft:stick"] or 0) >= 12 * 64, "its haul was unloaded before it asked: " .. tostring(stored["minecraft:stick"]))
+end
+
+print("scenario: 7 kinds selected, 7 kinds of logs: after unloading it keeps 16 logs in all and")
+print("          16 saplings per kind, so it goes out with room for its haul")
+do
+  local KINDS = { "minecraft:acacia_sapling", BIRCH, "minecraft:cherry_sapling", "minecraft:jungle_sapling",
+                  SAP, "minecraft:spruce_sapling", "minecraft:mangrove_propagule" }
+  local LOGS = { "minecraft:acacia_log", "minecraft:birch_log", "minecraft:cherry_log", "minecraft:jungle_log",
+                 LOG, "minecraft:spruce_log", "minecraft:mangrove_log" }
+  local W = newWorld()
+  local T, api = newTurtle(W, 3000)
+  T.inv[1] = { name = SAP, count = 64 }
+  T.inv[4] = { name = "computercraft:wireless_modem_normal", count = 1 }
+  for i, k in ipairs(KINDS) do if k ~= SAP then T.inv[4 + i] = { name = k, count = 64 } end end
+  for i, l in ipairs(LOGS) do if i <= 4 then T.inv[11 + i] = { name = l, count = 64 } end end
+  local plant = {}
+  for _, k in ipairs(KINDS) do plant[k] = true end
+  fakeBase(W, T, {}, plant)
+  local after
+  local ok, err = run(makeEnv(T, api, {}, function() after = {}; for i = 1, 16 do after[i] = T.inv[i] end; error("END OF TEST") end), "10")
+  check(tostring(err):find("END OF TEST") ~= nil, "one round (" .. tostring(err) .. ")")
+  local logs, perKind, free = 0, {}, 0
+  for i = 1, 16 do
+    local d = after[i]
+    if not d then free = free + 1
+    elseif d.name:find("_log") then logs = logs + d.count
+    elseif d.name:find("sapling") or d.name:find("propagule") then perKind[d.name] = (perKind[d.name] or 0) + d.count end
+  end
+  local most = 0
+  for _, n in pairs(perKind) do most = math.max(most, n) end
+  check(logs <= 16, "16 logs at most, all kinds together: " .. logs)
+  check(most <= 16, "16 saplings at most of each kind: " .. most)
+  check(free >= 5, "room for its haul: " .. free .. " free slots")
+end
+
+print("scenario: its inventory fills up during a round: it goes home to unload and carries on;")
+print("          nothing it digs is dropped on the ground")
+do
+  local W = newWorld()
+  local T, api = newTurtle(W, 3000)
+  T.inv[1] = { name = SAP, count = 64 }
+  T.inv[4] = { name = "computercraft:wireless_modem_normal", count = 1 }
+  fakeBase(W, T, {})
+  local n = 0
+  local function sl()
+    n = n + 1
+    if n == 1 then
+      W.growAll() -- every spot a tree; and it comes back with its pockets full of junk
+      for i = 5, 16 do T.inv[i] = { name = "minecraft:stick", count = 64 } end
+      T.inv[2] = { name = "minecraft:apple", count = 64 }; T.inv[3] = { name = "minecraft:apple", count = 64 }
+      return
+    end
+    error("END OF TEST")
+  end
+  local ok, err = run(makeEnv(T, api, {}, sl), "10")
+  check(tostring(err):find("END OF TEST") ~= nil, "two rounds (" .. tostring(err) .. ")")
+  check(W.ground() == 0, "nothing dropped on the ground: " .. W.ground())
+  check(W.count(LOG) == 0, "every tree felled")
 end
 
 print("scenario: starts without saplings, asks the base and takes them from its home chest")
