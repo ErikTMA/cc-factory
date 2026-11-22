@@ -109,6 +109,17 @@ local function newWorld(opts)
       if not W.get(x + dx, y + 6, z + dz) then W.set(x + dx, y + 6, z + dz, LEAF) end
     end end
   end
+  -- a big oak like ATM10's: a trunk 13 high, branches and a canopy of logs
+  -- above 8 (out of a Geo Scanner's reach from the ground), leaves around
+  function W.growTall(x, y, z)
+    for h = 0, 12 do W.set(x, y + h, z, LOG) end
+    for _, b in ipairs({ { 1, 10, 0 }, { 2, 11, 0 }, { -1, 11, 1 }, { 0, 13, -1 }, { 1, 14, -1 }, { -1, 12, -1 } }) do
+      W.set(x + b[1], y + b[2], z + b[3], LOG)
+    end
+    for dx = -2, 2 do for dz = -2, 2 do for h = 11, 15 do
+      if not W.get(x + dx, y + h, z + dz) then W.set(x + dx, y + h, z + dz, LEAF) end
+    end end end
+  end
   -- a 2x2 trunk (dark oak, giant spruce): the spot and the cells east, south, south-east
   function W.grow2x2(x, y, z)
     for h = 0, 4 do for _, d in ipairs({ { 0, 0 }, { 1, 0 }, { 0, 1 }, { 1, 1 } }) do
@@ -1155,6 +1166,67 @@ do
   for i = 1, 27 do if W.slots[i] and W.slots[i].name == "minecraft:oak_leaves" then leafItems = leafItems + W.slots[i].count end end
   for i = 1, 16 do if T.inv[i] and T.inv[i].name == "minecraft:oak_leaves" then leafItems = leafItems + T.inv[i].count end end
   check(leafItems > 0, "leaf blocks to keep (on the ground, carried or in the chest): " .. leafItems)
+end
+
+print("scenario: big oaks taller than the Geo Scanner's reach: it scans again higher up and fells the")
+print("          whole canopy, nothing left floating")
+do
+  local W = newWorld()
+  local T, api = newTurtle(W, 8000)
+  T.inv[1] = { name = SAP, count = 64 }
+  T.inv[6] = { name = "advancedperipherals:geo_scanner", count = 1 }
+  local n = 0
+  local function sl(secs)
+    if (tonumber(secs) or 0) < 5 then return end
+    n = n + 1
+    if n == 1 then
+      for key, v in pairs(W.b) do
+        if isSap(v) then
+          local x, y, z = key:match("^(-?%d+),(-?%d+),(-?%d+)$")
+          W.set(tonumber(x), tonumber(y), tonumber(z), nil)
+          W.growTall(tonumber(x), tonumber(y), tonumber(z))
+        end
+      end
+      return
+    end
+    error("END OF TEST")
+  end
+  local files = {}
+  local ok, err = run(makeEnv(T, api, files, sl), "10")
+  check(tostring(err):find("END OF TEST") ~= nil, "two rounds (" .. tostring(err) .. ")")
+  check(W.count(LOG) == 0, "every log of the big oaks felled, the canopy too: " .. W.count(LOG) .. " left")
+  local flog = files["forester.log"] or ""
+  check(flog:find("fell %-?%d+,%-?%d+ layer 2") ~= nil, "forester.log says what each felling saw, layer by layer")
+end
+
+print("scenario: a tree hangs over its spot (its bottom log cut, live): it fells it, never plants under it")
+do
+  local W = newWorld()
+  local T, api = newTurtle(W, 8000)
+  T.inv[1] = { name = SAP, count = 64 }
+  T.inv[6] = { name = "advancedperipherals:geo_scanner", count = 1 }
+  local n, hanging = 0, 0
+  local function sl(secs)
+    if (tonumber(secs) or 0) < 5 then return end
+    n = n + 1
+    if n == 1 then
+      for key, v in pairs(W.b) do
+        if isSap(v) then
+          local x, y, z = key:match("^(-?%d+),(-?%d+),(-?%d+)$")
+          x, y, z = tonumber(x), tonumber(y), tonumber(z)
+          W.set(x, y, z, nil)
+          W.growTall(x, y, z)
+          W.set(x, y, z, nil) -- (the bottom log gone: the tree hangs one above the ground)
+          hanging = hanging + 1
+        end
+      end
+      return
+    end
+    error("END OF TEST")
+  end
+  local ok, err = run(makeEnv(T, api, {}, sl), "10")
+  check(tostring(err):find("END OF TEST") ~= nil, "two rounds (" .. tostring(err) .. ")")
+  check(hanging > 0 and W.count(LOG) == 0, ("%d hanging trees, every log felled: %d left"):format(hanging, W.count(LOG)))
 end
 
 print("scenario: with an Environment Detector it finds every item lying in the pen after each tree")

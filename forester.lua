@@ -81,6 +81,23 @@ local AREA
 
 local function log(...) print(...) end
 
+-- forester.log: what every look for items and every felling saw and did
+-- (the last 300 lines), readable off the turtle (and the server's files)
+local LOOKLOG = "forester.log"
+local function lookLog(line)
+  local lines = {}
+  if fs.exists(LOOKLOG) then
+    local f = fs.open(LOOKLOG, "r")
+    for l in (f.readAll() or ""):gmatch("[^\n]+") do lines[#lines + 1] = l end
+    f.close()
+  end
+  lines[#lines + 1] = line
+  while #lines > 300 do table.remove(lines, 1) end
+  local f = fs.open(LOOKLOG, "w")
+  f.write(table.concat(lines, "\n") .. "\n")
+  f.close()
+end
+
 local function writeTable(path, t)
   local f = fs.open(path, "w")
   f.write(textutils.serialize(t))
@@ -195,10 +212,13 @@ end
 -- from a chest, modem or turtle in front: suck would empty an inventory.
 local function collect()
   local ok, b = turtle.inspect()
-  if ok and isMachine(b.name) then return end
+  if ok and isMachine(b.name) then return 0 end
+  local n = 0
   for _ = 1, 8 do
     if not turtle.suck() then break end
+    n = n + 1
   end
+  return n
 end
 
 local function step()
@@ -614,9 +634,10 @@ end
 -- column (a standing neighbour) are that tree's. It moves only over the
 -- pen's cells, up its own column first; then back to this column and down.
 -- False without a scanner (the caller feels its way instead).
+local SCAN_R = 8 -- Geo Scanner radius (free up to 8 in AP 0.8.2a)
 local function scanBlocks(p)
   for _ = 1, 20 do
-    local blocks, err = p.scanBlocks(8)
+    local blocks, err = p.scanBlocks(SCAN_R)
     if blocks then return blocks end
     if not tostring(err):lower():find("cooldown") then return nil end
     sleep(0.5)
@@ -711,28 +732,19 @@ local function shearLeaves(leaves)
   end)
 end
 
+-- Fell the tree by Geo Scanner, in layers: a scan reaches 8 up, and big
+-- trees (ATM10 oaks) are taller. Each layer: scan, take this tree's logs,
+-- shear its leaves first (if on), fell the logs nearest first; if the
+-- highest was near the top of what the scan saw, climb the trunk column
+-- there and scan again. This tree's logs: pieces of logs touching (diagonals
+-- too, like branches) that stand on its trunk column or touch a log already
+-- cut from it (the canopy, once the trunk under it is gone); a piece on
+-- another spot's column is that tree's; a loose one (a log alone in the
+-- leaves) the nearest spot's. False without a scanner.
 local function scanFell()
-  local blocks = link.withTool("geo_scanner", scanBlocks)
-  if not blocks then return false end
   local tx, tz = S.pos.x, S.pos.z
   TRUNK = key(tx, tz)
-  -- every scanned log over the pen, by position
-  local at = {}
-  for _, b in ipairs(blocks) do
-    if isLog(b) then
-      local x, z = tx + math.floor(b.x + 0.5), tz + math.floor(b.z + 0.5)
-      local up = S.up + math.floor(b.y + 0.5)
-      if up >= 0 and up <= CFG.maxHeight and AREA.cells[key(x, z)] then
-        at[x .. "," .. up .. "," .. z] = { x = x, up = up, z = z }
-      end
-    end
-  end
-  -- which of them are this tree's: pieces of logs touching (diagonals too,
-  -- like branches); a piece with this trunk in it is this tree; one standing
-  -- on another spot's column is that tree's (a 2x2 trunk stands on path
-  -- columns too); a loose one (a log alone in the leaves) is the nearest
-  -- spot's
-  local logs, seen = {}, {}
+  local felled = {}
   local function nearestSpotIsUs(p)
     local mine = math.max(math.abs(p.x - tx), math.abs(p.z - tz))
     for dx = -mine, mine do for dz = -mine, mine do
@@ -741,48 +753,99 @@ local function scanFell()
     end end
     return true
   end
-  for k0, p0 in pairs(at) do
-    if not seen[k0] then
-      local piece, queue, ours, theirs = {}, { p0 }, false, false
-      seen[k0] = true
-      while #queue > 0 do
-        local p = table.remove(queue)
-        piece[#piece + 1] = p
-        local col = key(p.x, p.z)
-        if col == TRUNK then ours = true elseif isSpot[col] then theirs = true end
-        for dx = -1, 1 do for dy = -1, 1 do for dz = -1, 1 do
-          local nk = (p.x + dx) .. "," .. (p.up + dy) .. "," .. (p.z + dz)
-          if at[nk] and not seen[nk] then seen[nk] = true; queue[#queue + 1] = at[nk] end
-        end end end
-      end
-      local take = ours or (not theirs and nearestSpotIsUs(piece[1]))
-      if take then for _, p in ipairs(piece) do logs[#logs + 1] = p end end
-    end
+  local function touchesFelled(p)
+    for dx = -1, 1 do for dy = -1, 1 do for dz = -1, 1 do
+      if felled[(p.x + dx) .. "," .. (p.up + dy) .. "," .. (p.z + dz)] then return true end
+    end end end
+    return false
   end
-  if S.shear then
-    -- this tree's leaves (over the pen, nearest to this spot), sheared before
-    -- a log is cut
-    local leaves = {}
+  for layer = 1, 6 do
+    local blocks = link.withTool("geo_scanner", scanBlocks)
+    if not blocks then
+      if layer == 1 then return false end
+      break
+    end
+    local sx, sz, su = S.pos.x, S.pos.z, S.up
+    local function place(b)
+      local x, z = sx + math.floor(b.x + 0.5), sz + math.floor(b.z + 0.5)
+      return x, su + math.floor(b.y + 0.5), z
+    end
+    -- every scanned log over the pen, by position
+    local at = {}
     for _, b in ipairs(blocks) do
-      if isLeaves(b) then
-        local x, z = tx + math.floor(b.x + 0.5), tz + math.floor(b.z + 0.5)
-        local up = S.up + math.floor(b.y + 0.5)
-        local p = { x = x, up = up, z = z }
-        if up >= 0 and up <= CFG.maxHeight and AREA.cells[key(x, z)] and nearestSpotIsUs(p) then
-          leaves[#leaves + 1] = p
+      if isLog(b) then
+        local x, up, z = place(b)
+        if up >= 0 and up <= CFG.maxHeight and AREA.cells[key(x, z)] then
+          at[x .. "," .. up .. "," .. z] = { x = x, up = up, z = z }
         end
       end
     end
-    shearLeaves(leaves)
-  end
-  while #logs > 0 do
-    local bi, bd = 1, math.huge
-    for i, l in ipairs(logs) do
-      local d = math.abs(l.x - S.pos.x) + math.abs(l.up - S.up) + math.abs(l.z - S.pos.z)
-      if d < bd then bi, bd = i, d end
+    -- (counted for the log: every log the scan saw, and why one isn't taken)
+    local scanned, outside, high = 0, 0, 0
+    for _, b in ipairs(blocks) do
+      if isLog(b) then
+        scanned = scanned + 1
+        local x, up, z = place(b)
+        if up > CFG.maxHeight then high = high + 1
+        elseif up >= 0 and not AREA.cells[key(x, z)] then outside = outside + 1 end
+      end
     end
-    local l = table.remove(logs, bi)
-    reach(l.x, l.up, l.z)
+    local logs, seen, theirsN = {}, {}, 0
+    for k0, p0 in pairs(at) do
+      if not seen[k0] then
+        local piece, queue, trunk, touches, theirs = {}, { p0 }, false, false, false
+        seen[k0] = true
+        while #queue > 0 do
+          local p = table.remove(queue)
+          piece[#piece + 1] = p
+          local col = key(p.x, p.z)
+          if col == TRUNK then trunk = true elseif isSpot[col] then theirs = true end
+          if touchesFelled(p) then touches = true end
+          for dx = -1, 1 do for dy = -1, 1 do for dz = -1, 1 do
+            local nk = (p.x + dx) .. "," .. (p.up + dy) .. "," .. (p.z + dz)
+            if at[nk] and not seen[nk] then seen[nk] = true; queue[#queue + 1] = at[nk] end
+          end end end
+        end
+        -- (another tree's trunk in it: that tree's, also when it touches
+        -- what we cut: taking it would cut that trunk and leave it hanging)
+        local take = trunk or (not theirs and (touches or nearestSpotIsUs(piece[1])))
+        if take then for _, p in ipairs(piece) do logs[#logs + 1] = p end
+        else theirsN = theirsN + #piece end
+      end
+    end
+    lookLog(("%.0f fell %d,%d layer %d (scan at up %d): %d logs seen, %d this tree's, %d another spot's, %d outside the pen, %d too high"):format(
+      now(), tx, tz, layer, su, scanned, #logs, theirsN, outside, high))
+    if #logs == 0 then break end
+    if S.shear then
+      -- this tree's leaves (over the pen, nearest to this spot), sheared
+      -- before a log is cut
+      local leaves = {}
+      for _, b in ipairs(blocks) do
+        if isLeaves(b) then
+          local x, up, z = place(b)
+          local p = { x = x, up = up, z = z }
+          if up >= 0 and up <= CFG.maxHeight and AREA.cells[key(x, z)] and nearestSpotIsUs(p) then
+            leaves[#leaves + 1] = p
+          end
+        end
+      end
+      shearLeaves(leaves)
+    end
+    local top = su
+    while #logs > 0 do
+      local bi, bd = 1, math.huge
+      for i, l in ipairs(logs) do
+        local d = math.abs(l.x - S.pos.x) + math.abs(l.up - S.up) + math.abs(l.z - S.pos.z)
+        if d < bd then bi, bd = i, d end
+      end
+      local l = table.remove(logs, bi)
+      reach(l.x, l.up, l.z)
+      felled[l.x .. "," .. l.up .. "," .. l.z] = true
+      top = math.max(top, l.up)
+    end
+    -- the scan saw all there is above: done; else up the trunk column, again
+    if top < su + SCAN_R - 2 or top >= CFG.maxHeight then break end
+    if not reach(tx, top, tz) then break end
   end
   -- back over its own column (the trunk is gone: open), then down
   reach(tx, math.max(S.up, 1), tz)
@@ -795,6 +858,7 @@ end
 local freeSlots, nextTo, walkToFace -- (below)
 local function lookForItems()
   if S.up ~= 0 then return false end
+  local at = ("%.0f look at %d,%d"):format(now(), S.pos.x, S.pos.z)
   local found = link.withTool("environment_detector", function(p)
     for _ = 1, 20 do
       local list, err = p.scanEntities(8)
@@ -804,28 +868,33 @@ local function lookForItems()
     end
     return {}
   end)
-  if not found then return false end
-  local cells, list = {}, {}
+  if not found then lookLog(at .. ": no Environment Detector"); return false end
+  local cells, list, items, seen = {}, {}, 0, {}
   for _, e in ipairs(found) do
-    if e.name == "minecraft:item" and (e.y or 0) < 1.5 and (e.y or 0) > -1.5 then
+    if e.name == "minecraft:item" then
+      items = items + 1
       local k = key(S.pos.x + math.floor(e.x + 0.5), S.pos.z + math.floor(e.z + 0.5))
-      if AREA.cells[k] and not cells[k] then cells[k] = true; list[#list + 1] = k end
+      seen[#seen + 1] = ("%s(%.1f,%.1f,%.1f)%s"):format(k, e.x or 0, e.y or 0, e.z or 0,
+        not AREA.cells[k] and "!pen" or ((e.y or 0) >= 1.5 or (e.y or 0) <= -1.5) and "!y" or "")
+      if (e.y or 0) < 1.5 and (e.y or 0) > -1.5 and AREA.cells[k] and not cells[k] then
+        cells[k] = true; list[#list + 1] = k
+      end
     end
   end
+  lookLog(("%s: %d entities, %d items: %s"):format(at, #found, items, table.concat(seen, " ")))
   table.sort(list)
   for _, k in ipairs(list) do
-    if freeSlots() < 1 then break end
-    walkToFace(k)
+    if freeSlots() < 1 then lookLog("  pockets full"); break end
+    local took = walkToFace(k)
+    lookLog(("  %s: took %s"):format(k, tostring(took)))
   end
   return true
 end
 
 -- Facing a log from a path cell: step into the trunk, fell the whole tree,
 -- come back out, facing the cell again; replant if asked.
-fell = function(replant)
-  local facing = S.heading
-  turtle.dig()
-  if not move("fwd", turtle.forward) then return end
+-- (standing in the trunk's cell, facing `facing`: fell it all, come back out)
+local function fellFromInside(facing)
   -- its leaves will decay and drop saplings around it: sweep there soon
   S.sweep = S.sweep or {}
   S.sweep[key(S.pos.x, S.pos.z)] = now() -- (swept until CFG.sweepFor after this)
@@ -838,13 +907,39 @@ fell = function(replant)
   if not move("back", turtle.back) then
     turnTo((facing + 2) % 4); step(); turnTo(facing)
   end
+end
+
+fell = function(replant)
+  local facing = S.heading
+  turtle.dig()
+  if not move("fwd", turtle.forward) then return end
+  fellFromInside(facing)
   if replant then plant(false) end
+end
+
+-- Nothing in front at the ground, but a tree may hang over the spot (its
+-- bottom log cut): step in and look up; a log there is felled first.
+local function hangingTree()
+  local facing = S.heading
+  if not move("fwd", turtle.forward) then return false end
+  local ok, b = turtle.inspectUp()
+  if ok and isLog(b) then
+    lookLog(("%.0f a tree hangs over %d,%d: felled"):format(now(), S.pos.x, S.pos.z))
+    fellFromInside(facing)
+    return true
+  end
+  turnTo(facing)
+  if not move("back", turtle.back) then
+    turnTo((facing + 2) % 4); step(); turnTo(facing)
+  end
+  return false
 end
 
 -- Look after the tree spot in front of us.
 local function tend()
   local ok, b = turtle.inspect()
   if not ok then
+    hangingTree()
     plant(true)
   elseif isLog(b) then
     fell(true)
@@ -1057,12 +1152,12 @@ nextTo = function(k)
 end
 
 -- Go next to cell `k`, face it and take what lies there.
+-- How many it took (false: it couldn't get next to it).
 walkToFace = function(k)
   local best = nextTo(k)
   if best and walkTo(best) then
     turnTo(best.h)
-    collect()
-    return true
+    return collect()
   end
   return false
 end
@@ -1111,8 +1206,12 @@ local function visitSpot(sk)
   local best = nextTo(sk)
   if best and walkTo(best) then
     turnTo(best.h)
+    local ok, b = turtle.inspect()
+    lookLog(("%.0f spot %s: %s"):format(now(), sk, ok and b.name or "nothing"))
     tend()
     afterTree()
+  else
+    lookLog(("%.0f spot %s: can't get next to it (%s)"):format(now(), sk, best and "no way there" or "no free cell beside it"))
   end
   return true
 end
