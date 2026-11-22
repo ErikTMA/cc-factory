@@ -362,20 +362,13 @@ miner; Ender Chests move the items).
 
 Phases, each its own commit with tests that fail first:
 
-1. **Shared modules out of oreminer.lua** (no behaviour change; the miner
-   suite is the net): `blocks.lua` (filler/ore/protected classification),
-   `mapreport.lua` (pending scans and dug blocks, sendMap with backoff),
-   `walk.lua` (journaled steps, straight route then A* around, trail and
-   retrace, turtle-wait). Miner and scout both use them; nothing copied.
-2. **The shared grid, base-side** (`grid.lua`, pure): points every 16 in x,
-   y, z anchored at the build spot, levels clear of bedrock; which are
-   scanned (from the ore map's scans), which are reserved per job; hand a
-   job the nearest unscanned points at a level.
-3. **Scout role** (`scout.lua`): no mining. Takes grid points from the base,
-   tunnels the grid lines between them at their level (the tunnels miners
-   use later), scans at each point (free up to r 8), reports like a miner;
-   marks rich points. Built by the base like any role (oreconf.ROLES:
-   pickaxe + Geo Scanner). ORES tab gains "scanned N of M points".
+1. **Scout = a miner job (shipped 2026-11-22).** Not a new role: a job with
+   `scout = true` walks its lanes and scans every 16 like any job, reports
+   every scan, and digs nothing (no known ores handed to it, none dug). The
+   bound is the job's lanes x length (no live contact with a miner). ORES
+   tab: SCOUT at a level (steps of 16), 4 lanes of 64 = 64 x 64 blocks.
+   A shared grid (base-side points, nothing scanned twice across jobs) is
+   optional now: the base's sectors already keep jobs apart.
 4. **Ender Chest miners**: the miner carries one Ender Chest (colour code
    from factory.cfg); when full or low on fuel it places it, drops the haul,
    takes fuel, digs it back up. The base keeps the matching Ender Chest on

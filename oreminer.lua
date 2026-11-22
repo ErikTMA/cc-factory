@@ -706,7 +706,8 @@ local function mineVisible()
     savePend()
   end
   saveTrail() -- (its way out, kept through a restart)
-  local n = mineList(ores)
+  -- (a scout job maps and digs nothing: the ores stay for the miners)
+  local n = S.scout and 0 or mineList(ores)
   if MAPPING and #PEND.scans >= SEND_AT then sendMap() end
   return n
 end
@@ -736,7 +737,7 @@ local function detectHeading()
 end
 
 local function run()
-  mineKnown()
+  if not S.scout then mineKnown() end
   while S.lane < S.lanes and not finished() do
     while S.progress <= S.length and not finished() do
       local why = needHome()
@@ -785,14 +786,19 @@ local function newJob(job, home, known)
         known = known or {},
         lane = 0, progress = 0, lanes = job.lanes or CFG.lanes, length = job.length or CFG.length,
         dy = job.y and math.min(job.y - home.y, -CFG.minDepth) or 0, only = job.only, quantity = job.quantity,
-        sector = job.sector or 0, mined = 0, job = job }
+        sector = job.sector or 0, mined = 0, job = job, scout = job.scout or nil }
   save()
   if job.y and job.y - home.y > -CFG.minDepth then
     log(("Y %d is not below home (Y %d): mining at Y %d instead"):format(job.y, home.y, home.y + S.dy))
   end
-  log(("Job: %s%s at %s, %d lane(s) of %d."):format(
-    job.quantity and (job.quantity .. " ") or "", job.only and (job.only .. " ore") or "all ores",
-    job.y and ("Y " .. job.y) or "this level", S.lanes, S.length))
+  if job.scout then
+    log(("Job: scout at %s, %d lane(s) of %d: scans every %d, mines nothing."):format(
+      job.y and ("Y " .. job.y) or "this level", S.lanes, S.length, CFG.spacing))
+  else
+    log(("Job: %s%s at %s, %d lane(s) of %d."):format(
+      job.quantity and (job.quantity .. " ") or "", job.only and (job.only .. " ore") or "all ores",
+      job.y and ("Y " .. job.y) or "this level", S.lanes, S.length))
+  end
 end
 
 local function askY()

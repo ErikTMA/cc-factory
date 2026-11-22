@@ -647,6 +647,39 @@ do
   check((B.totals.iron or 0) >= 100, "both jobs counted: " .. tostring(B.totals.iron))
 end
 
+print("scenario: a SCOUT job maps its lanes and mines nothing: every ore it scans goes into the base's")
+print("          map and stays in the ground; it isn't handed known ores to dig")
+do
+  local W = newWorld(33, 0, { span = 70, ymin = -40, ymax = 6 })
+  local scoutJob, gotKnown
+  local B, fleet, _, _, Base, bus = runFleet(W, { { x = 0, z = 0, h = 0 } }, function(Base, B)
+    table.insert(B.homes, { id = 1, x = 0, y = 0, z = 0, facing = "north", role = "miner", owner = 101 })
+    -- iron already known from before: a scout job must not be sent for it
+    B.map.isOre["minecraft:iron_ore"] = "iron"
+    oremap.put(B.map, 2, -20, -10, "minecraft:iron_ore")
+    scoutJob = Base.queueJob(B, { scout = true, y = -20, lanes = 2, length = 48 })
+  end)
+  local f = fleet[1]
+  check(not f.err, "ran without error: " .. tostring(f.err))
+  local done = false
+  for _, e in ipairs(bus.log) do
+    if e.reply and e.reply.type == "job" and e.reply.job.id == scoutJob.id then gotKnown = e.reply.known end
+    if e.msg.state == "done" then done = true end
+  end
+  check(done, "the scout job finished")
+  check(not gotKnown or #gotKnown == 0, "it wasn't handed known ores: " .. tostring(gotKnown and #gotKnown))
+  local mapped, still = 0, 0
+  oremap.each(B.map, function(x, y, z, v)
+    if v:find("_ore$") then
+      mapped = mapped + 1
+      if W.get(x, y, z) == v then still = still + 1 end
+    end
+  end)
+  check(mapped > 10, "its scans filled the map: " .. mapped .. " ores")
+  check(still == mapped, ("every mapped ore is still in the ground: %d of %d"):format(still, mapped))
+  check((B.totals.iron or 0) == 0 and (B.totals.coal or 0) == 0, "nothing counted as mined")
+end
+
 print("scenario: map review: a known ore that is gone isn't counted and leaves the map; a block")
 print("          worth mapping dug in a tunnel leaves it; out of reach it backs off; hand-run keeps no map")
 do

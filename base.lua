@@ -199,6 +199,14 @@ local function drawOres(UI, out, w, row, h)
   -- (in job: known ones on a queued or running job's list, not mined yet)
   put(out, 1, row, ("%-18s %6s %6s  %-11s"):format("ore", "known", "in job", "Y"), colors.lightGray)
   row = row + 1
+  -- SCOUT: a miner maps a level without mining (factory.scout)
+  local sy = F.sel.scoutY or -24
+  put(out, 1, row, ("Scout Y %4d"):format(sy))
+  button(UI, out, 14, row, 5, "-16", false, function() factory.scoutY(F, -16) end)
+  button(UI, out, 20, row, 5, "+16", false, function() factory.scoutY(F, 16) end)
+  local sl = ("SCOUT %dx%d"):format(factory.SCOUT_LENGTH, factory.SCOUT_LANES * 16)
+  button(UI, out, 27, row, #sl + 2, sl, false, function() factory.scout(F) end)
+  row = row + 2
   if #list == 0 then
     put(out, 1, row, "Nothing yet: miners report every scan when they come home.", colors.lightGray)
     return row + 2

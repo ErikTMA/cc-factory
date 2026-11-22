@@ -259,6 +259,7 @@ local function oreKey(job) return job and (job.only or "all") or "-" end
 
 function M.jobText(job)
   if not job then return "-" end
+  if job.scout then return ("scout %dx%d @Y%s"):format(job.lanes or 0, job.length or 0, tostring(job.y)) end
   return ("%s%s @Y%s"):format(job.quantity and (job.quantity .. "x ") or "",
     job.only or "all ores", tostring(job.y))
 end
@@ -330,6 +331,20 @@ function M.mineOre(F, kind)
   if free <= 0 then F.note = ("All %d known %s are being mined already"):format(e.count, kind); return end
   local job = M.queueJob(F, { only = kind, y = e.y, quantity = free })
   F.note = ("Queued #%d: %d known %s around Y %d (%d in queue)"):format(job.id, free, kind, e.y, #F.queue)
+end
+
+-- ORES tab: SCOUT maps without mining: a job of SCOUT_LANES lanes of
+-- SCOUT_LENGTH at the chosen level; lanes and scans 16 apart (a scan
+-- reaches 8), so it covers SCOUT_LENGTH x 4*16 blocks, each scanned once.
+-- Levels step by 16 for the same reason.
+M.SCOUT_LANES, M.SCOUT_LENGTH = 4, 64
+function M.scoutY(F, d)
+  F.sel.scoutY = math.max(-56, math.min(48, (F.sel.scoutY or -24) + d))
+end
+function M.scout(F)
+  local y = F.sel.scoutY or -24
+  local job = M.queueJob(F, { scout = true, y = y, lanes = M.SCOUT_LANES, length = M.SCOUT_LENGTH })
+  F.note = ("Queued #%d: %s (%d in queue)"):format(job.id, M.jobText(job), #F.queue)
 end
 
 function M.selectOre(F, name) F.sel.ore, F.sel.y = name, presetY(name) end
@@ -1216,6 +1231,7 @@ end
 local KNOWN_MAX = 64
 local KNOWN_BELOW = 8 -- known ores this far below the home at least (never up through the base)
 local function knownFor(F, id, job)
+  if job.scout then return nil end -- (it maps; it digs nothing)
   local h = homeOf(F, id)
   if not h then return nil end
   local max = job.quantity and math.min(KNOWN_MAX, job.quantity * 2) or KNOWN_MAX

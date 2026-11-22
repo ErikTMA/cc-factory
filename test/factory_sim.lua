@@ -2323,6 +2323,19 @@ do
   check(#F.queue == before + 1 and job.only == "iron" and job.quantity == 7 and job.y <= -21 and job.y >= -44,
     ("queued: only iron, 7, at a Y where they are (%s)"):format(tostring(F.note)))
   if #F.queue > before then table.remove(F.queue) end
+  -- SCOUT: a scan-only job at the chosen level, 16 apart
+  local scoutBtn, down
+  for _, b in ipairs(UI.buttons) do
+    if b.label:find("^SCOUT") then scoutBtn = b end
+    if b.label == "-16" then down = b end
+  end
+  check(scoutBtn and down, "SCOUT and its level buttons are there")
+  if down then down.action() end
+  if scoutBtn then scoutBtn.action() end
+  local sj = F.queue[#F.queue]
+  check(sj and sj.scout == true and sj.y == -40 and sj.lanes == 4 and sj.length == 64 and not sj.only,
+    "SCOUT queued a scan-only job at Y -40 (4 lanes of 64): " .. tostring(F.note))
+  if sj and sj.scout then table.remove(F.queue) end
   F.map = keepMap
   F.oreSummaryCache = nil
 end
