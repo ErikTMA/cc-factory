@@ -2484,5 +2484,41 @@ do
   F.deps.storage.forget()
 end
 
+print("scenario: DEFRAG with many FULL barrels and the free room at the far end: it still gets on")
+print("          (live: it sorted one barrel, then hung trying the full ones every step)")
+do
+  local keepInv = W.inv
+  W.inv = {}
+  local invs = {}
+  -- 24 full plain barrels (sorted already: one item each), then a messy one, then room
+  for b = 1, 24 do
+    local I = newInv(("sophisticatedstorage:barrel_%02d"):format(b), nil, nil, nil, 27, { loose = true })
+    for i = 1, 27 do I.slots[i] = { name = ("minecraft:item_%02d"):format(b), count = 64 } end
+    invs[#invs + 1] = I
+  end
+  local messy = newInv("sophisticatedstorage:barrel_25", nil, nil, nil, 27, { loose = true })
+  local mix = { "minecraft:zinc", "minecraft:apple", "minecraft:yew", "minecraft:bone" }
+  for i = 1, 27 do messy.slots[i] = { name = mix[i % #mix + 1], count = 10 + i } end
+  local room = newInv("sophisticatedstorage:barrel_99", nil, nil, nil, 27, { loose = true })
+  invs[#invs + 1] = messy; invs[#invs + 1] = room
+  F.deps.storage.forget()
+  factory.toggleDefrag(F)
+  local steps = 0
+  runUntil(function() if F.defrag then steps = steps + 1 end; return F.defrag == nil end, 6000)
+  check(F.defrag == nil and (F.note or ""):find("Defrag done") ~= nil, ("finished in %d steps: %s"):format(steps, tostring(F.note)))
+  local last, gap, ok = "", false, true
+  for i = 1, messy.size do
+    local st = messy.slots[i]
+    if st then if gap or st.name < last then ok = false end; last = st.name else gap = true end
+  end
+  check(ok, "the messy barrel sorted")
+  local logText = table.concat(F.defragLog or {}, "\n")
+  check(logText:find("plan: ") and logText:find("step %d+: ") and logText:find("  in "),
+    "it logs its plan and every step (/defrag.log): " .. #(F.defragLog or {}) .. " lines")
+  F.defrag = nil
+  W.inv = keepInv
+  F.deps.storage.forget()
+end
+
 print(failures == 0 and "ALL PASSED" or (failures .. " FAILURE(S)"))
 os.exit(failures == 0 and 0 or 1)

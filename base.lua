@@ -702,6 +702,14 @@ local function defragger()
     if F.defrag then
       local ok, more = decide(factory.defragStep, F)
       if not ok then F.note = "defrag: " .. tostring(more); F.defrag = nil end
+      -- what it did, readable off the base (and the server's files)
+      if F.defragLog then
+        pcall(function()
+          local f = fs.open("/defrag.log", "w")
+          f.write(table.concat(F.defragLog, "\n") .. "\n" .. tostring(F.note) .. "\n")
+          f.close()
+        end)
+      end
       os.queueEvent("factory_redraw")
       if ok and more then sleep(0) end
     else

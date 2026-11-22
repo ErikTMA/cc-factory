@@ -726,6 +726,13 @@ end
 function M.defragStep(F)
   local d = F.defrag
   if not d then return false end
+  -- what it does, for /defrag.log (base.lua writes it): the last 200 lines
+  F.defragLog = F.defragLog or {}
+  local function log(line)
+    table.insert(F.defragLog, line)
+    while #F.defragLog > 200 do table.remove(F.defragLog, 1) end
+  end
+  d.steps = (d.steps or 0) + 1
   local S = F.deps.storage
   S.forget()
   local view = S.defragView(d.cache)
@@ -749,6 +756,13 @@ function M.defragStep(F)
       return false
     end
     d.order, d.shares, d.i, d.stage, d.from = order, shares, 1, "drawers", usedSlots(view)
+    F.defragLog = {}
+    log("plan: " .. table.concat(order, ", "))
+    for _, name in ipairs(order) do
+      local parts = {}
+      for _, e in ipairs(shares[name]) do parts[#parts + 1] = e.n .. " " .. e.key end
+      log(("  %s (%d slots, limit %d): %s"):format(name, byName[name].size, byName[name].limit, table.concat(parts, ", ")))
+    end
     d.shareOf, d.messy = {}, {}
     for name, share in pairs(shares) do
       d.shareOf[name] = {}
@@ -827,23 +841,52 @@ function M.defragStep(F)
   end
   -- a free slot outside X: inventories still to do first, then the tail of
   -- finished ones (their surplus is taken back by spare())
+  -- (only those with room for it, as this step read them: a free slot, or
+  -- a part stack of the same item; a full one costs a move for nothing)
+  local free = {}
+  for _, o in ipairs(view.invs) do
+    local used = 0
+    for _ in pairs(o.slots) do used = used + 1 end
+    free[o.name] = o.size - used
+  end
+  local function hasRoom(t, k)
+    if (free[t] or 0) > 0 then return true end
+    local o = byName[t]
+    for _, st in pairs(o and o.slots or {}) do
+      if st.key == k and st.count < defrag.cap(o.limit, view.maxOf[k]) then return true end
+    end
+    return false
+  end
   local scratchOrder = {}
   for j = d.i + 1, #d.order do scratchOrder[#scratchOrder + 1] = d.order[j] end
   for j = 1, d.i - 1 do scratchOrder[#scratchOrder + 1] = d.order[j] end
-  local full = {}
   local function out(slot)
     local st = inv.slots[slot]
     for _, t in ipairs(scratchOrder) do
-      if not st or st.count <= 0 then return true end
+      if not st or st.count <= 0 then break end
       if budget <= 0 then return false end
-      if not full[t] and push(X, slot, st, t, st.count) == 0 then full[t] = true end
+      if hasRoom(t, st.key) then
+        local moved = push(X, slot, st, t, st.count)
+        if moved == 0 then free[t] = 0 else free[t] = free[t] - 1 end
+        log(("  out %s#%d -> %s: %d"):format(X, slot, t, moved))
+      end
     end
     return not inv.slots[slot]
+  end
+  -- never stuck on one slot: the same slot 40 steps running (each step moves
+  -- one thing out or in; a slot takes a few), it gives up on it
+  if d.at == X .. "#" .. d.p then d.same = (d.same or 0) + 1 else d.at, d.same = X .. "#" .. d.p, 0 end
+  if d.same > 40 then
+    log(("gave up on %s slot %d (wants %s)"):format(X, d.p, d.seq[d.p] and d.seq[d.p].key or "empty"))
+    d.messy[X] = true
+    d.p, d.same = d.p + 1, 0
   end
   while d.p <= inv.size do
     if budget <= 0 then return true end
     local p, w = d.p, d.seq[d.p]
     local st = inv.slots[p]
+    log(("step %d: %s slot %d has %s, wants %s"):format(d.steps, X, p,
+      st and (st.count .. " " .. st.key) or "nothing", w and (w.n .. " " .. w.key) or "nothing"))
     if not w then
       -- past its share: the slot ends empty
       if st and not out(p) then
@@ -888,6 +931,7 @@ function M.defragStep(F)
                 if need > 0 and give > 0 and o and o.key == w.key then
                   if budget <= 0 then return true end
                   local moved = push(src.name, slot, o, X, math.min(need, give, o.count), p)
+                  log(("  in %s#%d -> %s#%d: %d"):format(src.name, slot, X, p, moved))
                   need, give = need - moved, give - moved
                   if moved > 0 then progressed = true end
                 end
