@@ -16,6 +16,25 @@ over rednet. Friends-only server: base-ID pinning, no signing.
   optional target slot. CC has no event for an inventory's contents
   changing: storage.lua reads all barrels side by side once per decision and
   keeps a journal of its own moves within it.
+- `list()` gives name, count and an `nbt` hash (different components:
+  different hash; such stacks never merge). `getItemLimit(slot)` is the
+  handler's `getSlotLimit`.
+- Functional Storage 1.5.8: plain drawers `<wood>_<1|2|4>` (fluid drawers
+  excluded) have 1/2/4 slots, plus one more with a void upgrade (always
+  empty, deletes what goes in). A slot holding an item refuses others; an
+  emptied slot forgets its item unless locked (locked + empty: count 0, CC
+  doesn't list it, it refuses other items). Counts above 64 are real.
+  `getSlotLimit` = stacks x the stored item's max stack (64 x stacks when
+  empty). The storage controller and extensions show every connected
+  drawer's slots again; compacting drawers show one amount in 2-3 slots.
+  (How Titanium attaches the handler: not in the jars, unconfirmed.)
+- Sophisticated Storage 1.6.18 / Core 1.5.35: barrels, chests, shulker boxes
+  (tiers copper..netherite: 27/45/54/81/108/132 slots), limited barrels 1-4.
+  `getSlotLimit` = 64 x stack-upgrade multipliers whatever the item; the real
+  per-item limit is max stack x that / 64 (CC over-reports for pearls). A
+  double chest's second half serves the first half's inventory (counted
+  twice); the controller and storage_io show everything again. An insert
+  into one slot may go on into other slots (toSlot not strict).
 
 - `rom/startup.lua`: if an *attached* disk drive's disk has a startup file it
   runs **instead of** the computer's own startup (`shell.allow_disk_startup`).

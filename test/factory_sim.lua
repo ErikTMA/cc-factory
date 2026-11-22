@@ -105,24 +105,70 @@ function W.get(x, y, z) return W.b[k(x, y, z)] end
 function W.set(x, y, z, v) W.b[k(x, y, z)] = v end
 
 -- Inventories (chests, barrels) live at a position and have a peripheral name.
-local function newInv(name, x, y, z, size)
-  local I = { name = name, slots = {}, size = size or 27, x = x, y = y, z = z }
+-- How many an item stacks to (as the game: tools 1, pearls 16, most 64).
+local function maxStack(item)
+  if item:find("_pickaxe$") or item:find("_hammer$") or item:find("_axe$") or item:find("_shovel$")
+     or item:find("^computercraft:turtle") or item:find("^computercraft:pocket") then return 1 end
+  if item:find("ender_pearl$") or item:find("egg$") or item:find("snowball$") then return 16 end
+  return 64
+end
+W.maxStack = maxStack
+
+-- An inventory, as strict as the game:
+--   limit: what a slot holds of a 64-stack item (64; a Sophisticated barrel
+--     with stack upgrades 64 x multiplier; a Functional Storage drawer slot
+--     64 x its stacks). An item holds limit * its max stack / 64 (pearls 16
+--     in a plain barrel), and 1 of an item that doesn't stack.
+--   drawer: a slot holding an item refuses any other; `locked[slot] = item`
+--     keeps it even empty (then CC doesn't list it).
+--   loose: (Sophisticated) an insert into one slot that doesn't all fit
+--     there goes on into other slots.
+-- Stacks merge only with the same components (nbt), which a move keeps.
+local function newInv(name, x, y, z, size, opts)
+  opts = opts or {}
+  local I = { name = name, slots = {}, size = size or 27, x = x, y = y, z = z,
+              limit = opts.limit or 64, drawer = opts.drawer, loose = opts.loose, locked = opts.locked or {} }
   W.inv[name] = I
   if x then W.invAt = W.invAt or {}; W.invAt[k(x, y, z)] = I; W.set(x, y, z, name:match("^(.-)_%d+$")) end
-  function I.insert(item, n, toSlot)
+  function I.cap(item)
+    local m = maxStack(item)
+    if m == 1 and not I.drawer then return 1 end
+    return math.floor(I.limit * m / 64)
+  end
+  local function fits(i, item, nbt)
+    local s = I.slots[i]
+    if I.locked[i] and I.locked[i] ~= item then return false end
+    if not s then return true end
+    return s.name == item and s.nbt == nbt
+  end
+  -- `proto`: the stack it comes from (its components go along)
+  function I.insert(item, n, toSlot, proto)
+    local nbt = proto and proto.nbt
     local moved = 0
     local order = {}
-    if toSlot then order = { toSlot } else for i = 1, I.size do order[#order + 1] = i end end
-    for _, i in ipairs(order) do
-      local s = I.slots[i]
-      if s and s.name == item and s.count < 64 then
-        local m = math.min(64 - s.count, n - moved); s.count = s.count + m; moved = moved + m
-      end
-      if moved >= n then return moved end
+    if toSlot then
+      order = { toSlot }
+      if I.loose then for i = 1, I.size do if i ~= toSlot then order[#order + 1] = i end end end
+    else
+      for i = 1, I.size do order[#order + 1] = i end
     end
-    for _, i in ipairs(order) do
-      if not I.slots[i] and moved < n then
-        local m = math.min(64, n - moved); I.slots[i] = { name = item, count = m }; moved = moved + m
+    local cap = I.cap(item)
+    for pass = 1, 2 do -- (stacks of it first, then empty slots)
+      for _, i in ipairs(order) do
+        if moved >= n then return moved end
+        local s = I.slots[i]
+        if fits(i, item, nbt) and ((pass == 1) == (s ~= nil)) then
+          local have = s and s.count or 0
+          local m = math.min(cap - have, n - moved)
+          if m > 0 then
+            if s then s.count = s.count + m
+            else
+              I.slots[i] = { name = item, count = m, nbt = nbt, displayName = proto and proto.displayName,
+                             damage = proto and proto.damage, enchantments = proto and proto.enchantments }
+            end
+            moved = moved + m
+          end
+        end
       end
     end
     return moved
@@ -238,14 +284,21 @@ local function baseNetwork()
     end
     local I = assert(W.inv[name], name)
     if method == "size" then return I.size end
+    if method == "getItemLimit" then
+      local st = I.slots[a[1]]
+      -- (a drawer reports its stored item's limit; a Sophisticated barrel its
+      -- slot limit whatever the item: CC's number over-reports for pearls)
+      if I.drawer and st then return I.cap(st.name) end
+      return I.limit
+    end
     if method == "list" then
       local out = {}
-      for i, s in pairs(I.slots) do out[i] = { name = s.name, count = s.count } end
+      for i, s in pairs(I.slots) do out[i] = { name = s.name, count = s.count, nbt = s.nbt } end
       return out
     elseif method == "getItemDetail" then
       local st = I.slots[a[1]]
       return st and { name = st.name, count = st.count, damage = st.damage or 0, enchantments = st.enchantments,
-                      nbt = st.nbt, displayName = st.displayName } or nil
+                      nbt = st.nbt, displayName = st.displayName, maxCount = maxStack(st.name) } or nil
     elseif method == "pushItems" then
       local to, slot, limit, toSlot = W.inv[a[1]], a[2], a[3], a[4]
       local s = I.slots[slot]
@@ -257,7 +310,7 @@ local function baseNetwork()
       end
       if not s or not to then return 0 end
       local n = math.min(limit or s.count, s.count)
-      local moved = to.insert(s.name, n, toSlot)
+      local moved = to.insert(s.name, n, toSlot, s)
       I.take(slot, moved)
       return moved
     elseif method == "pullItems" then
@@ -276,7 +329,7 @@ local function baseNetwork()
       if not from then error("pullItems: no inventory " .. tostring(fromName)) end
       local st = from.slots[slot]
       if not st then return 0 end
-      local moved = I.insert(st.name, math.min(limit or st.count, st.count), toSlot)
+      local moved = I.insert(st.name, math.min(limit or st.count, st.count), toSlot, st)
       from.take(slot, moved)
       return moved
     end
@@ -2186,6 +2239,87 @@ do
   runUntil(function() return false end, 2000)
   check(T.x == 60 and T.y == 1 and T.z == 60, "did not move")
   check(not (T.files["surveyor.state"] or ""):find("done"), "not marked done: it carries on after it gets fuel")
+end
+
+print("scenario: DEFRAG packs storage: copper takes the upgraded barrel's slots, the redstone moves out;")
+print("          drawers, a double chest and pearls as the mods do them; nothing lost")
+do
+  local storageNames = {}
+  local function storageTotals()
+    local total, used, seenInv = {}, 0, {}
+    for name, I in pairs(W.inv) do
+      if storage.classify(name) == "storage" and not seenInv[I] then
+        seenInv[I] = true
+        for slot, st in pairs(I.slots) do
+          if not (I.drawerSlots and slot > I.drawerSlots) then
+            local k2 = st.name .. "|" .. tostring(st.nbt)
+            total[k2] = (total[k2] or 0) + st.count
+            used = used + 1
+          end
+        end
+      end
+    end
+    return total, used
+  end
+  -- a Sophisticated iron barrel with an x8 stack upgrade: 3 slots of 512
+  local big = newInv("sophisticatedstorage:iron_barrel_0", nil, nil, nil, 3, { limit = 512, loose = true })
+  big.insert("minecraft:redstone", 64)
+  -- a plain barrel with 20 stacks of copper and 20 pearls in two slots
+  local plain = newInv("minecraft:barrel_7", nil, nil, nil, 27)
+  for i = 1, 20 do plain.slots[i] = { name = "minecraft:copper_ingot", count = 64 } end
+  plain.slots[21] = { name = "minecraft:ender_pearl", count = 10 }
+  plain.slots[22] = { name = "minecraft:ender_pearl", count = 10 }
+  -- an oak drawer (1 slot of 32 stacks) holding iron; an empty 2-drawer the
+  -- player locked to gold (CC doesn't list it; it takes nothing else)
+  local drawer = newInv("functionalstorage:oak_1_0", nil, nil, nil, 2, { limit = 64 * 32, drawer = true })
+  drawer.drawerSlots = 1 -- (slot 2: the void upgrade's slot, never used)
+  drawer.slots[1] = { name = "minecraft:iron_ingot", count = 100 }
+  plain.slots[23] = { name = "minecraft:iron_ingot", count = 64 }
+  newInv("functionalstorage:oak_2_0", nil, nil, nil, 2, { limit = 64 * 16, drawer = true, locked = { "minecraft:gold_ingot", "minecraft:gold_ingot" } })
+  -- a Sophisticated double chest: both halves are the same inventory
+  local chest = newInv("sophisticatedstorage:chest_0", nil, nil, nil, 27, { loose = true })
+  W.inv["sophisticatedstorage:chest_1"] = chest
+  chest.slots[5] = { name = "minecraft:cobblestone", count = 20 }
+  chest.slots[9] = { name = "minecraft:cobblestone", count = 20 }
+  -- a storage controller would show all of it again: never storage
+  check(storage.classify("functionalstorage:storage_controller_0") == nil
+    and storage.classify("sophisticatedstorage:controller_0") == nil
+    and storage.classify("functionalstorage:compacting_drawer_0") == nil, "controllers and compacting drawers are not storage")
+  local before, usedBefore = storageTotals()
+  F.deps.storage.forget()
+  local seen = F.deps.storage.list()["minecraft:cobblestone"]
+  check(seen == before["minecraft:cobblestone|nil"],
+    ("the base counts the double chest once: it sees %s cobblestone, there are %s"):format(tostring(seen), tostring(before["minecraft:cobblestone|nil"])))
+  F.deps.storage.forget()
+  factory.toggleDefrag(F)
+  check(F.defrag ~= nil, "DEFRAG pressed: " .. tostring(F.note))
+  runUntil(function() return F.defrag == nil end, 20000)
+  local after, usedAfter = storageTotals()
+  local same = true
+  for k2, n in pairs(before) do if after[k2] ~= n then same = false; print("    changed", k2, n, after[k2]) end end
+  for k2 in pairs(after) do if not before[k2] then same = false; print("    new", k2) end end
+  check(F.defrag == nil and (F.note or ""):find("Defrag done"), "finished: " .. tostring(F.note))
+  check(same, "nothing lost or made (the double chest counted once)")
+  check(usedAfter < usedBefore - 15, ("fewer slots used: %d -> %d"):format(usedBefore, usedAfter))
+  local copperBig = 0
+  for _, st in pairs(big.slots) do if st.name == "minecraft:copper_ingot" then copperBig = copperBig + st.count end end
+  check(copperBig >= 1024, "the upgraded barrel holds the copper: " .. copperBig)
+  local ironElsewhere = 0
+  for name, I in pairs(W.inv) do
+    if I ~= drawer then for _, st in pairs(I.slots) do if st.name == "minecraft:iron_ingot" then ironElsewhere = ironElsewhere + st.count; print("    iron in", name, st.count) end end end
+  end
+  check(drawer.slots[1].count >= 164 and not drawer.slots[2],
+    ("the iron went into its drawer (%d; %d elsewhere), nothing into the void slot"):format(drawer.slots[1].count, ironElsewhere))
+  local pearlsOk = true
+  for _, I in pairs(W.inv) do
+    for _, st in pairs(I.slots) do
+      if st.name == "minecraft:ender_pearl" and st.count > I.cap(st.name) then pearlsOk = false end
+    end
+  end
+  check(pearlsOk, "no slot over its limit for pearls")
+  local cobbleSlots = 0
+  for _, st in pairs(chest.slots) do if st.name == "minecraft:cobblestone" then cobbleSlots = cobbleSlots + 1 end end
+
 end
 
 print(failures == 0 and "ALL PASSED" or (failures .. " FAILURE(S)"))

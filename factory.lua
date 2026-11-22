@@ -16,6 +16,7 @@ local production = require("production")
 local recipes = require("recipes")
 local homes = require("homes")
 local oremap = require("oremap")
+local defrag = require("defrag")
 
 local M = {}
 
@@ -670,6 +671,58 @@ function M.toggleTinyFuel(F)
   F.note = "Furnaces on tiny coal (crafted from charcoal/coal): " .. (F.tinyFuel and "ON" or "OFF")
 end
 
+-- FACTORY tab: DEFRAG packs storage into as few slots as possible (see
+-- defrag.lua). It runs a few rounds of moves per tick, planned each time
+-- from storage as it is then, so turtles and players change it meanwhile
+-- without harm; it stops when a plan has no moves left or stops gaining.
+local DEFRAG_ROUNDS = 8 -- rounds of side-by-side moves per tick
+function M.toggleDefrag(F)
+  local S = F.deps.storage
+  if not (S.layout and S.move) then
+    F.note = "Defrag needs barrel storage (an ME/RS bridge packs itself)"
+    return
+  end
+  if F.defrag then
+    F.defrag = nil
+    F.note = "Defrag stopped"
+  else
+    F.defrag = { idle = 0 }
+    F.note = "Defrag: packing storage..."
+  end
+end
+
+local function defragStep(F)
+  local d = F.defrag
+  if not d then return end
+  local S = F.deps.storage
+  local slots, cap = S.layout()
+  local before = defrag.usedSlots(slots)
+  d.from = d.from or before
+  local moves, after = defrag.plan(slots, cap)
+  if #moves == 0 or after >= before then
+    F.defrag = nil
+    F.note = ("Defrag done: storage uses %d slots (was %d)"):format(before, d.from)
+    return
+  end
+  local short = false
+  for i, round in ipairs(defrag.rounds(moves)) do
+    if i > DEFRAG_ROUNDS or short then break end
+    for _, ok in ipairs(S.move(round)) do if not ok then short = true end end
+  end
+  S.forget() -- (moved: the journal no longer says where things are)
+  -- a short move: storage changed under us; the next tick plans again
+  if short then
+    d.idle = d.idle + 1
+    if d.idle >= 5 then
+      F.defrag = nil
+      F.note = "Defrag stopped: storage keeps changing under it"
+      return
+    end
+  end
+  F.note = ("Defrag: %d -> %d slots..."):format(d.from, after)
+end
+M.defragStep = defragStep
+
 function M.toggleHammer(F)
   F.hammer = not F.hammer
   F.note = "Ore doubling with hammers: " .. (F.hammer and "ON" or "OFF")
@@ -1238,6 +1291,7 @@ local DISMANTLE_TIMEOUT = 3600 -- seconds before giving up on a turtle to take a
 function M.tick(F)
   freshStorage(F)
   local S = F.deps.storage
+  defragStep(F)
   if F.dismantle and now(F) - (F.dismantle.since or 0) > DISMANTLE_TIMEOUT then
     F.note = ("Gave up taking %s apart (it didn't come)"):format(label(F, F.dismantle.id))
     F.dismantle = nil

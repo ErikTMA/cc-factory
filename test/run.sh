@@ -21,4 +21,5 @@ docker run --rm -e LIMIT=$LIMIT -v "$PWD":/w -w /w/test nickblah/lua:5.2 sh -c '
   suite "forester"                forester_sim.lua ../forester.lua
   suite "base boots"              base_sim.lua ..
   suite "whole factory"           factory_sim.lua ..
+  suite "storage defrag planner"  defrag_test.lua ..
 ' | tee /dev/stderr | grep -q "FAILURE" && exit 1 || exit 0

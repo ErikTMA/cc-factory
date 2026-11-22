@@ -34,10 +34,32 @@ local M = {}
 -- fuel and look like vanilla to CC: it asks for the item capability without
 -- a side first, and the mod answers with its whole inventory (InvWrapper):
 -- input 1, fuel 2, output 3, its augments after (checked in both jars).
+--
+-- Storage: barrels, Functional Storage drawers, Sophisticated Storage
+-- barrels and chests (checked in the jars, FS 1.5.8 / SS 1.6.18):
+-- * a plain drawer (<wood>_1/_2/_4) holds 1, 2 or 4 items; CC's size counts
+--   one more slot with a void upgrade, a slot that deletes what goes in:
+--   only the drawers' own slots are used (M.drawerSlots).
+-- * never a controller, controller extension, storage_io/input/output (they
+--   show every connected storage's slots again: counted twice), nor a
+--   compacting drawer (its slots are one amount shown three ways), an ender
+--   drawer (shared with other places) or an armory cabinet.
+-- * a Sophisticated double chest shows the same contents on both halves:
+--   storage.lua keeps one of two chests that list exactly alike.
+function M.drawerSlots(name)
+  local wood, n = name:match("^functionalstorage:([%l_]+)_([124])_%d+$")
+  if wood and wood ~= "fluid" and wood ~= "framed_fluid" then return tonumber(n) end
+end
 function M.classify(name)
   if name:find("^minecraft:furnace_%d+$") or name:find("^minecraft:blast_furnace_%d+$")
      or name:find("^ironfurnaces:%w+_furnace_%d+$") then return "furnace" end
   if name:find("^minecraft:chest_%d+$") then return "input" end
+  if name:find("^functionalstorage:") then return M.drawerSlots(name) and "storage" or nil end
+  if name:find("^sophisticatedstorage:") then
+    if name:find("^sophisticatedstorage:[%l_]*barrel_%d+$") or name:find("^sophisticatedstorage:[%l_]*chest_%d+$")
+       or name:find("^sophisticatedstorage:limited_[%l_]*barrel_[1-4]_%d+$") then return "storage" end
+    return nil
+  end
   if name:find("barrel") then return "storage" end
   return nil
 end
@@ -131,13 +153,36 @@ local function chests(api)
     sizes = sizes or {}
     for i, n in ipairs(invs) do
       fns[#fns + 1] = function() lists[i] = api.call(n, "list") or {} end
-      if not sizes[n] then fns[#fns + 1] = function() sizes[n] = api.call(n, "size") or 27 end end
+      if not sizes[n] then
+        sizes[n] = M.drawerSlots(n)
+        if not sizes[n] then fns[#fns + 1] = function() sizes[n] = api.call(n, "size") or 27 end end
+      end
     end
     runAll(fns)
     slots = {}
+    local seen = {}
     for i, n in ipairs(invs) do
-      slots[n] = {}
-      for slot, it in pairs(lists[i] or {}) do slots[n][slot] = { name = it.name, count = it.count } end
+      local list = lists[i] or {}
+      -- the other half of a Sophisticated double chest: the same contents
+      -- again (two chests that list exactly alike count once; while empty,
+      -- that leaves one out until it holds something)
+      local twin = false
+      if n:find("^sophisticatedstorage:[%l_]*chest_%d+$") then
+        local parts = { tostring(sizes[n]) }
+        for slot = 1, sizes[n] or 0 do
+          local it = list[slot]
+          if it then parts[#parts + 1] = slot .. "=" .. it.name .. "x" .. it.count .. "/" .. tostring(it.nbt) end
+        end
+        local sig = table.concat(parts, ";")
+        twin = seen[sig] ~= nil
+        seen[sig] = true
+      end
+      if not twin then
+        slots[n] = {}
+        for slot, it in pairs(list) do
+          if slot <= (sizes[n] or slot) then slots[n][slot] = { name = it.name, count = it.count, nbt = it.nbt } end
+        end
+      end
     end
   end
   local function fresh()
@@ -304,6 +349,75 @@ local function chests(api)
     return out
   end
   function S.countWhere(item, accept) return S.countWhereMany({ [item] = accept })[item] end
+
+  -- ------------------------------------------------------------ defrag --
+  -- Every storage slot for defrag.lua, and what each holds of an item.
+  -- A slot's limit (CC getItemLimit = the handler's slot limit) is per
+  -- 64-stack item: a drawer's limit for its stored item is its stacks x that
+  -- item's max stack, so it is scaled back. What an item holds: limit x its
+  -- max stack / 64 (pearls 16 in a plain barrel, 16 x n in an upgraded one),
+  -- an item that doesn't stack 1 (a drawer stores those by its stacks).
+  -- Never too much: a drawer or barrel with a void upgrade deletes what
+  -- doesn't fit. An empty drawer slot isn't planned into (one the player
+  -- locked to an item takes nothing else, and CC can't tell).
+  local function key(it) return it.name .. "|" .. tostring(it.nbt or "") end
+  function S.layout()
+    fresh()
+    local list, fns, limits, maxOf, probe = {}, {}, {}, {}, {}
+    local invs = {}
+    for inv in pairs(slots) do invs[#invs + 1] = inv end
+    table.sort(invs)
+    for _, inv in ipairs(invs) do
+      for slot = 1, sizes[inv] or 0 do
+        local it = slots[inv][slot]
+        local s = { id = inv .. "#" .. slot, inv = inv, slot = slot, drawer = M.drawerSlots(inv) ~= nil }
+        if it and it.count > 0 then
+          s.key, s.name, s.count = key(it), it.name, it.count
+          if s.drawer then s.lock = s.key end
+          if not probe[s.key] then probe[s.key] = s end
+        elseif s.drawer then
+          s.lock = "?" -- (nothing goes in)
+        end
+        list[#list + 1] = s
+        fns[#fns + 1] = function() limits[s.id] = api.call(inv, "getItemLimit", slot) or 64 end
+      end
+    end
+    for k, s in pairs(probe) do
+      fns[#fns + 1] = function()
+        local d = api.call(s.inv, "getItemDetail", s.slot)
+        maxOf[k] = d and d.maxCount or 64
+      end
+    end
+    runAll(fns)
+    for _, s in ipairs(list) do
+      local limit = limits[s.id] or 64
+      if s.drawer and s.key then limit = math.floor(limit * 64 / (maxOf[s.key] or 64)) end
+      s.limit = limit
+    end
+    local function cap(s, k)
+      local m = k and (maxOf[k] or 64) or 64
+      if m == 1 and not s.drawer then return 1 end
+      return math.floor(s.limit * m / 64)
+    end
+    return list, cap
+  end
+
+  -- One round of moves side by side ({ from, to, n }, slot ids "inv#slot"):
+  -- { true/false per move: all of it moved }.
+  function S.move(round)
+    local results, fns = {}, {}
+    for i, m in ipairs(round) do
+      local fromInv, fromSlot = m.from:match("^(.*)#(%d+)$")
+      local toInv, toSlot = m.to:match("^(.*)#(%d+)$")
+      fns[#fns + 1] = function()
+        local ok, n = pcall(api.call, fromInv, "pushItems", toInv, tonumber(fromSlot), m.n, tonumber(toSlot))
+        results[i] = ok and n == m.n
+      end
+    end
+    runAll(fns)
+    forget()
+    return results
+  end
 
   return S
 end
