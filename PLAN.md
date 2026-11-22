@@ -44,6 +44,9 @@ over rednet. Friends-only server: base-ID pinning, no signing.
   Sophisticated barrel asking for slot 61 landed in slot 3, its lowest empty
   slot. Its own sort runs only from the open GUI (StorageContainerMenuBase
   .handlePacket); no CC integration, nothing else calls it.
+- Live (defrag.log, 2026-11-22): one pushItems moves at most one stack's
+  worth (64 darkstone of 81 asked) even out of a 512 slot: DEFRAG repeats a
+  move until all of it went.
 - CC's pushItems/pullItems (ForgeContainerTransfer.moveItem): simulated
   extract, then the REAL insert, then the real extract. A push from an
   inventory into itself can land back in the source stack: useless for

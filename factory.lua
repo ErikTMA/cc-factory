@@ -855,7 +855,14 @@ function M.defragStep(F)
     if budget <= 0 then return true end
     budget = budget - 1
     local m = d.moves[d.k]
-    local moved = S.push(m.from, m.fromSlot, m.to, m.n, m.toSlot)
+    -- (one push moves at most one stack's worth, even out of a slot that
+    -- holds 512: as many pushes as it takes)
+    local moved = 0
+    while moved < m.n do
+      local n = S.push(m.from, m.fromSlot, m.to, m.n - moved, m.toSlot)
+      if n <= 0 then break end
+      moved = moved + n
+    end
     log(("move %d/%d: %d %s %s#%d -> %s#%d%s"):format(d.k, #d.moves, m.n, m.key, m.from, m.fromSlot, m.to, m.landed,
       moved == m.n and "" or (" MOVED " .. moved)))
     if moved ~= m.n then

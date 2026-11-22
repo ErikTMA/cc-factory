@@ -318,7 +318,9 @@ local function baseNetwork()
         return moved
       end
       if not s or not to then return 0 end
-      local n = math.min(limit or s.count, s.count)
+      -- (one call moves at most one stack's worth, even out of a slot that
+      -- holds more: live, 81 asked from a 512 barrel, 64 moved)
+      local n = math.min(limit or s.count, s.count, maxStack(s.name))
       local moved = to.insert(s.name, n, toSlot, s)
       I.take(slot, moved)
       return moved
@@ -338,7 +340,7 @@ local function baseNetwork()
       if not from then error("pullItems: no inventory " .. tostring(fromName)) end
       local st = from.slots[slot]
       if not st then return 0 end
-      local moved = I.insert(st.name, math.min(limit or st.count, st.count), toSlot, st)
+      local moved = I.insert(st.name, math.min(limit or st.count, st.count, maxStack(st.name)), toSlot, st)
       from.take(slot, moved)
       return moved
     end
@@ -2693,6 +2695,49 @@ do
   for _ in pairs(gold.slots) do goldSlots = goldSlots + 1 end
   -- (1344 + 3 x 1280 at 512 a slot: 3 + 3 + 3 + 3)
   check(goldSlots <= 12, "the gold barrel's 81 stacks of 64 merged into 512s: " .. goldSlots .. " slots")
+  local t1, same = totals(), true
+  for k2, v in pairs(t0) do if t1[k2] ~= v then same = false end end
+  check(same, "nothing lost or made")
+  F.defrag = nil
+  W.inv = keepInv
+  F.deps.storage.forget()
+end
+
+print("scenario: live now: a barrel of 4096 a slot full of single items, copper 64 a slot in plain")
+print("          barrels: the copper goes into the big barrel, the singles into the plain ones")
+do
+  local keepInv = W.inv
+  W.inv = {}
+  local big = newInv("sophisticatedstorage:barrel_5", nil, nil, nil, 81, { loose = true, limit = 4096 })
+  for i = 1, 81 do big.slots[i] = { name = ("minecraft:odd_%02d"):format(i), count = (i % 3) + 1 } end
+  local p0 = newInv("sophisticatedstorage:barrel_0", nil, nil, nil, 27, { loose = true })
+  local p1 = newInv("sophisticatedstorage:barrel_1", nil, nil, nil, 27, { loose = true })
+  local p2 = newInv("sophisticatedstorage:barrel_2", nil, nil, nil, 27, { loose = true })
+  local p3 = newInv("sophisticatedstorage:barrel_3", nil, nil, nil, 27, { loose = true })
+  for i = 1, 20 do p0.slots[i] = { name = "minecraft:copperish", count = 64 } end
+  for i = 1, 10 do p2.slots[i] = { name = "minecraft:darkish", count = 64 } end
+  local function totals()
+    local t = {}
+    for _, I in pairs(W.inv) do for _, st in pairs(I.slots) do t[st.name] = (t[st.name] or 0) + st.count end end
+    return t
+  end
+  local t0 = totals()
+  F.deps.storage.forget()
+  F.defragResult = nil
+  factory.toggleDefrag(F)
+  runUntil(function() return F.defrag == nil end, 40000)
+  local doneNote = F.defragResult
+  check((doneNote or ""):find("Defrag done") ~= nil, "done: " .. tostring(doneNote or F.note))
+  local inBig, singlesInBig = 0, 0
+  for _, st in pairs(big.slots) do
+    if st.name == "minecraft:copperish" or st.name == "minecraft:darkish" then inBig = inBig + st.count
+    else singlesInBig = singlesInBig + 1 end
+  end
+  check(inBig == 1280 + 640, "copper and the other bulk item are in the big barrel: " .. inBig)
+  check(singlesInBig == 0, "no single items left in the big barrel: " .. singlesInBig)
+  local used = 0
+  for _, I in pairs(W.inv) do for _ in pairs(I.slots) do used = used + 1 end end
+  check(used <= 81 + 2, "81 singles + 1 slot each for the bulk items: " .. used .. " slots")
   local t1, same = totals(), true
   for k2, v in pairs(t0) do if t1[k2] ~= v then same = false end end
   check(same, "nothing lost or made")

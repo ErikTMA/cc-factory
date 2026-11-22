@@ -87,7 +87,33 @@ local function stable(invs, totals, maxOf, withReserve)
     free[inv.name] = free[inv.name] - math.ceil(n / c)
     left[k] = left[k] - n
   end
-  -- the rest stays where most of it is; the biggest items first
+  -- inventories whose slots hold more than 64 (stack upgrades) take the
+  -- items with more than one stack, the most stacks first: there they
+  -- save slots (20 stacks of copper in one slot of 4096); an item of one
+  -- stack or less saves nothing there and goes to a plain one
+  local ups = {}
+  for _, inv in ipairs(order) do if inv.limit > 64 then ups[#ups + 1] = inv end end
+  table.sort(ups, function(a, b)
+    if a.limit ~= b.limit then return a.limit > b.limit end
+    return a.name < b.name
+  end)
+  local byStacks = {}
+  for _, k in ipairs(keys) do
+    if left[k] / (maxOf[k] or 64) > 1 then byStacks[#byStacks + 1] = k end
+  end
+  table.sort(byStacks, function(a, b)
+    local sa, sb = left[a] / (maxOf[a] or 64), left[b] / (maxOf[b] or 64)
+    if sa ~= sb then return sa > sb end
+    return before(a, b)
+  end)
+  for _, up in ipairs(ups) do
+    for _, k in ipairs(byStacks) do
+      if free[up.name] <= 0 then break end
+      if left[k] > 0 then put(up, k) end
+    end
+  end
+  -- the rest: in a plain inventory, the one holding most of it (fewest
+  -- moves); the biggest items first; what doesn't fit, wherever there is room
   local byTotal = {}
   for _, k in ipairs(keys) do byTotal[#byTotal + 1] = k end
   table.sort(byTotal, function(a, b)
@@ -97,9 +123,10 @@ local function stable(invs, totals, maxOf, withReserve)
   for _, k in ipairs(byTotal) do
     if left[k] > 0 then
       local cands = {}
-      for _, inv in ipairs(order) do if inv.limit <= 64 then cands[#cands + 1] = inv end end
-      for _, inv in ipairs(order) do if inv.limit > 64 then cands[#cands + 1] = inv end end
+      for _, inv in ipairs(order) do cands[#cands + 1] = inv end
       table.sort(cands, function(a, b)
+        local pa, pb = a.limit <= 64, b.limit <= 64
+        if pa ~= pb then return pa end
         local ca, cb = cur[a.name][k] or 0, cur[b.name][k] or 0
         if ca ~= cb then return ca > cb end
         if free[a.name] ~= free[b.name] then return free[a.name] > free[b.name] end
@@ -113,36 +140,6 @@ local function stable(invs, totals, maxOf, withReserve)
   end
   for _, k in ipairs(keys) do
     if left[k] > 0 then return nil, ("it doesn't all fit: %d %s left over"):format(left[k], k:match("^[^|]*")) end
-  end
-  -- room left in an upgraded inventory (its own items compacted): the
-  -- items with the most stacks in plain ones move in (they save slots
-  -- there); what it holds already is never pushed out for them
-  for _, up in ipairs(order) do
-    if up.limit > 64 then
-      while free[up.name] > 0 do
-        local best, bestStacks, from
-        for _, inv in ipairs(order) do
-          if inv.limit <= 64 then
-            for _, e in ipairs(shares[inv.name]) do
-              local stacks = e.n / (maxOf[e.key] or 64)
-              if stacks > 1 and (not best or stacks > bestStacks) then best, bestStacks, from = e, stacks, inv end
-            end
-          end
-        end
-        if not best then break end
-        local c = M.cap(up.limit, maxOf[best.key])
-        local n = math.min(best.n, free[up.name] * c)
-        local cPlain = M.cap(from.limit, maxOf[best.key])
-        -- (only if it saves a slot)
-        if math.ceil(n / c) >= math.ceil(n / cPlain) then break end
-        table.insert(shares[up.name], { key = best.key, n = n })
-        free[up.name] = free[up.name] - math.ceil(n / c)
-        best.n = best.n - n
-        if best.n == 0 then
-          for i, e in ipairs(shares[from.name]) do if e == best then table.remove(shares[from.name], i); break end end
-        end
-      end
-    end
   end
   local names = {}
   for _, inv in ipairs(order) do
