@@ -33,8 +33,17 @@ over rednet. Friends-only server: base-ID pinning, no signing.
   `getSlotLimit` = 64 x stack-upgrade multipliers whatever the item; the real
   per-item limit is max stack x that / 64 (CC over-reports for pearls). A
   double chest's second half serves the first half's inventory (counted
-  twice); the controller and storage_io show everything again. An insert
-  into one slot may go on into other slots (toSlot not strict).
+  twice); the controller and storage_io show everything again.
+  An insert IGNORES the slot asked for (Core 1.5.35
+  InventoryHandlerSlotTracker.insertItemIntoHandler: only a simulated insert
+  looks at the slot): it goes into stacks of the same item first
+  (insertIntoSlotsThatMatchStack), then the lowest empty slot (emptySlots is
+  a TreeSet). So nothing can be placed in a chosen slot: DEFRAG rebuilds an
+  inventory (empty it, fill it in name order) instead of moving slots.
+- CC's pushItems/pullItems (ForgeContainerTransfer.moveItem): simulated
+  extract, then the REAL insert, then the real extract. A push from an
+  inventory into itself can land back in the source stack: useless for
+  merging inside one Sophisticated barrel.
 - Shearing leaves: CC 1.120.2 has no shears upgrade (its upgrades: the
   diamond tools, crafting table, modems, speaker) and `turtle.dig()` breaks
   with the equipped tool only; using shears (`turtle.place()` with them

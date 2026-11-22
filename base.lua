@@ -210,10 +210,10 @@ local function drawFactory(UI, out, w, row)
       put(out, 1, row, ("No storage! Add barrels with a wired modem (chests are turtle homes)."):sub(1, w), colors.red)
       row = row + 1
     end
-    if F.deps.storage.layout then
-      -- pack storage into as few slots as possible (factory.toggleDefrag)
+    if F.deps.storage.defragView then
+      -- sort storage and pack it into as few slots as it takes
       button(UI, out, 1, row, 16, F.defrag and "DEFRAG: STOP" or "DEFRAG", F.defrag ~= nil,
-        function() factory.toggleDefrag(F) end)
+        function() factory.toggleDefrag(F); os.queueEvent("factory_defrag") end)
       row = row + 1
     end
     local unused = {}
@@ -695,4 +695,19 @@ local function screen()
   end
 end
 
-parallel.waitForAny(receiver, worker, ticker, screen, chatter, updater)
+-- DEFRAG runs step by step, each step a decision of its own (turtles are
+-- answered in between); idle until the button starts it.
+local function defragger()
+  while true do
+    if F.defrag then
+      local ok, more = decide(factory.defragStep, F)
+      if not ok then F.note = "defrag: " .. tostring(more); F.defrag = nil end
+      os.queueEvent("factory_redraw")
+      if ok and more then sleep(0) end
+    else
+      os.pullEvent("factory_defrag")
+    end
+  end
+end
+
+parallel.waitForAny(receiver, worker, ticker, screen, chatter, updater, defragger)

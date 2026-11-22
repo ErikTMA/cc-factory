@@ -685,14 +685,17 @@ function M.toggleTinyFuel(F)
   F.note = "Furnaces on tiny coal (crafted from charcoal/coal): " .. (F.tinyFuel and "ON" or "OFF")
 end
 
--- FACTORY tab: DEFRAG packs storage into as few slots as possible (see
--- defrag.lua). It runs a few rounds of moves per tick, planned each time
--- from storage as it is then, so turtles and players change it meanwhile
--- without harm; it stops when a plan has no moves left or stops gaining.
-local DEFRAG_ROUNDS = 8 -- rounds of side-by-side moves per tick
+-- FACTORY tab: DEFRAG sorts storage and packs it into as few slots as it
+-- takes (defrag.lua): drawers get their item first, then every inventory is
+-- rebuilt in turn: emptied into the others, filled with its share in name
+-- order. It runs in steps of DEFRAG_MOVES moves (base.lua runs them one
+-- after another, each a decision of its own: turtles are answered between
+-- steps), each step reading storage as it is then.
+local DEFRAG_MOVES = 16
+M.DEFRAG_MOVES = DEFRAG_MOVES
 function M.toggleDefrag(F)
   local S = F.deps.storage
-  if not (S.layout and S.move) then
+  if not (S.defragView and S.push) then
     F.note = "Defrag needs barrel storage (an ME/RS bridge packs itself)"
     return
   end
@@ -700,43 +703,159 @@ function M.toggleDefrag(F)
     F.defrag = nil
     F.note = "Defrag stopped"
   else
-    F.defrag = { idle = 0 }
-    F.note = "Defrag: packing storage..."
+    F.defrag = { cache = {} }
+    F.note = "Defrag: sorting storage..."
   end
 end
 
-local function defragStep(F)
+local function usedSlots(view)
+  local n = 0
+  for _, inv in ipairs(view.invs) do for _ in pairs(inv.slots) do n = n + 1 end end
+  for _ in ipairs(view.drawers) do n = n + 1 end
+  return n
+end
+
+local function sortedSlots(inv)
+  local list = {}
+  for slot in pairs(inv.slots) do list[#list + 1] = slot end
+  table.sort(list)
+  return list
+end
+
+-- One step; true while there is more to do.
+function M.defragStep(F)
   local d = F.defrag
-  if not d then return end
+  if not d then return false end
   local S = F.deps.storage
-  d.cache = d.cache or {} -- (slot limits: read once a run)
-  local slots, cap = S.layout(d.cache)
-  local before = defrag.usedSlots(slots)
-  d.from = d.from or before
-  local moves, after = defrag.plan(slots, cap)
-  if #moves == 0 or after >= before then
-    F.defrag = nil
-    F.note = ("Defrag done: storage uses %d slots (was %d)"):format(before, d.from)
-    return
-  end
-  local short = false
-  for i, round in ipairs(defrag.rounds(moves)) do
-    if i > DEFRAG_ROUNDS or short then break end
-    for _, ok in ipairs(S.move(round)) do if not ok then short = true end end
-  end
-  S.forget() -- (moved: the journal no longer says where things are)
-  -- a short move: storage changed under us; the next tick plans again
-  if short then
-    d.idle = d.idle + 1
-    if d.idle >= 5 then
+  S.forget()
+  local view = S.defragView(d.cache)
+  local byName = {}
+  for _, inv in ipairs(view.invs) do byName[inv.name] = inv end
+  if not d.order then
+    -- drawers take their item first (never past their room: a void upgrade
+    -- deletes the rest); the inventories share what is left
+    local totals = {}
+    for _, inv in ipairs(view.invs) do
+      for _, st in pairs(inv.slots) do totals[st.key] = (totals[st.key] or 0) + st.count end
+    end
+    for _, dr in ipairs(view.drawers) do
+      local take = math.min(math.max(0, dr.cap - dr.count), totals[dr.key] or 0)
+      totals[dr.key] = (totals[dr.key] or 0) - take
+    end
+    local order, shares = defrag.assign(view.invs, totals, view.maxOf)
+    if not order then
       F.defrag = nil
-      F.note = "Defrag stopped: storage keeps changing under it"
-      return
+      F.note = "Defrag: " .. tostring(shares)
+      return false
+    end
+    d.order, d.shares, d.i, d.stage, d.from = order, shares, 1, "drawers", usedSlots(view)
+    d.shareOf, d.messy = {}, {}
+    for name, share in pairs(shares) do
+      d.shareOf[name] = {}
+      for _, e in ipairs(share) do d.shareOf[name][e.key] = e.n end
     end
   end
-  F.note = ("Defrag: %d -> %d slots..."):format(d.from, after)
+  local budget = DEFRAG_MOVES
+  local function push(fromInv, fromSlot, st, toInv, n, toSlot)
+    budget = budget - 1
+    local moved = S.push(fromInv, fromSlot, toInv, n, toSlot)
+    st.count = st.count - moved
+    if st.count <= 0 then byName[fromInv].slots[fromSlot] = nil end
+    return moved
+  end
+  local isDone = {}
+  for j = 1, d.i - 1 do isDone[d.order[j]] = true end
+  -- what an inventory may give: all of it, or a finished one what it holds
+  -- beyond its share (what it was lent while another was emptied)
+  local function spare(inv, k)
+    if not isDone[inv.name] then return math.huge end
+    local have = 0
+    for _, st in pairs(inv.slots) do if st.key == k then have = have + st.count end end
+    return math.max(0, have - ((d.shareOf[inv.name] or {})[k] or 0))
+  end
+
+  if d.stage == "drawers" then
+    for _, dr in ipairs(view.drawers) do
+      local room = dr.cap - dr.count
+      for _, inv in ipairs(view.invs) do
+        for _, slot in ipairs(sortedSlots(inv)) do
+          local st = inv.slots[slot]
+          if room > 0 and budget > 0 and st and st.key == dr.key then
+            local moved = push(inv.name, slot, st, dr.inv, math.min(room, st.count), dr.slot)
+            room = room - moved
+          end
+        end
+      end
+      if budget <= 0 then return true end
+    end
+    d.stage = "evict"
+    return true
+  end
+
+  local X = d.order[d.i]
+  if not X then
+    F.defrag = nil
+    local messy = {}
+    for name in pairs(d.messy) do messy[#messy + 1] = name end
+    table.sort(messy)
+    F.note = ("Defrag done: storage uses %d slots (was %d)%s"):format(usedSlots(view), d.from,
+      #messy > 0 and ("; not enough free room to sort " .. table.concat(messy, ", ")) or "")
+    return false
+  end
+  local inv = byName[X]
+  if not inv then d.i, d.stage = d.i + 1, "evict"; return true end -- (gone from the network)
+
+  if d.stage == "evict" then
+    -- everything out: into the inventories still to do first, then the free
+    -- tail of finished ones (taken back below)
+    local targets, full = {}, {}
+    for j = d.i + 1, #d.order do targets[#targets + 1] = d.order[j] end
+    for j = 1, d.i - 1 do targets[#targets + 1] = d.order[j] end
+    for _, slot in ipairs(sortedSlots(inv)) do
+      local st = inv.slots[slot]
+      for _, t in ipairs(targets) do
+        if not st or st.count <= 0 then break end
+        if budget <= 0 then return true end
+        if not full[t] then
+          if push(X, slot, st, t, st.count) == 0 then full[t] = true end
+        end
+      end
+      if inv.slots[slot] then d.messy[X] = true end -- (no room anywhere)
+    end
+    d.stage, d.j = "fill", 1
+    return true
+  end
+
+  -- fill: its share, item by item in name order
+  local share = d.shares[X] or {}
+  while d.j <= #share do
+    local e = share[d.j]
+    local have = 0
+    for _, st in pairs(inv.slots) do if st.key == e.key then have = have + st.count end end
+    local need = e.n - have
+    local found = false
+    if need > 0 then
+      for _, src in ipairs(view.invs) do
+        if src.name ~= X then
+          local give = spare(src, e.key)
+          for _, slot in ipairs(sortedSlots(src)) do
+            local st = src.slots[slot]
+            if need > 0 and give > 0 and st and st.key == e.key then
+              if budget <= 0 then return true end
+              local moved = push(src.name, slot, st, X, math.min(need, give, st.count))
+              need, give = need - moved, give - moved
+              if moved > 0 then found = true end
+            end
+          end
+        end
+      end
+    end
+    if need <= 0 or not found then d.j = d.j + 1 end
+    if budget <= 0 then return true end
+  end
+  d.i, d.stage = d.i + 1, "evict"
+  return true
 end
-M.defragStep = defragStep
 
 -- TURTLES tab: the selected forester shears its trees' leaves before
 -- felling them (the leaves as blocks), or not.
@@ -1316,7 +1435,6 @@ local DISMANTLE_TIMEOUT = 3600 -- seconds before giving up on a turtle to take a
 function M.tick(F)
   freshStorage(F)
   local S = F.deps.storage
-  defragStep(F)
   if F.dismantle and now(F) - (F.dismantle.since or 0) > DISMANTLE_TIMEOUT then
     F.note = ("Gave up taking %s apart (it didn't come)"):format(label(F, F.dismantle.id))
     F.dismantle = nil

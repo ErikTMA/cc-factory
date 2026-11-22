@@ -359,83 +359,73 @@ local function chests(api)
   function S.countWhere(item, accept) return S.countWhereMany({ [item] = accept })[item] end
 
   -- ------------------------------------------------------------ defrag --
-  -- Every storage slot for defrag.lua, and what each holds of an item.
-  -- A slot's limit (CC getItemLimit = the handler's slot limit) is per
-  -- 64-stack item: a drawer's limit for its stored item is its stacks x that
-  -- item's max stack, so it is scaled back. What an item holds: limit x its
-  -- max stack / 64 (pearls 16 in a plain barrel, 16 x n in an upgraded one),
-  -- an item that doesn't stack 1 (a drawer stores those by its stacks).
-  -- Never too much: a drawer or barrel with a void upgrade deletes what
-  -- doesn't fit. An empty drawer slot isn't planned into (one the player
-  -- locked to an item takes nothing else, and CC can't tell).
+  -- Storage as defrag.lua sees it, from this decision's journal:
+  --   invs    = { { name, size, limit, slots = { [slot] = { key, name, count } } } }
+  --             (not drawers; limit per 64-stack item, read once a run)
+  --   drawers = { { inv, slot, key, name, count, cap } } (a drawer slot with
+  --             an item: it only takes that one; cap = its limit for it)
+  --   maxOf   = { [key] = max stack }
+  -- `cache` is kept by the caller for one run (limits and max stacks).
   local function key(it) return it.name .. "|" .. tostring(it.nbt or "") end
-  -- `cache` (kept by the caller for one defrag run): slot limits and max
-  -- stacks already read; a slot's limit only changes with an upgrade.
-  function S.layout(cache)
+  function S.defragView(cache)
     fresh()
-    cache = cache or {}
-    cache.base, cache.maxOf = cache.base or {}, cache.maxOf or {}
-    local list, fns, limits, probe = {}, {}, {}, {}
-    local maxOf = cache.maxOf
-    local invs = {}
-    for inv in pairs(slots) do invs[#invs + 1] = inv end
-    table.sort(invs)
-    for _, inv in ipairs(invs) do
-      for slot = 1, sizes[inv] or 0 do
+    cache.limit, cache.maxOf = cache.limit or {}, cache.maxOf or {}
+    local names = {}
+    for inv in pairs(slots) do names[#names + 1] = inv end
+    table.sort(names)
+    local fns, probe, drawerCap = {}, {}, {}
+    local view = { invs = {}, drawers = {}, maxOf = cache.maxOf }
+    for _, inv in ipairs(names) do
+      local drawer = M.drawerSlots(inv) ~= nil
+      local entry = { name = inv, size = sizes[inv] or 0, slots = {} }
+      for slot = 1, entry.size do
         local it = slots[inv][slot]
-        local s = { id = inv .. "#" .. slot, inv = inv, slot = slot, drawer = M.drawerSlots(inv) ~= nil }
         if it and it.count > 0 then
-          s.key, s.name, s.count = key(it), it.name, it.count
-          if s.drawer then s.lock = s.key end
-          if not probe[s.key] then probe[s.key] = s end
-        elseif s.drawer then
-          s.lock = "?" -- (nothing goes in)
-        end
-        list[#list + 1] = s
-        if not cache.base[s.id] then
-          fns[#fns + 1] = function() limits[s.id] = api.call(inv, "getItemLimit", slot) or 64 end
+          local k = key(it)
+          local st = { key = k, name = it.name, count = it.count }
+          entry.slots[slot] = st
+          if not probe[k] and not cache.maxOf[k] then
+            probe[k] = true
+            fns[#fns + 1] = function()
+              local d = api.call(inv, "getItemDetail", slot)
+              cache.maxOf[k] = d and d.maxCount or 64
+            end
+          end
+          if drawer then
+            local id = inv .. "#" .. slot
+            view.drawers[#view.drawers + 1] = { inv = inv, slot = slot, key = k, name = it.name, count = it.count, id = id }
+            if not cache.limit[id] then
+              fns[#fns + 1] = function() drawerCap[id] = api.call(inv, "getItemLimit", slot) or 0 end
+            end
+          end
         end
       end
-    end
-    for k, s in pairs(probe) do
-      if not maxOf[k] then fns[#fns + 1] = function()
-        local d = api.call(s.inv, "getItemDetail", s.slot)
-        maxOf[k] = d and d.maxCount or 64
-      end end
+      if not drawer then
+        if not cache.limit[inv] then
+          fns[#fns + 1] = function() cache.limit[inv] = (entry.size > 0 and api.call(inv, "getItemLimit", 1)) or 64 end
+        end
+        view.invs[#view.invs + 1] = entry
+      end
     end
     runAll(fns)
-    for _, s in ipairs(list) do
-      if not cache.base[s.id] then
-        local limit = limits[s.id] or 64
-        -- (a drawer reports its stored item's limit: back to per 64-stack)
-        if s.drawer and s.key then limit = math.floor(limit * 64 / (maxOf[s.key] or 64)) end
-        cache.base[s.id] = limit
-      end
-      s.limit = cache.base[s.id]
-    end
-    local function cap(s, k)
-      local m = k and (maxOf[k] or 64) or 64
-      if m == 1 and not s.drawer then return 1 end
-      return math.floor(s.limit * m / 64)
-    end
-    return list, cap
+    for id, c in pairs(drawerCap) do cache.limit[id] = c end
+    for _, inv in ipairs(view.invs) do inv.limit = cache.limit[inv.name] or 64 end
+    for _, d in ipairs(view.drawers) do d.cap = cache.limit[d.id] or d.count end
+    return view
   end
 
-  -- One round of moves side by side ({ from, to, n }, slot ids "inv#slot"):
-  -- { true/false per move: all of it moved }.
-  function S.move(round)
-    local results, fns = {}, {}
-    for i, m in ipairs(round) do
-      local fromInv, fromSlot = m.from:match("^(.*)#(%d+)$")
-      local toInv, toSlot = m.to:match("^(.*)#(%d+)$")
-      fns[#fns + 1] = function()
-        local ok, n = pcall(api.call, fromInv, "pushItems", toInv, tonumber(fromSlot), m.n, tonumber(toSlot))
-        results[i] = ok and n == m.n
-      end
+  -- Move up to n from one slot to another inventory (into `toSlot`, if
+  -- given): how many moved. The source slot is kept right in the journal;
+  -- where it landed isn't known (S.forget() before reading the target).
+  function S.push(fromInv, fromSlot, toInv, n, toSlot)
+    local ok, moved = pcall(api.call, fromInv, "pushItems", toInv, fromSlot, n, toSlot)
+    moved = ok and tonumber(moved) or 0
+    local it = slots and slots[fromInv] and slots[fromInv][fromSlot]
+    if it and moved > 0 then
+      it.count = it.count - moved
+      if it.count <= 0 then slots[fromInv][fromSlot] = nil end
     end
-    runAll(fns)
-    forget()
-    return results
+    return moved
   end
 
   return S

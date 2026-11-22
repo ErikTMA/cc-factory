@@ -1,184 +1,104 @@
--- defrag: pack storage into as few slots as possible. Pure: no peripherals.
+-- defrag: what goes where when storage is packed and sorted. Pure: no
+-- peripherals.
 --
--- In: every storage slot, as { id = "inv#slot", inv, slot, key (item+nbt,
--- nil: empty), name, count, lock = key or nil (a drawer slot that only
--- takes its item) }, and cap(slot, key) = how many of that item the slot
--- holds (drawers and upgraded barrels hold far more than 64; and less for
--- items that stack to 16).
+-- How the inventories place what goes in decides the method (checked in the
+-- jars): a Sophisticated Storage barrel or chest ignores the slot it is
+-- given and puts an item into stacks of it first, then into its lowest empty
+-- slot (Core 1.5.35 InventoryHandlerSlotTracker: emptySlots is a TreeSet);
+-- CC (pushItems with no slot) puts it into the first slot that takes it.
+-- Either way: an EMPTY inventory filled item by item in name order ends up
+-- sorted from its first slot, every item in as few stacks as it needs. So
+-- storage is rebuilt one inventory at a time: empty it into the others,
+-- fill it with its share in name order (the executor is in factory.lua).
 --
--- The target: every slot locked to an item is filled with it first (it is
--- taken either way). The rest go to the open slots biggest first, each to
--- the item that puts the most into it: a big slot holds 512 of the copper
--- with 20 stacks, not the one stack of redstone, which moves to a small
--- slot (the other half of "move others": what sits in a big slot moves out
--- if something bigger belongs there). On a tie what is there stays.
---
--- Out: the moves that get there, in order, each { from, to, key, n }
--- (slot ids), simulated as they go, so every move is valid when the one
--- before it went through: what goes into a slot only goes where it fits
--- and is the same item or the slot is empty. A slot whose content has to
--- leave before its new item comes in is emptied first into its item's own
--- target slots, or a free slot. With no free slot at all a cycle can't be
--- broken: those slots stay as they are (the plan says so).
+-- The share: every item's total is spread over the inventories in turn. An
+-- inventory whose slots hold more than 64 (stack upgrades) takes the items
+-- with the most stacks first (a slot of 512 copper, not of 3 diamonds); the
+-- rest take the items in name order, so storage reads A..Z across them.
+-- Drawers are not in this: they hold their own item (the executor fills
+-- them first, never past their room: a void upgrade deletes the rest).
 
 local M = {}
 
-local function sortedSlots(slots)
-  local list = {}
-  for _, s in ipairs(slots) do list[#list + 1] = s end
-  table.sort(list, function(a, b) return a.id < b.id end)
-  return list
+-- What an inventory slot holds of an item: its limit is per 64-stack item;
+-- pearls 16 a slot (x the upgrade), an item that doesn't stack 1.
+function M.cap(limit, maxStack)
+  maxStack = maxStack or 64
+  if maxStack == 1 then return 1 end
+  return math.max(1, math.floor(limit * maxStack / 64))
 end
 
--- The target layout: { [slot id] = { key, n } } (no entry: empty), and how
--- many slots it uses.
-function M.target(slots, cap)
-  local total = {}
-  for _, s in ipairs(slots) do
-    if s.key then total[s.key] = (total[s.key] or 0) + s.count end
+-- Item order: by name, then components ("redstone" before "redstone_block":
+-- not by the whole key, where "|" sorts after "_").
+local function before(a, b)
+  local na, nb = a:match("^[^|]*"), b:match("^[^|]*")
+  if na ~= nb then return na < nb end
+  return a < b
+end
+M.before = before
+
+-- `invs` = { { name, size, limit }, ... }, `totals` = { [key] = n },
+-- `maxOf` = { [key] = max stack }. Keys sort by item name ("name|nbt").
+-- Returns `order` (inventory names, the order to rebuild them in) and
+-- `shares` = { [inventory] = { { key, n }, ... } in name order }; nil and
+-- why if it all doesn't fit.
+function M.assign(invs, totals, maxOf)
+  local order = {}
+  for _, inv in ipairs(invs) do order[#order + 1] = inv end
+  table.sort(order, function(a, b)
+    if a.limit ~= b.limit then return a.limit > b.limit end
+    return a.name < b.name
+  end)
+  local left, keys = {}, {}
+  for k, n in pairs(totals) do
+    if n > 0 then left[k] = n; keys[#keys + 1] = k end
   end
-  local left, want, used = {}, {}, 0
-  for k, n in pairs(total) do left[k] = n end
-  local open = {}
-  for _, s in ipairs(sortedSlots(slots)) do
-    if s.lock then
-      local n = math.min(left[s.lock] or 0, cap(s, s.lock))
-      if n > 0 then
-        want[s.id] = { key = s.lock, n = n }
-        left[s.lock] = left[s.lock] - n
-        used = used + 1
+  table.sort(keys, before)
+  local shares, names = {}, {}
+  for _, inv in ipairs(order) do
+    local share, free = {}, inv.size
+    local function put(k)
+      local c = M.cap(inv.limit, maxOf[k])
+      local n = math.min(left[k], free * c)
+      if n <= 0 then return false end
+      share[#share + 1] = { key = k, n = n }
+      free = free - math.ceil(n / c)
+      left[k] = left[k] - n
+      return true
+    end
+    if inv.limit > 64 then
+      -- upgraded: the items with the most stacks first
+      while free > 0 do
+        local best, bestStacks
+        for _, k in ipairs(keys) do
+          if left[k] > 0 then
+            local stacks = left[k] / (maxOf[k] or 64)
+            if not best or stacks > bestStacks then best, bestStacks = k, stacks end
+          end
+        end
+        if not best or not put(best) then break end
       end
     else
-      open[#open + 1] = s
-    end
-  end
-  -- open slots, biggest first (by what they hold of a 64-stack item)
-  table.sort(open, function(a, b)
-    local ca, cb = cap(a, nil), cap(b, nil)
-    if ca ~= cb then return ca > cb end
-    return a.id < b.id
-  end)
-  for _, s in ipairs(open) do
-    -- the item that puts the most into this slot; a tie leaves what is
-    -- there (a swap that saves no slot is only work), then by name
-    local best, bestPut
-    for k, n in pairs(left) do
-      local put = math.min(n, cap(s, k))
-      if put > 0 then
-        local better = not best or put > bestPut
-          or (put == bestPut and (k == s.key) and best ~= s.key)
-          or (put == bestPut and best ~= s.key and k ~= s.key and k < best)
-        if better then best, bestPut = k, put end
+      for _, k in ipairs(keys) do
+        if free <= 0 then break end
+        if left[k] > 0 then put(k) end
       end
     end
-    if not best then break end
-    local n = bestPut
-    want[s.id] = { key = best, n = n }
-    left[best] = left[best] - n
-    used = used + 1
+    table.sort(share, function(a, b) return before(a.key, b.key) end)
+    shares[inv.name] = share
+    names[#names + 1] = inv.name
   end
-  local stuck = 0
-  for _, n in pairs(left) do stuck = stuck + n end -- (doesn't fit anywhere: stays where it is)
-  return want, used, stuck
+  for _, k in ipairs(keys) do
+    if left[k] > 0 then return nil, ("it doesn't all fit: %d %s left over"):format(left[k], k:match("^[^|]*")) end
+  end
+  return names, shares
 end
 
-function M.usedSlots(slots)
+-- Slots used: { [inventory] = { [slot] = { key, count } } } -> number.
+function M.used(contents)
   local n = 0
-  for _, s in ipairs(slots) do if s.key and s.count > 0 then n = n + 1 end end
+  for _, slots in pairs(contents) do for _ in pairs(slots) do n = n + 1 end end
   return n
-end
-
--- The moves from what is there to the target. Returns moves, and how many
--- slots are used after them.
-function M.plan(slots, cap, maxMoves)
-  maxMoves = maxMoves or 10000
-  local want, _, stuck = M.target(slots, cap)
-  if stuck > 0 then want = {} end -- (a target that can't hold everything: don't move anything)
-  local state, byId, order = {}, {}, sortedSlots(slots)
-  for _, s in ipairs(order) do
-    byId[s.id] = s
-    state[s.id] = { key = s.key, n = s.key and s.count or 0 }
-  end
-  local moves = {}
-  local function move(from, to, n)
-    local a, b = state[from], state[to]
-    assert(a.key and a.n >= n and n > 0)
-    assert(not b.key or b.key == a.key)
-    assert(b.n + n <= cap(byId[to], a.key))
-    moves[#moves + 1] = { from = from, to = to, key = a.key, n = n }
-    b.key, b.n = a.key, b.n + n
-    a.n = a.n - n
-    if a.n == 0 then a.key = nil end
-  end
-  -- how many of its own item slot `id` should still lose
-  local function excess(id)
-    local st, w = state[id], want[id]
-    if not st.key then return 0 end
-    if not w or w.key ~= st.key then return st.n end
-    return math.max(0, st.n - w.n)
-  end
-  local function room(id, key) -- into a slot that wants `key`
-    local st, w = state[id], want[id]
-    if not w or w.key ~= key or (st.key and st.key ~= key) then return 0 end
-    return w.n - st.n
-  end
-  -- a free slot to park in: empty, not locked to another item, wanted by
-  -- nothing (or by this item)
-  local function parking(key, notId)
-    for _, s in ipairs(order) do
-      local st, w = state[s.id], want[s.id]
-      if s.id ~= notId and not st.key and (not s.lock or s.lock == key)
-         and (not w or w.key == key) and cap(s, key) > 0 then
-        return s.id
-      end
-    end
-  end
-  for _ = 1, 64 do
-    local progress = false
-    for _, s in ipairs(order) do
-      local x = excess(s.id)
-      if x > 0 then
-        local key = state[s.id].key
-        -- into slots that want this item
-        for _, d in ipairs(order) do
-          if x <= 0 or #moves >= maxMoves then break end
-          if d.id ~= s.id then
-            local r = room(d.id, key)
-            if r > 0 then
-              local n = math.min(r, x)
-              move(s.id, d.id, n); x = x - n; progress = true
-            end
-          end
-        end
-        -- the slot wants another item: park what's left
-        local w = want[s.id]
-        if x > 0 and (not w or w.key ~= key) and #moves < maxMoves then
-          local p = parking(key, s.id)
-          if p then
-            local n = math.min(x, cap(byId[p], key))
-            move(s.id, p, n); progress = true
-          end
-        end
-      end
-    end
-    if not progress or #moves >= maxMoves then break end
-  end
-  local used = 0
-  for _, st in pairs(state) do if st.key then used = used + 1 end end
-  return moves, used
-end
-
--- Moves that touch no slot twice can run side by side: rounds of them, in
--- order (a move never runs before one it depends on).
-function M.rounds(moves)
-  local rounds, busyUntil = {}, {}
-  for _, m in ipairs(moves) do
-    local r = math.max(busyUntil[m.from] or 0, busyUntil[m.to] or 0) + 1
-    rounds[r] = rounds[r] or {}
-    table.insert(rounds[r], m)
-    busyUntil[m.from], busyUntil[m.to] = r, r
-  end
-  return rounds
 end
 
 return M

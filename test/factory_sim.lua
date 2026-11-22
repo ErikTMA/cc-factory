@@ -121,8 +121,12 @@ W.maxStack = maxStack
 --     in a plain barrel), and 1 of an item that doesn't stack.
 --   drawer: a slot holding an item refuses any other; `locked[slot] = item`
 --     keeps it even empty (then CC doesn't list it).
---   loose: (Sophisticated) an insert into one slot that doesn't all fit
---     there goes on into other slots.
+--   loose: (Sophisticated, Core 1.5.35 InventoryHandlerSlotTracker) an insert
+--     IGNORES the slot asked for: into stacks of the same item first, then
+--     the lowest empty slot (a TreeSet).
+--   Others, through CC with no slot asked: the first slot that takes it, in
+--     slot order; with a slot: only that one.
+--   voidSlot: (a drawer's void upgrade) takes a matching item and deletes it.
 -- Stacks merge only with the same components (nbt), which a move keeps.
 local function newInv(name, x, y, z, size, opts)
   opts = opts or {}
@@ -146,18 +150,23 @@ local function newInv(name, x, y, z, size, opts)
     local nbt = proto and proto.nbt
     local moved = 0
     local order = {}
-    if toSlot then
+    if toSlot and not I.loose then
       order = { toSlot }
-      if I.loose then for i = 1, I.size do if i ~= toSlot then order[#order + 1] = i end end end
     else
       for i = 1, I.size do order[#order + 1] = i end
     end
     local cap = I.cap(item)
-    for pass = 1, 2 do -- (stacks of it first, then empty slots)
+    -- loose: stacks of it first, then empty slots; else one pass in slot order
+    local passes = I.loose and 2 or 1
+    for pass = 1, passes do
       for _, i in ipairs(order) do
         if moved >= n then return moved end
         local s = I.slots[i]
-        if fits(i, item, nbt) and ((pass == 1) == (s ~= nil)) then
+        if i == I.voidSlot then
+          local matches = false
+          for j, o in pairs(I.slots) do if j ~= i and o.name == item then matches = true end end
+          if matches then I.voided = (I.voided or 0) + (n - moved); return n end
+        elseif fits(i, item, nbt) and (passes == 1 or (pass == 1) == (s ~= nil)) then
           local have = s and s.count or 0
           local m = math.min(cap - have, n - moved)
           if m > 0 then
@@ -944,6 +953,11 @@ local function runUntil(cond, maxTicks)
         local ok, err = coroutine.resume(c.co)
         if not ok then c.err = err; print("  turtle " .. c.T.id .. " crashed: " .. tostring(err)) end
       end
+    end
+    -- (base.lua's defragger: one step after another while DEFRAG runs)
+    if F.defrag then
+      local ok, err = pcall(factory.defragStep, F)
+      if not ok then print("  defrag step failed: " .. tostring(err)); return false end
     end
     if tick % 20 == 0 then
       local ok, err = pcall(factory.tick, F)
@@ -2314,6 +2328,7 @@ do
   -- player locked to gold (CC doesn't list it; it takes nothing else)
   local drawer = newInv("functionalstorage:oak_1_0", nil, nil, nil, 2, { limit = 64 * 32, drawer = true })
   drawer.drawerSlots = 1 -- (slot 2: the void upgrade's slot, never used)
+  drawer.voidSlot = 2
   drawer.slots[1] = { name = "minecraft:iron_ingot", count = 100 }
   plain.slots[23] = { name = "minecraft:iron_ingot", count = 64 }
   newInv("functionalstorage:oak_2_0", nil, nil, nil, 2, { limit = 64 * 16, drawer = true, locked = { "minecraft:gold_ingot", "minecraft:gold_ingot" } })
@@ -2322,6 +2337,16 @@ do
   W.inv["sophisticatedstorage:chest_1"] = chest
   chest.slots[5] = { name = "minecraft:cobblestone", count = 20 }
   chest.slots[9] = { name = "minecraft:cobblestone", count = 20 }
+  -- the live gold barrel (81 slots): diamonds in two stacks, redstone and
+  -- the rest scattered between gaps
+  local gold = newInv("sophisticatedstorage:gold_barrel_0", nil, nil, nil, 81, { loose = true })
+  gold.slots[3] = { name = "minecraft:diamond", count = 3 }
+  gold.slots[70] = { name = "minecraft:diamond", count = 30 }
+  for _, i in ipairs({ 12, 14, 19, 25, 40, 44 }) do gold.slots[i] = { name = "minecraft:redstone_block", count = 64 } end
+  gold.slots[20] = { name = "minecraft:sugar", count = 5 }
+  gold.slots[61] = { name = "minecraft:sugar", count = 9 }
+  gold.slots[33] = { name = "minecraft:bone", count = 1 }
+  gold.slots[77] = { name = "minecraft:apple", count = 4 }
   -- a storage controller would show all of it again: never storage
   check(storage.classify("functionalstorage:storage_controller_0") == nil
     and storage.classify("sophisticatedstorage:controller_0") == nil
@@ -2373,6 +2398,35 @@ do
     end
   end
   check(pearlsOk, "no slot over its limit for pearls")
+  -- stacked: no inventory holds an item in more slots than it needs; sorted:
+  -- each inventory (not drawers) by item name from its first slot, no gaps
+  local unstacked, unsorted = {}, {}
+  for name, I in pairs(W.inv) do
+    if storage.classify(name) == "storage" and not I.drawer and W.inv[name] == I and name ~= "sophisticatedstorage:chest_1" then
+      local per = {}
+      for _, st in pairs(I.slots) do
+        local k2 = st.name .. "|" .. tostring(st.nbt)
+        per[k2] = per[k2] or { slots = 0, count = 0, name = st.name }
+        per[k2].slots = per[k2].slots + 1
+        per[k2].count = per[k2].count + st.count
+      end
+      for k2, v in pairs(per) do
+        if v.slots > math.ceil(v.count / I.cap(v.name)) then unstacked[#unstacked + 1] = name .. ":" .. k2 end
+      end
+      local last, gap = "", false
+      for i = 1, I.size do
+        local st = I.slots[i]
+        if st then
+          if gap or st.name < last then unsorted[#unsorted + 1] = name; break end
+          last = st.name
+        else gap = true end
+      end
+    end
+  end
+  table.sort(unstacked); table.sort(unsorted)
+  check(#unstacked == 0, "every item stacked: " .. table.concat(unstacked, ", "))
+  check(#unsorted == 0, "every inventory sorted by name from its first slot: " .. table.concat(unsorted, ", "))
+  check(not drawer.voided, "nothing went into the drawer's void slot: " .. tostring(drawer.voided))
   local cobbleSlots = 0
   for _, st in pairs(chest.slots) do if st.name == "minecraft:cobblestone" then cobbleSlots = cobbleSlots + 1 end end
 
