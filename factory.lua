@@ -904,6 +904,7 @@ function M.defragStep(F)
       if st and st.key ~= w.key then
         if not out(p) then
           if budget <= 0 then return true end
+          log(("  no room outside %s for %s: slot %d left as it is"):format(X, st.key, p))
           d.messy[X] = true; d.p = p + 1
         end
         progressed = true
@@ -914,11 +915,15 @@ function M.defragStep(F)
           local o = inv.slots[q]
           if o and o.key == w.key and o.count < w.cap then
             busy = true
-            if not out(q) then
+            if out(q) then
+              progressed = true
+            else
               if budget <= 0 then return true end
-              d.messy[X] = true; busy = false
+              -- no room outside to move it through: this slot can't be done
+              log(("  no room outside %s for %s: slot %d left as it is"):format(X, w.key, p))
+              d.messy[X] = true; d.p = p + 1
+              return true
             end
-            progressed = true
             break
           end
         end
@@ -946,7 +951,8 @@ function M.defragStep(F)
             for q = p + 1, inv.size do
               local o = inv.slots[q]
               if o and o.key == w.key then
-                if out(q) then progressed = true end
+                if out(q) then progressed = true
+                else log(("  no room outside %s for %s: slot %d left as it is"):format(X, w.key, p)) end
                 break
               end
             end

@@ -2520,5 +2520,58 @@ do
   F.deps.storage.forget()
 end
 
+print("scenario: the live 6 barrels: the plan packed the first ones full and the big last barrel had no")
+print("          room outside to move its own items through; it gave up. Free room is spread out now")
+do
+  local keepInv = W.inv
+  W.inv = {}
+  local small = {}
+  for b = 0, 3 do small[b] = newInv("sophisticatedstorage:barrel_" .. b, nil, nil, nil, 27, { loose = true }) end
+  local b4 = newInv("sophisticatedstorage:barrel_4", nil, nil, nil, 81, { loose = true })
+  local b5 = newInv("sophisticatedstorage:barrel_5", nil, nil, nil, 81, { loose = true })
+  -- items a..z spread over all six; b5 scattered with its part stacks at the end
+  local n = 0
+  local function item(i) return ("minecraft:item_%03d"):format(i) end
+  for b = 0, 3 do for i = 1, 25 do n = n + 1; small[b].slots[i] = { name = item(n), count = 64 } end end
+  for i = 1, 70 do n = n + 1; b4.slots[i] = { name = item(n), count = 64 } end
+  -- b5: the items after them, every 3rd slot empty, small stacks last
+  local k = n
+  for i = 1, 60 do if i % 3 ~= 0 then k = k + 1; b5.slots[i] = { name = item(k), count = 64 } end end
+  b5.slots[76] = { name = item(k + 1), count = 12 }     -- wanted earlier on (sorted after k)
+  b5.slots[80] = { name = item(n + 1), count = 3 }      -- a part stack of the first b5 item
+  local function totals()
+    local t = {}
+    for _, I in pairs(W.inv) do for _, st in pairs(I.slots) do t[st.name] = (t[st.name] or 0) + st.count end end
+    return t
+  end
+  local t0 = totals()
+  F.deps.storage.forget()
+  factory.toggleDefrag(F)
+  runUntil(function() return F.defrag == nil end, 20000)
+  check((F.note or ""):find("Defrag done") ~= nil and not (F.note or ""):find("not enough"), "all sorted: " .. tostring(F.note))
+  local bad = {}
+  for _, I in pairs(W.inv) do
+    local last, gap = "", false
+    for i = 1, I.size do
+      local st = I.slots[i]
+      if st then
+        if gap or st.name < last then bad[#bad + 1] = I.name .. "@" .. i; break end
+        last = st.name
+      else gap = true end
+    end
+  end
+  table.sort(bad)
+  check(#bad == 0, "every barrel sorted from its first slot: " .. table.concat(bad, ", "))
+  local t1, same = totals(), true
+  for k2, v in pairs(t0) do if t1[k2] ~= v then same = false end end
+  check(same, "nothing lost or made")
+  local gaveUp = false
+  for _, l in ipairs(F.defragLog or {}) do if l:find("gave up") then gaveUp = true end end
+  check(not gaveUp, "never stuck on a slot")
+  F.defrag = nil
+  W.inv = keepInv
+  F.deps.storage.forget()
+end
+
 print(failures == 0 and "ALL PASSED" or (failures .. " FAILURE(S)"))
 os.exit(failures == 0 and 0 or 1)

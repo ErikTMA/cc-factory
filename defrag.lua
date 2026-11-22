@@ -46,7 +46,11 @@ M.before = before
 -- Returns `order` (inventory names, the order to rebuild them in) and
 -- `shares` = { [inventory] = { { key, n }, ... } in name order }; nil and
 -- why if it all doesn't fit.
-function M.assign(invs, totals, maxOf)
+-- The free slots are spread over the inventories (by size), not left at
+-- the end: an inventory is sorted in place by moving its stacks out to a
+-- free slot in another one and back (one can't move within itself), so the
+-- last one sorted needs room in the finished ones.
+local function assignWith(invs, totals, maxOf, reserve)
   local order = {}
   for _, inv in ipairs(invs) do order[#order + 1] = inv end
   table.sort(order, function(a, b)
@@ -60,7 +64,7 @@ function M.assign(invs, totals, maxOf)
   table.sort(keys, before)
   local shares, names = {}, {}
   for _, inv in ipairs(order) do
-    local share, free = {}, inv.size
+    local share, free = {}, inv.size - (reserve[inv.name] or 0)
     local function put(k)
       local c = M.cap(inv.limit, maxOf[k])
       local n = math.min(left[k], free * c)
@@ -96,6 +100,23 @@ function M.assign(invs, totals, maxOf)
     if left[k] > 0 then return nil, ("it doesn't all fit: %d %s left over"):format(left[k], k:match("^[^|]*")) end
   end
   return names, shares
+end
+
+function M.assign(invs, totals, maxOf)
+  local order, shares = assignWith(invs, totals, maxOf, {})
+  if not order then return order, shares end
+  -- the free slots, shared out by size; with them kept free it must still fit
+  local size, used = 0, 0
+  for _, inv in ipairs(invs) do
+    size = size + inv.size
+    for _, e in ipairs(shares[inv.name]) do used = used + math.ceil(e.n / M.cap(inv.limit, maxOf[e.key])) end
+  end
+  local free, reserve = size - used, {}
+  if free <= 0 then return order, shares end
+  for _, inv in ipairs(invs) do reserve[inv.name] = math.floor(free * inv.size / size) end
+  local order2, shares2 = assignWith(invs, totals, maxOf, reserve)
+  if order2 then return order2, shares2 end
+  return order, shares -- (rounding: without the spread)
 end
 
 -- Slots used: { [inventory] = { [slot] = { key, count } } } -> number.
