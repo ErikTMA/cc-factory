@@ -1038,6 +1038,14 @@ do
       check(text:find("raw_iron") ~= nil, "shows the stock rule")
       check(text:find("miner%s+1 / 1") ~= nil, "shows the fleet target met")
       check(text:find("#1 miner: built") ~= nil, "shows the build")
+      local rowBtn
+      for _, b in ipairs(UI.buttons) do if b.label == "build miner" then rowBtn = b end end
+      check(rowBtn and rowBtn.x1 == 1 and rowBtn.x2 == 57 and text:find("tap a row to build"),
+        "the miner row is a button the width of the screen")
+      local orders0 = #F.orders
+      check(UIlib.touch(UI, 20, rowBtn and rowBtn.y or 0) == "build miner" and #F.orders == orders0 + 1,
+        "a tap on the row orders a miner")
+      table.remove(F.orders)
     end
     -- every button's action runs without error
     for _, b in ipairs(UI.buttons) do

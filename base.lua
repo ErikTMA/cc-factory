@@ -326,7 +326,7 @@ local function drawFactory(UI, out, w, row)
     row = row + 1
   end
   row = row + 1
-  put(out, 1, row, "FLEET", colors.yellow)
+  put(out, 1, row, "FLEET (tap a row to build one)", colors.yellow)
   row = row + 1
   -- roles the factory builds (target from factory.cfg), in a fixed order
   local built = { "miner", "forester", "surveyor" }
@@ -346,8 +346,10 @@ local function drawFactory(UI, out, w, row)
     table.sort(items)
     for _, item in ipairs(items) do need = need .. (" %dx%s"):format(missing[item], item:gsub("^%w+:", "")) end
     put(out, 1, row, ("%-9s %d / %d  %s"):format(role, have, want,
-      have < want and (need ~= "" and ("needs" .. need) or "parts ready") or ""):sub(1, w - 11), colors.lightGray)
-    button(UI, out, w - 9, row, 10, "BUILD", false, function() factory.orderTurtle(F, role, true) end)
+      have < want and (need ~= "" and ("needs" .. need) or "parts ready") or ""):sub(1, w), colors.lightGray)
+    -- the whole row: tap it to build one
+    UI.buttons[#UI.buttons + 1] = { x1 = 1, x2 = w, y = row, label = "build " .. role,
+                                    action = function() factory.orderTurtle(F, role, true) end }
     row = row + 1
   end
   -- helpers the factory doesn't build: shown so you know they're there
@@ -357,10 +359,14 @@ local function drawFactory(UI, out, w, row)
   row = row + 1
 
   row = row + 1
-  put(out, 1, row, "HOMES (tap to change role)", colors.yellow)
   if not F.gpsWanted then
-    button(UI, out, w - 11, row, 12, "BUILD GPS", false, function() factory.wantGps(F) end)
+    -- (a row of its own: tap it)
+    put(out, 1, row, "GPS: none yet (tap here to build four GPS host turtles)", colors.white)
+    UI.buttons[#UI.buttons + 1] = { x1 = 1, x2 = w, y = row, label = "BUILD GPS",
+                                    action = function() factory.wantGps(F) end }
+    row = row + 1
   end
+  put(out, 1, row, "HOMES (tap to change role)", colors.yellow)
   row = row + 1
   if #F.homes == 0 then
     put(out, 1, row, "none: run a surveyor / `home <role>` / $home", colors.lightGray); row = row + 1
