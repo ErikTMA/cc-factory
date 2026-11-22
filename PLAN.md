@@ -237,3 +237,29 @@ order. Proven by mutation: hammer off -> 7 raw gold cannot build a turtle; one
 wrong observer cell -> no Geo Scanner.
 
 verify-live: furnace slot pushes with a bridge backend; real hammer durability.
+
+## Mining grid and ore map (decided 2026-11-22, in progress)
+
+- **One fixed grid for every miner**, in the base's frame (anchored at the
+  build spot; levels fixed to world Y, clear of the bedrock layers). Scan
+  points every 16 (2 x scan radius 8) in x, y and z, so the 17-cubes tile the
+  ground once: a trunk along x at z = 0 and branches along z every 16 in x,
+  on levels every 16 in Y. The base remembers which points are scanned and
+  hands each job points of its own (reserved), plus the known ores of its
+  kind; nothing is scanned twice, everything can be cleared.
+- **Shafts at the homes, not one central shaft.** Each miner goes down at its
+  own home and digs a connector at its level to the nearest grid point. (A
+  single shaft is gridlock: turtles are solid and can't pass in a 1x1 tunnel.)
+- **Several miners may share a home (and its shaft).** When two meet, the one
+  going down (outbound) digs a pocket aside, waits there until the way is
+  clear, then goes on; in tunnels the outbound one yields to the one coming
+  back.
+- **The ore map** (branch `oremap-wip`, reviewed; fixes before it ships):
+  every scanned block but filler and liquids, in the base's frame; scans
+  drop what they no longer list; digs remove; packed on disk and fitted to
+  free space. Open review points: verify a known ore before counting it and
+  report every block dug (tunnels too); retry mid-job sends with backoff, no
+  pending map for hand-run jobs (capped); per-cell map in memory, save on the
+  ticker; safe pruning when space is short; known ores below home only;
+  release holds of vanished jobs; tag-only ores for `only` jobs.
+
