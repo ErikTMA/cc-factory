@@ -82,7 +82,8 @@ local function drawTurtles(UI, out, w, row)
     button(UI, out, 31, row, 9, "FORGET", false, function() factory.forget(F) end)
     local sel = F.turtles[F.selected]
     if sel and sel.role == "forester" then
-      button(UI, out, 41, row, 11, "SHEAR " .. (sel.shear and "ON" or "OFF"), sel.shear == true,
+      -- (its own line: fits any monitor that shows the buttons above)
+      button(UI, out, 1, row + 1, 11, "SHEAR " .. (sel.shear and "ON" or "OFF"), sel.shear == true,
         function() factory.toggleShear(F) end)
     end
   end
