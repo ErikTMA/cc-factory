@@ -2343,6 +2343,19 @@ do
   if #F.queue > before then table.remove(F.queue) end
   -- AUTO MINE: AUTO SCOUT that digs: one job waiting, all ores, the next
   -- lanes not covered; lanes already scouted are skipped
+  -- area 1 scouted at every level, nothing mined anywhere yet (live): AUTO
+  -- MINE still starts in area 1 (its ores are still in the ground)
+  F.mineAuto, F.scoutAuto, F.minedLanes = nil, nil, nil
+  F.scouted = {}
+  for _, y in ipairs(factory.SCOUT_LEVELS) do F.scouted[y .. "|0"] = { [0] = true, [1] = true, [2] = true, [3] = true } end
+  factory.toggleAutoMine(F)
+  local qa = #F.queue
+  factory.tick(F)
+  local fj = F.queue[#F.queue]
+  check(#F.queue == qa + 1 and fj.auto == "mine" and fj.sector == 0 and fj.along == 0,
+    "area 1 only scouted, nothing mined yet: AUTO MINE starts in area 1: " .. factory.jobText(fj))
+  table.remove(F.queue)
+  factory.toggleAutoMine(F)
   F.mineAuto, F.scoutAuto, F.scouted = nil, nil, nil
   local amBtn
   for _, b in ipairs(UI.buttons) do if b.label:find("^AUTO MINE") then amBtn = b end end
@@ -2380,7 +2393,7 @@ do
   local anyAuto = false
   for _, j in ipairs(F.queue) do if j.auto == "mine" then anyAuto = true end end
   check(not anyAuto, "AUTO MINE off: nothing queued")
-  F.mineAuto, F.scouted = nil, nil
+  F.mineAuto, F.scouted, F.minedLanes = nil, nil, nil
   -- SCOUT: a scan-only job at the chosen level, 16 apart
   local scoutBtn, down
   for _, b in ipairs(UI.buttons) do
@@ -2434,7 +2447,7 @@ do
   for _, j in ipairs(F.queue) do if j.scout then any = true end end
   check(not any, "AUTO off: nothing more queued")
   -- a job cut short (2 of its 4 lanes): the next one is for the other 2 only
-  F.scoutAuto, F.scouted = nil, nil
+  F.scoutAuto, F.scouted, F.minedLanes = nil, nil, nil
   F.queue = {}
   factory.toggleAutoScout(F)
   factory.tick(F)

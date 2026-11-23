@@ -367,7 +367,9 @@ local function scoutKey(y, along) return y .. "|" .. along end
 -- done = mined (F.minedLanes): a scouted lane still has its ores to dig.
 local function laneStates(F, area, y, mine)
   local sector, along = scoutArea(F, area)
-  local done = ((mine and F.minedLanes or F.scouted) or {})[scoutKey(y, along)] or {}
+  local record
+  if mine then record = F.minedLanes else record = F.scouted end -- (not and/or: either may be nil)
+  local done = (record or {})[scoutKey(y, along)] or {}
   local busy = {}
   local function mark(j)
     if j and (j.area or j.scout) and j.y == y and (j.along or 0) == along
