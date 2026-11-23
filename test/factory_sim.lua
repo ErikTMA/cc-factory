@@ -2344,6 +2344,57 @@ do
   F.turtles[310] = nil
 end
 
+print("scenario: what a structure is, from what turtles can see: telltale blocks, a decisive block, loot tables")
+do
+  local oremap = baseEnv.require("oremap")
+  local keepMap, keepIns = F.map, F.inspected
+  F.map, F.findsCache, F.inspected = oremap.new(), nil, nil
+  local blocks = {}
+  local function add(x, y, z, name) blocks[#blocks + 1] = { x = x, y = y, z = z, name = name } end
+  -- A: stone bricks and a portal frame beside them: a stronghold, sure
+  for i = 1, 30 do add(i % 10, -30, math.floor(i / 10), "minecraft:stone_bricks") end
+  add(5, -31, 6, "minecraft:end_portal_frame")
+  -- B: mossy cobblestone round a spawner: a dungeon (a guess)
+  for i = 1, 6 do add(200 + i, -20, 0, "minecraft:mossy_cobblestone") end
+  add(203, -19, 1, "minecraft:spawner")
+  -- C: tuff bricks and a vault: trial chambers, sure
+  for i = 1, 5 do add(0, -40, 300 + i, "minecraft:tuff_bricks") end
+  add(1, -40, 302, "minecraft:vault")
+  -- D: stone bricks and a chest whose loot table says stronghold (read by an inspection)
+  for i = 1, 30 do add(-300 + i % 10, -25, math.floor(i / 10), "minecraft:stone_bricks") end
+  add(-296, -24, 1, "lootr:lootr_chest")
+  -- E: mossy cobblestone, no spawner anywhere near: nothing it fits (no row)
+  for i = 1, 6 do add(500 + i, -20, 500, "minecraft:mossy_cobblestone") end
+  oremap.scan(F.map, { x = 0, y = -20, z = 0 }, 1000, blocks)
+  F.inspected = { ["-296,-24,1"] = { name = "lootr:lootr_chest", loot = "betterstrongholds:chests/library", opened = false } }
+  F.inspectedRev = (F.inspectedRev or 0) + 1
+  local at = {}
+  for _, f in ipairs(factory.finds(F)) do if f.kind == "structure" then at[#at + 1] = f.label .. "@" .. f.x end end
+  table.sort(at)
+  local got = table.concat(at, " ")
+  check(got:find("stronghold@5") ~= nil, "bricks + a portal frame: a stronghold (sure: no ?): " .. got)
+  check(got:find("dungeon%?@20") ~= nil, "mossy cobblestone round a spawner: a dungeon? (a guess): " .. got)
+  check(got:find("trial chambers@0") ~= nil, "tuff bricks + a vault: trial chambers: " .. got)
+  check(got:find("stronghold@%-29") ~= nil, "bricks + a chest with stronghold loot: a stronghold: " .. got)
+  check(not got:find("@50"), "mossy cobblestone alone (no spawner): not a dungeon, no row: " .. got)
+  -- the classifier itself, in order: a decisive block beats more telltale blocks of another
+  check(factory.classifyStructure({ ["minecraft:stone_bricks"] = 100, ["minecraft:vault"] = 1 }, {}) == "trial chambers",
+    "a vault settles it, however many bricks")
+  local n, sure = factory.classifyStructure({ ["minecraft:rail"] = 12, ["minecraft:cobweb"] = 3 }, {})
+  check(n == "mineshaft" and sure == false, "rails and cobwebs: a mineshaft, a guess")
+  check(factory.classifyStructure({ ["minecraft:red_bed"] = 1, ["minecraft:campfire"] = 2 }, {}) == "campsite", "beds + a campfire: a campsite")
+  check(factory.classifyStructure({ ["minecraft:dirt"] = 50 }, {}) == nil, "nothing telltale: nothing")
+  check(factory.classifyStructure({ ["lootr:suspicious_gravel"] = 2 }, { ["minecraft:archaeology/trail_ruins_rare"] = 1 })
+        == "trail ruins", "a suspicious gravel's loot table: trail ruins")
+  check(factory.classifyStructure({ ["minecraft:polished_basalt"] = 9, ["allthemodium:suspicious_clay"] = 1 }, {}) == "ancient city",
+    "suspicious clay: only in ancient cities (allthemodium's processor list)")
+  check(factory.classifyStructure({ ["minecraft:nether_bricks"] = 30, ["minecraft:nether_brick_fence"] = 4 }, {}) == "nether fortress",
+    "nether bricks and fences: a nether fortress (a guess)")
+  check(factory.classifyStructure({ ["minecraft:blackstone"] = 10, ["minecraft:gilded_blackstone"] = 1 }, {}) == "bastion",
+    "gilded blackstone: a bastion")
+  F.map, F.inspected, F.findsCache = keepMap, keepIns, nil
+end
+
 print("scenario: INSPECT UNKNOWN: a miner with a block reader reads spawners and chests; FINDS shows what it read")
 do
   local oremap = baseEnv.require("oremap")
@@ -2598,6 +2649,7 @@ do
     { x = -30, y = -40, z = 5, name = "minecraft:budding_amethyst" },
     { x = -30, y = -40, z = 6, name = "minecraft:budding_amethyst" },
     { x = -120, y = -50, z = 5, name = "ae2:flawless_budding_quartz" }, -- (another mod's geode)
+    { x = 400, y = 30, z = 0, name = "allthemodium:suspicious_clay" },    -- (archaeology: brush it)
     { x = 3, y = -2, z = 1, name = "minecraft:chest" },               -- (a plain chest: not loot)
     { x = 60, y = -30, z = -60, name = "minecraft:end_portal_frame" },
   }
@@ -2610,7 +2662,12 @@ do
   local geodes = {}
   for _, f in ipairs(list) do if f.kind == "geode" then geodes[#geodes + 1] = f.detail end end
   check(geodes[1] == "amethyst x2" and geodes[2] == "quartz", "geodes say their kind: " .. table.concat(geodes, " / "))
-  check(table.concat(kinds, " ") == "portal1 spawner2 spawner1 loot1 geode2 geode1 bricks30",
+  local dig
+  for _, f in ipairs(list) do if f.kind == "dig" then dig = f end end
+  check(dig and dig.detail and dig.detail:find("allthemodium smithing template"),
+    "suspicious clay: what it holds, without an inspection (fixed in the jar): " .. tostring(dig and dig.detail))
+  check(dig and dig.label == "archaeology", "(an archaeology site)")
+  check(table.concat(kinds, " ") == "portal1 spawner2 spawner1 loot1 geode2 geode1 dig1 structure30",
     "by kind (portal room first), nearest first, one site per cluster: " .. table.concat(kinds, " "))
   local sp = list[2]
   -- (the middle of the two: 11,-20,10.5 -> 111,50,-189)
@@ -2650,7 +2707,8 @@ do
   for i = 1, 30 do text = text .. (screen[i] or "") .. "\n" end
   if os.getenv("DUMP") then print(text) end
   check(ok, "FINDS tab draws (" .. tostring(err) .. ")")
-  check(text:find("stronghold portal room") and text:find("loot chest") and text:find("geode"), "lists the sites")
+  check(text:find("stronghold portal room") and text:find("loot chest") and text:find("geode")
+        and text:find("stone brick structure%?"), "lists the sites (the bricks: a guess, with a ?)")
   local btn
   for _, bb in ipairs(UI.buttons) do if bb.label == "find spawner" and not btn then btn = bb end end
   check(btn and btn.x1 == 1 and btn.x2 == 57, "a whole row is the button")

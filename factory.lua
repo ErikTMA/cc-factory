@@ -202,7 +202,7 @@ function M.chatCommand(F, user, text, pos)
   if not cmd then return nil end
   cmd = cmd:lower()
   if cmd == "help" then
-    return "$build (stand on the build spot), $home [miner|forester] (head where the turtle goes, look the way it should face), $homes, $removehome <id>, $finds [spawner|loot|geode|portal|city|bricks]"
+    return "$build (stand on the build spot), $home [miner|forester] (head where the turtle goes, look the way it should face), $homes, $removehome <id>, $finds [spawner|loot|geode|portal|structure]"
   elseif cmd == "finds" then
     -- the nearest of each kind (or of one kind: $finds spawner), as waypoints
     local list, out, per = M.finds(F), {}, {}
@@ -1421,25 +1421,103 @@ end
 -- within FIND_JOIN of each other are one site. In order of what matters.
 M.FIND_KINDS = {
   { key = "portal", label = "stronghold portal room", names = { "minecraft:end_portal_frame" } },
-  { key = "city", label = "ancient city", names = { "minecraft:reinforced_deepslate", "minecraft:sculk_shrieker" } },
   { key = "spawner", label = "spawner",
     names = { "minecraft:spawner", "minecraft:trial_spawner", "apotheosis:boss_spawner" } },
   -- (ATM10: Lootr's chests in structures; a plain chest only away from homes)
   { key = "loot", label = "loot chest", names = { "lootr:", "minecraft:vault" } },
   -- (any mod's budding block: amethyst, certus quartz, ...; named in the detail)
   { key = "geode", label = "geode", names = { "budding_" } },
-  -- (stronghold corridors, and other underground structures: a hint until a
-  -- scan sees the portal room)
-  { key = "bricks", label = "stone brick structure", names = { "stone_bricks" }, min = 24 },
+  -- (brush it; its loot table says what is in it. The names as the server's
+  -- jars have them: ATM10's Lootr replaces vanilla's sand and gravel;
+  -- Allthemodium puts suspicious clay in ancient cities and suspicious soul
+  -- sand in bastion treasure rooms)
+  { key = "dig", label = "archaeology", names = { "allthemodium:suspicious_clay", "allthemodium:suspicious_soul_sand",
+    "lootr:suspicious_sand", "lootr:suspicious_gravel", "minecraft:suspicious_sand", "minecraft:suspicious_gravel",
+    "eternal_starlight:suspicious_dimslag", "eternal_starlight:suspicious_dusted_gravel" } },
+  -- (any structure's telltale blocks: what it is, M.STRUCTURES says)
+  { key = "structure", label = "structure", names = {}, min = 4 },
 }
+
+-- What turtles can tell a structure by: blocks the scanner sees and loot
+-- tables the block reader reads (chests in or near it). `decisive`: one such
+-- block settles it; `loot`: a loot table naming it settles it; `blocks`: telltale
+-- blocks, `min` of them make a guess (shown with a "?"). Names match as parts
+-- of block names ("_bed": every colour). In order: the first that fits wins.
+M.STRUCTURES = {
+  { name = "stronghold", decisive = { "minecraft:end_portal_frame" }, loot = { "stronghold" },
+    blocks = { "stone_bricks", "minecraft:iron_bars", "infested_stone_bricks" }, min = 60 },
+  { name = "ancient city", decisive = { "minecraft:reinforced_deepslate", "minecraft:sculk_shrieker", "minecraft:sculk_catalyst",
+    "allthemodium:suspicious_clay" }, loot = { "ancient_city", "allthemodium:arch" }, blocks = { "deepslate_tiles", "deepslate_bricks", "minecraft:sculk" }, min = 30 },
+  { name = "trial chambers", decisive = { "minecraft:trial_spawner", "minecraft:vault" }, loot = { "trial_chambers" },
+    blocks = { "tuff_bricks", "copper_bulb", "copper_grate" }, min = 20 },
+  { name = "mineshaft", loot = { "mineshaft" }, blocks = { "minecraft:rail", "minecraft:cobweb", "oak_fence" }, min = 8 },
+  { name = "dungeon", loot = { "dungeon" }, blocks = { "mossy_cobblestone" }, spawner = true, min = 4 },
+  { name = "ruined portal", loot = { "ruined_portal" }, blocks = { "obsidian", "minecraft:nether_portal" }, min = 4 },
+  { name = "trail ruins", loot = { "trail_ruins" }, blocks = { "suspicious_gravel", "mud_bricks", "terracotta" }, min = 8 },
+  { name = "desert pyramid", loot = { "desert_pyramid" }, blocks = { "chiseled_sandstone", "orange_terracotta" }, min = 8 },
+  { name = "desert well", loot = { "desert_well" } },
+  { name = "ocean ruins", loot = { "ocean_ruin" }, blocks = { "prismarine", "sea_lantern" }, min = 8 },
+  { name = "campsite", loot = { "campsite" }, blocks = { "minecraft:campfire", "_bed" }, min = 3 },
+  { name = "village", loot = { "village" },
+    blocks = { "_bed", "smithing_table", "cartography_table", "minecraft:smoker", "fletching_table", "minecraft:bell",
+               "minecraft:lectern", "minecraft:composter" }, min = 6 },
+  -- the Nether and the End (turtles there need a base there: they can't
+  -- cross a portal, and no modem reaches across dimensions)
+  { name = "bastion", decisive = { "minecraft:gilded_blackstone", "allthemodium:suspicious_soul_sand" },
+    loot = { "bastion", "allthemodium:arch2" }, blocks = { "blackstone", "basalt" }, min = 40 },
+  { name = "nether fortress", loot = { "nether_bridge", "fortress" },
+    blocks = { "minecraft:nether_bricks", "minecraft:nether_brick_fence", "nether_wart" }, min = 12 },
+  { name = "end city", decisive = { "minecraft:end_rod", "minecraft:dragon_head" }, loot = { "end_city" },
+    blocks = { "purpur" }, min = 12 },
+  { name = "stone brick structure", blocks = { "stone_bricks" }, min = 24 },
+}
+local function nameHas(name, pats)
+  for _, p in ipairs(pats or {}) do if name:find(p, 1, true) then return true end end
+  return false
+end
+-- every structure's telltale block: what makes a "structure" site
+for _, st in ipairs(M.STRUCTURES) do
+  local names = M.FIND_KINDS[#M.FIND_KINDS].names
+  for _, list in ipairs({ st.decisive or {}, st.blocks or {} }) do
+    for _, n in ipairs(list) do names[#names + 1] = n end
+  end
+end
+
+-- What a structure site is: name, sure, from the blocks around it (counts
+-- by name: everything the scans saw there, spawners and portal frames too)
+-- and the loot tables read near it; nil: no fit.
+function M.classifyStructure(names, lootTables)
+  local spawnerNear = false
+  for name in pairs(names) do if name:find("spawner", 1, true) then spawnerNear = true end end
+  for _, st in ipairs(M.STRUCTURES) do
+    for name in pairs(names) do
+      if nameHas(name, st.decisive) then return st.name, true end
+    end
+    for t in pairs(lootTables or {}) do
+      if nameHas(t, st.loot) then return st.name, true end
+    end
+  end
+  for _, st in ipairs(M.STRUCTURES) do
+    local n = 0
+    for name, c in pairs(names) do if nameHas(name, st.blocks) then n = n + c end end
+    if n >= (st.min or 1) and (not st.spawner or spawnerNear) then return st.name, false end
+  end
+end
 local FIND_JOIN = 24
-local INSPECT_KINDS = { spawner = true, loot = true } -- (what a block reader can tell more about)
+-- what a suspicious block holds when the jar fixes it (Allthemodium's
+-- processor lists: every suspicious clay gets loot table allthemodium:arch,
+-- the allthemodium upgrade template; soul sand arch2, the vibranium one)
+M.DIG_HOLDS = { ["allthemodium:suspicious_clay"] = "allthemodium smithing template",
+                ["allthemodium:suspicious_soul_sand"] = "vibranium smithing template" }
+local INSPECT_KINDS = { spawner = true, loot = true, dig = true } -- (what a block reader can tell more about)
+local STRUCTURE_REACH = 32 -- what counts as around a structure site
 local function findKind(name)
   for i, k in ipairs(M.FIND_KINDS) do
     for _, pat in ipairs(k.names) do
-      -- ("lootr:" is a mod prefix; the rest are whole names or name parts)
+      -- ("lootr:" is a mod prefix; the rest are whole names or name parts;
+      -- a structure's telltale blocks: parts)
       if name == pat or (pat:sub(-1) == ":" and name:sub(1, #pat) == pat)
-         or (pat:find(":", 1, true) == nil and name:find(pat, 1, true)) then return i end
+         or ((pat:find(":", 1, true) == nil or k.key == "structure") and name:find(pat, 1, true)) then return i end
     end
   end
 end
@@ -1456,6 +1534,8 @@ end
 -- -> "dungeons deep (repurposed structures)", "minecraft:chests/simple_dungeon"
 -- -> "simple dungeon".
 function M.structureOf(lootTable)
+  if lootTable == "allthemodium:arch" then return "ancient city (allthemodium template)" end
+  if lootTable == "allthemodium:arch2" then return "bastion treasure room (vibranium template)" end
   local mod, path = tostring(lootTable):match("^([%w_]+):(.+)$")
   if not mod then return tostring(lootTable) end
   local what = path:gsub("^chests/", ""):gsub("[/_]", " ")
@@ -1503,6 +1583,9 @@ function M.finds(F)
       site = { i = i, x = x, y = y, z = z, n = 1, sx = x, sy = y, sz = z, mobs = {}, loot = {}, unopened = 0, unknown = 0 }
       sites[#sites + 1] = site
     end
+    if M.FIND_KINDS[i].key == "dig" and M.DIG_HOLDS[name] then
+      site.mobs[M.DIG_HOLDS[name]] = (site.mobs[M.DIG_HOLDS[name]] or 0) + 1
+    end
     if M.FIND_KINDS[i].key == "geode" then
       local kind = name:gsub("^[%w_]+:", ""):gsub("^flawless_", ""):gsub("^%a+_budding_", ""):gsub("^budding_", ""):gsub("_", " ")
       site.mobs[kind] = (site.mobs[kind] or 0) + 1 -- (shown like mobs: what kind, how many)
@@ -1548,8 +1631,18 @@ function M.finds(F)
     for t in pairs(near) do names[#names + 1] = M.structureOf(t) end
     table.sort(names)
     f.structure = #names > 0 and table.concat(names, ", ") or nil
+    if f.kind == "structure" then
+      -- (everything the scans saw around it)
+      local around = {}
+      oremap.around(map, f.x, f.y, f.z, STRUCTURE_REACH, function(_, _, _, name) around[name] = (around[name] or 0) + 1 end)
+      local what, sure = M.classifyStructure(around, near)
+      f.label = what and (what .. (sure and "" or "?")) or "structure"
+      f.unsure = what and not sure or nil
+    end
     f.detail = M.findDetail(f)
   end
+  -- (a structure nothing fits, a few odd blocks: not worth a row)
+  for i = #list, 1, -1 do if list[i].kind == "structure" and list[i].label == "structure" then table.remove(list, i) end end
   table.sort(list, function(p, q)
     if p.i ~= q.i then return p.i < q.i end
     if p.dist ~= q.dist then return p.dist < q.dist end

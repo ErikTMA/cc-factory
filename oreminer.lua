@@ -59,7 +59,8 @@ local CFG = {
     ["minecraft:sand"] = true, ["minecraft:flint"] = true,
   },
   -- never dig these (other turtles, computers, storage)
-  protect = { "^computercraft:", "chest", "barrel", "shulker", "spawner" },
+  -- (suspicious sand/gravel: dug, its loot is gone; it is brushed by hand)
+  protect = { "^computercraft:", "chest", "barrel", "shulker", "spawner", "suspicious_", "minecraft:vault" },
 }
 
 local PRESET_Y = {}

@@ -59,6 +59,24 @@ function M.del(map, x, y, z)
   map.held[k] = nil
 end
 
+-- Every block within r (a cube) of x,y,z: fn(bx, by, bz, name). Touches only
+-- the cells around it.
+function M.around(map, x, y, z, r, fn)
+  for cx = cellOf(x - r), cellOf(x + r) do
+    for cy = cellOf(y - r), cellOf(y + r) do
+      for cz = cellOf(z - r), cellOf(z + r) do
+        local c = map.cells[key(cx, cy, cz)]
+        if c then
+          for k, name in pairs(c) do
+            local bx, by, bz = unkey(k)
+            if math.abs(bx - x) <= r and math.abs(by - y) <= r and math.abs(bz - z) <= r then fn(bx, by, bz, name) end
+          end
+        end
+      end
+    end
+  end
+end
+
 -- Every block: fn(x, y, z, name).
 function M.each(map, fn)
   for _, c in pairs(map.cells) do

@@ -102,6 +102,20 @@ over rednet. Friends-only server: base-ID pinning, no signing.
 - Chat Box `sendMessage(text, { prefix, brackets, bracketsColor, range,
   player })` (AP 0.8.2a, `ChatBoxPeripheral`): `range` limits it to players
   that near the Chat Box (a monitor tap doesn't tell who tapped).
+- Suspicious blocks on this server (blockstates in the jars): Lootr replaces
+  vanilla's (`lootr:suspicious_sand`, `lootr:suspicious_gravel`);
+  Allthemodium adds `allthemodium:suspicious_clay` (its processor list
+  `ancient_city_generic_degradation`: 0.9% of an ancient city's polished
+  basalt, loot table `allthemodium:arch` = the allthemodium upgrade smithing
+  template) and `allthemodium:suspicious_soul_sand` (`treasure_rooms`: 0.7%
+  of a bastion treasure room's blackstone, `allthemodium:arch2` = the
+  vibranium upgrade template); Eternal Starlight `suspicious_dimslag`,
+  `suspicious_dusted_gravel`. (Chipped's `suspicious_*` trapdoors/pumpkins
+  and SecurityCraft's `suspicious_*_mine` are not brushable loot: the mines
+  are why miners never dig `suspicious_` anything.)
+- Turtles can't cross dimensions (a block doesn't go through a portal) and
+  no modem reaches across them (the ender modem: same dimension): a Nether
+  or End fleet needs its own base there.
 - ATM10 structures: loot chests are Lootr's (`lootr:lootr_chest`,
   `lootr:lootr_barrel`), dungeons also have `apotheosis:boss_spawner` (seen in
   the live ore map). Emerald ore: mountain biomes only (none in the mined area

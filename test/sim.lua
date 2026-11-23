@@ -40,6 +40,7 @@ local function newWorld(seed, startHeading, opts)
   for x = -SPAN, SPAN do for y = YMIN, YMAX do for z = -SPAN, SPAN do
     local r = math.random()
     local name = "minecraft:stone"
+    if opts.noOre then r = 1 end -- (stone only)
     if r < 0.004 then name = "minecraft:diamond_ore"
     elseif r < 0.012 then name = "minecraft:iron_ore"
     elseif r < 0.02 then name = "minecraft:coal_ore"
@@ -655,6 +656,23 @@ do
   local ok, err = runProgram(makeEnv(T, api, sc, {}), "lanes=1", "length=16")
   check(ok, "completed (" .. tostring(err) .. ")")
   check(W.get(5, 0, 0) == "computercraft:turtle_advanced", "other turtle untouched")
+end
+
+print("scenario: suspicious clay/gravel and a vault in the lane: gone around, never dug (dug, their loot is lost)")
+do
+  local W = newWorld(5, 1, { noOre = true }) -- (no ore: it walks its lane, east at home level)
+  W.set(5, 0, 0, "allthemodium:suspicious_clay")
+  W.set(8, 0, 0, "lootr:suspicious_gravel")
+  W.set(11, 0, 0, "minecraft:vault")
+  local T, api, sc = newTurtle(W, 1, 0)
+  T.inv[1] = { name = "minecraft:coal", count = 64 }
+  local passed = false
+  T.onMove = function() if T.x > 11 then passed = true end end
+  local ok, err = runProgram(makeEnv(T, api, sc, {}), "lanes=1", "length=16")
+  check(ok, "completed (" .. tostring(err) .. ")")
+  check(passed, "(its lane went past them)")
+  check(W.get(5, 0, 0) == "allthemodium:suspicious_clay" and W.get(8, 0, 0) == "lootr:suspicious_gravel"
+        and W.get(11, 0, 0) == "minecraft:vault", "all three untouched")
 end
 
 -- Scenario 5: go down to a target level, mine only one ore kind, come back up the shaft
