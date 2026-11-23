@@ -2120,6 +2120,10 @@ do
   factory.handle(F, 121, { type = "status", state = "done", role = "miner", label = "m-121", job = jr.job, mined = 2 })
   check(next(F.map.held) == nil or (function() for _, id in pairs(F.map.held) do if id == jr.job.id then return false end end return true end)(),
     "done: its holds released")
+  check(F.turtles[121].job == nil, "done: no job on its record (idle means idle)")
+  factory.handle(F, 121, { type = "status", state = "idle", role = "miner", label = "m-121", job = jr.job, fuel = 5000 })
+  check(F.turtles[121].state ~= "idle" or F.turtles[121].job == nil,
+    "idle, with its last job in the message: still no job on its record")
   -- the build spot moves: the map (placed from homes in the old frame) is dropped
   local had = F.map.n
   local spot = F.buildSpot and { x = F.buildSpot.x, y = F.buildSpot.y, z = F.buildSpot.z } or { x = 0, y = 0, z = 0 }

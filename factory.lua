@@ -1443,7 +1443,9 @@ function M.handle(F, from, msg)
   local prev = F.turtles[from] or {}
   F.turtles[from] = { id = from, label = msg.label, role = msg.role or prev.role or "miner",
                       state = msg.state, fuel = msg.fuel, mined = msg.mined or 0,
-                      job = msg.job, seen = now(F), version = msg.version,
+                      -- (idle means idle: the job it reports then is its last one)
+                      job = (msg.state ~= "idle" and msg.state ~= "done") and msg.job or nil,
+                      seen = now(F), version = msg.version,
                       delivered = msg.total or prev.delivered,
                       inv = msg.inv or prev.inv, -- (the assembler's slots)
                       chest = msg.chest or prev.chest } -- the chest it claimed itself
