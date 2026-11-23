@@ -2481,6 +2481,85 @@ do
   F.oreSummaryCache = nil
 end
 
+print("scenario: FINDS: spawners, loot, geodes, structures the scouts saw; a tap puts a JourneyMap waypoint in chat")
+do
+  local oremap = baseEnv.require("oremap")
+  local keepMap, keepAnchor = F.map, F.anchor
+  F.map, F.findsCache = oremap.new(), nil
+  F.anchor = { wx = 100, wy = 70, wz = -200 } -- (world position of the frame's 0,0,0: $build)
+  local blocks = {
+    { x = 10, y = -20, z = 10, name = "minecraft:spawner" },
+    { x = 12, y = -20, z = 11, name = "minecraft:spawner" },          -- (the same dungeon)
+    { x = 90, y = -20, z = 90, name = "apotheosis:boss_spawner" },    -- (another, further)
+    { x = 14, y = -21, z = 12, name = "lootr:lootr_chest" },
+    { x = -30, y = -40, z = 5, name = "minecraft:budding_amethyst" },
+    { x = 3, y = -2, z = 1, name = "minecraft:chest" },               -- (a plain chest: not loot)
+    { x = 60, y = -30, z = -60, name = "minecraft:end_portal_frame" },
+  }
+  for i = 1, 30 do blocks[#blocks + 1] = { x = -50 + i % 6, y = -16, z = 20 + math.floor(i / 6), name = "minecraft:mossy_stone_bricks" } end
+  for i = 1, 5 do blocks[#blocks + 1] = { x = 70 + i, y = 0, z = 70, name = "minecraft:stone_bricks" } end -- (too few: not a site)
+  oremap.scan(F.map, { x = 0, y = -20, z = 0 }, 200, blocks)
+  local list = factory.finds(F)
+  local kinds = {}
+  for _, f in ipairs(list) do kinds[#kinds + 1] = f.kind .. f.n end
+  check(table.concat(kinds, " ") == "portal1 spawner2 spawner1 loot1 geode1 bricks30",
+    "by kind (portal room first), nearest first, one site per cluster: " .. table.concat(kinds, " "))
+  local sp = list[2]
+  -- (the middle of the two: 11,-20,10.5 -> 111,50,-189)
+  check(sp.wx == 111 and sp.wy == 50 and sp.wz == -189, ("world position, the site's middle: %s %s %s"):format(sp.wx, sp.wy, sp.wz))
+  local wp = factory.findWaypoint(F, sp)
+  check(wp == '[name:"spawner 2", x:111, y:50, z:-189]', "the waypoint: " .. tostring(wp))
+  -- as JourneyMap 6.0.9 reads it: [ ... ] of "key:value" pairs, each value
+  -- letters/digits/spaces/quotes after an optional leading minus
+  local okJM = true
+  for _, f in ipairs(list) do
+    local w = factory.findWaypoint(F, f)
+    local body = w:match("^%[(.*)%]$")
+    if not body then okJM = false else
+      for pair in (body .. ","):gmatch("%s*([^,]+),") do
+        if not pair:match("^%w+%s*:%s*%-?[%w%s'\"]+$") then okJM = false end
+      end
+    end
+  end
+  check(okJM, "every waypoint is one JourneyMap parses (no '-' in a name, no dim)")
+  -- a scan that finds more: the view follows
+  oremap.scan(F.map, { x = 0, y = -20, z = 0 }, 1, { { x = 0, y = -20, z = 1, name = "minecraft:trial_spawner" } })
+  local again = factory.finds(F)
+  local spawners = 0
+  for _, f in ipairs(again) do if f.kind == "spawner" then spawners = spawners + f.n end end
+  check(spawners == 4, "a later scan's spawner shows up (the map changed): " .. spawners)
+  -- the tab: a row a site, a tap sends its waypoint near the base
+  local UIlib = assert(load(baseFiles["base.lua"], "base", "t", baseEnv))("--lib")
+  local said = {}
+  local UI = { F = F, buttons = {}, stock = {}, tab = "FINDS", sayNear = function(t) said[#said + 1] = t; return true end }
+  local screen = {}
+  local mon = { getSize = function() return 57, 30 end, clear = function() end,
+                setCursorPos = function(_, y) screen.y = y end, setTextColor = function() end,
+                setBackgroundColor = function() end,
+                write = function(t) screen[screen.y] = (screen[screen.y] or "") .. t end }
+  local ok, err = pcall(UIlib.draw, UI, mon)
+  local text = ""
+  for i = 1, 30 do text = text .. (screen[i] or "") .. "\n" end
+  if os.getenv("DUMP") then print(text) end
+  check(ok, "FINDS tab draws (" .. tostring(err) .. ")")
+  check(text:find("stronghold portal room") and text:find("loot chest") and text:find("geode"), "lists the sites")
+  local btn
+  for _, bb in ipairs(UI.buttons) do if bb.label == "find spawner" and not btn then btn = bb end end
+  check(btn and btn.x1 == 1 and btn.x2 == 57, "a whole row is the button")
+  check(UIlib.touch(UI, 30, btn and btn.y or 0) == "find spawner" and said[1] and said[1]:find("^%[name:\"spawner"),
+    "a tap puts its waypoint in chat: " .. tostring(said[1]))
+  -- $finds in chat: the nearest of each kind, as waypoints
+  local reply = factory.chatCommand(F, "someone", "$finds")
+  check(reply and reply:find('%[name:"stronghold portal room 1", x:160, y:40, z:%-260%]'), "$finds: " .. tostring(reply))
+  local only = factory.chatCommand(F, "someone", "$finds geode")
+  check(only and only:find("geode") and not only:find("spawner"), "$finds geode: only geodes")
+  -- no world position yet: says so, sends nothing
+  F.anchor, F.findsCache = nil, nil
+  check(factory.findWaypoint(F, factory.finds(F)[1]) == nil, "no anchor: no waypoint")
+  check(factory.chatCommand(F, "someone", "$finds"):find("%$build"), "no anchor: $finds says to $build")
+  F.map, F.anchor, F.findsCache = keepMap, keepAnchor, nil
+end
+
 print("scenario: SHEAR for one forester: its supply brings shears and a Weak Automata Core and says so;")
 print("          off again: nothing sent, it is told to stop")
 do

@@ -202,7 +202,18 @@ function M.chatCommand(F, user, text, pos)
   if not cmd then return nil end
   cmd = cmd:lower()
   if cmd == "help" then
-    return "$build (stand on the build spot), $home [miner|forester] (head where the turtle goes, look the way it should face), $homes, $removehome <id>"
+    return "$build (stand on the build spot), $home [miner|forester] (head where the turtle goes, look the way it should face), $homes, $removehome <id>, $finds [spawner|loot|geode|portal|city|bricks]"
+  elseif cmd == "finds" then
+    -- the nearest of each kind (or of one kind: $finds spawner), as waypoints
+    local list, out, per = M.finds(F), {}, {}
+    if not F.anchor then return "the finds need the build spot's world position: stand on it and type $build" end
+    for _, f in ipairs(list) do
+      if (arg == "" and (per[f.kind] or 0) < 2) or f.kind == arg then
+        per[f.kind] = (per[f.kind] or 0) + 1
+        if #out < 8 then out[#out + 1] = M.findWaypoint(F, f) end
+      end
+    end
+    return #out > 0 and table.concat(out, " ") or "no finds yet"
   elseif cmd == "homes" then
     local parts = {}
     for _, h in ipairs(F.homes) do parts[#parts + 1] = ("#%d %s %d,%d,%d"):format(h.id, h.role, h.x, h.y, h.z) end
@@ -1400,6 +1411,96 @@ function M.applyMap(F, from, rep)
   oremap.mined(F.map, mined)
   F.mapDirty = true
   return true
+end
+
+-- ------------------------------------------------------------------ finds --
+-- What scouts saw that is worth a trip, besides ore: every block a scan
+-- lists is in the map already (all but filler), so the finds are a view of
+-- the map, worked out again only when the map changed. Blocks of one kind
+-- within FIND_JOIN of each other are one site. In order of what matters.
+M.FIND_KINDS = {
+  { key = "portal", label = "stronghold portal room", names = { "minecraft:end_portal_frame" } },
+  { key = "city", label = "ancient city", names = { "minecraft:reinforced_deepslate", "minecraft:sculk_shrieker" } },
+  { key = "spawner", label = "spawner",
+    names = { "minecraft:spawner", "minecraft:trial_spawner", "apotheosis:boss_spawner" } },
+  -- (ATM10: Lootr's chests in structures; a plain chest only away from homes)
+  { key = "loot", label = "loot chest", names = { "lootr:", "minecraft:vault" } },
+  { key = "geode", label = "geode", names = { "minecraft:budding_amethyst" } },
+  -- (stronghold corridors, and other underground structures: a hint until a
+  -- scan sees the portal room)
+  { key = "bricks", label = "stone brick structure", names = { "stone_bricks" }, min = 24 },
+}
+local FIND_JOIN = 24
+local function findKind(name)
+  for i, k in ipairs(M.FIND_KINDS) do
+    for _, pat in ipairs(k.names) do
+      -- ("lootr:" is a mod prefix; the rest are whole names or name parts)
+      if name == pat or (pat:sub(-1) == ":" and name:sub(1, #pat) == pat)
+         or (pat:find(":", 1, true) == nil and name:find(pat, 1, true)) then return i end
+    end
+  end
+end
+
+-- World position of a home-frame position: F.anchor (from $build) is where
+-- (0,0,0) is; without it only Y is known (factory.cfg build.y).
+local function toWorld(F, x, y, z)
+  local a = F.anchor
+  if a then return a.wx + x, a.wy + y, a.wz + z end
+  return nil, absY(F, y), nil
+end
+
+-- { { kind, label, n, x, y, z (frame), wx, wy, wz (world, nil without an
+-- anchor), dist (from the base) } }: by kind, then nearest first.
+function M.finds(F)
+  local map = F.map
+  local a = F.anchor
+  local stamp = tostring(map.rev or 0) .. ":" .. map.n .. ":" .. (a and (a.wx .. "," .. a.wy .. "," .. a.wz) or "-")
+  if F.findsCache and F.findsCache.stamp == stamp then return F.findsCache.list end
+  local kindOf, sites = {}, {}
+  oremap.each(map, function(x, y, z, name)
+    local i = kindOf[name]
+    if i == nil then i = findKind(name) or false; kindOf[name] = i end
+    if not i then return end
+    for _, st in ipairs(sites) do
+      if st.i == i and math.abs(st.x - x) <= FIND_JOIN and math.abs(st.y - y) <= FIND_JOIN
+         and math.abs(st.z - z) <= FIND_JOIN then
+        st.n, st.sx, st.sy, st.sz = st.n + 1, st.sx + x, st.sy + y, st.sz + z
+        return
+      end
+    end
+    sites[#sites + 1] = { i = i, x = x, y = y, z = z, n = 1, sx = x, sy = y, sz = z }
+  end)
+  local list = {}
+  for _, st in ipairs(sites) do
+    local k = M.FIND_KINDS[st.i]
+    if st.n >= (k.min or 1) then
+      -- (the middle of the site: its blocks' average, whatever order the
+      -- map lists them in)
+      local x = math.floor(st.sx / st.n + 0.5)
+      local y = math.floor(st.sy / st.n + 0.5)
+      local z = math.floor(st.sz / st.n + 0.5)
+      local wx, wy, wz = toWorld(F, x, y, z)
+      list[#list + 1] = { i = st.i, kind = k.key, label = k.label, n = st.n, x = x, y = y, z = z,
+                          wx = wx, wy = wy, wz = wz, dist = math.floor(math.sqrt(x * x + z * z) + 0.5) }
+    end
+  end
+  table.sort(list, function(p, q)
+    if p.i ~= q.i then return p.i < q.i end
+    if p.dist ~= q.dist then return p.dist < q.dist end
+    return p.y < q.y
+  end)
+  F.findsCache = { stamp = stamp, list = list }
+  return list
+end
+
+-- A find as JourneyMap reads it in chat (checked in JourneyMap 6.0.9,
+-- WaypointParser: "[key:value, ...]" with name/x/y/z, values letters, digits,
+-- spaces, quotes or a leading minus: no "-" inside a name, no "dim:" (its
+-- value would hold a ":"; the overworld is the default)). nil: no anchor.
+function M.findWaypoint(F, f)
+  if not f.wx then return nil end
+  local name = (f.label .. " " .. f.n):gsub("[^%w ]", " ")
+  return ('[name:"%s", x:%d, y:%d, z:%d]'):format(name, f.wx, f.wy, f.wz)
 end
 
 -- The known ores a job of turtle `id` should go for first, nearest its home,

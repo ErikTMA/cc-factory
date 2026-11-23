@@ -38,7 +38,7 @@ local STATE_COLOR = { idle = colors.lightGray, done = colors.lightGray, resting 
                       assigned = colors.yellow, unloading = colors.cyan, new = colors.magenta }
 
 -- GATHERING has a sub-tab per way of getting raw materials (farming next)
-local TABS = { "TURTLES", "GATHERING", "ORES", "FACTORY" }
+local TABS = { "TURTLES", "GATHERING", "ORES", "FINDS", "FACTORY" }
 local GATHERING = { "MINING", "FORESTRY" }
 
 local function drawTurtles(UI, out, w, row)
@@ -266,6 +266,50 @@ local function drawOres(UI, out, w, row, h)
   return row + 1
 end
 
+-- FINDS: what scouts saw worth a trip (factory.finds). Tap a row: its
+-- JourneyMap waypoint goes to chat near the base (UI.sayNear, the Chat Box),
+-- a click there adds it to the map.
+local function drawFinds(UI, out, w, row, h)
+  local F = UI.F
+  local list = factory.finds(F)
+  put(out, 1, row, ("FINDS  %d sites  (tap a row: waypoint to chat, for JourneyMap)"):format(#list):sub(1, w), colors.yellow)
+  row = row + 1
+  if not F.anchor then
+    put(out, 1, row, "No world position yet: stand on the build spot and type $build in chat.", colors.orange)
+    row = row + 1
+  end
+  if #list == 0 then
+    put(out, 1, row, "Nothing yet: scouts report spawners, loot, geodes... when they come home.", colors.lightGray)
+    return row + 2
+  end
+  put(out, 1, row, ("%-22s %5s  %6s %4s %6s %5s"):format("what", "blocks", "x", "y", "z", "dist"):sub(1, w), colors.lightGray)
+  row = row + 1
+  local per = math.max(1, h - row - 2)
+  local pages = math.ceil(#list / per)
+  UI.findPage = math.max(1, math.min(UI.findPage or 1, pages))
+  local first = (UI.findPage - 1) * per + 1
+  for i = first, math.min(#list, first + per - 1) do
+    local f = list[i]
+    put(out, 1, row, ("%-22s %5d  %6s %4d %6s %5d"):format(f.label:sub(1, 22), f.n, tostring(f.wx or "?"),
+      f.wy or f.y, tostring(f.wz or "?"), f.dist):sub(1, w), colors.white)
+    UI.buttons[#UI.buttons + 1] = { x1 = 1, x2 = w, y = row, label = "find " .. f.kind,
+      action = function()
+        local wp = factory.findWaypoint(F, f)
+        if not wp then F.note = "No world position yet: $build on the build spot first"
+        elseif not (UI.sayNear and UI.sayNear(wp)) then F.note = "No Chat Box at the base: " .. wp
+        else F.note = "In chat: " .. wp end
+      end }
+    row = row + 1
+  end
+  if pages > 1 then
+    put(out, 1, row, ("page %d/%d"):format(UI.findPage, pages), colors.lightGray)
+    button(UI, out, 13, row, 3, "<", false, function() UI.findPage = UI.findPage - 1 end)
+    button(UI, out, 17, row, 3, ">", false, function() UI.findPage = UI.findPage + 1 end)
+    row = row + 1
+  end
+  return row + 1
+end
+
 local function drawFactory(UI, out, w, row)
   local F = UI.F
   local stock = UI.stock or {}
@@ -410,6 +454,7 @@ function M.draw(UI, out)
   if UI.tab == "TURTLES" then row = drawTurtles(UI, out, w, row)
   elseif UI.tab == "GATHERING" then row = drawGathering(UI, out, w, row)
   elseif UI.tab == "ORES" then row = drawOres(UI, out, w, row, h)
+  elseif UI.tab == "FINDS" then row = drawFinds(UI, out, w, row, h)
   else row = drawFactory(UI, out, w, row) end
   put(out, 1, h, UI.F.note:sub(1, w), colors.orange)
 end
@@ -733,6 +778,16 @@ local function say(user, text)
     logChat("reply to", user, "sendMessageToPlayer", ok, err)
   end
 end
+
+-- To whoever is near the base (a monitor tap doesn't say who tapped):
+-- AP 0.8.2a sendMessage's "range" option (checked in the jar).
+local function sayNear(text)
+  if not chatBox or not text then return false end
+  local ok, err = pcall(chatBox.sendMessage, text, { prefix = "cc-factory", range = 48 })
+  logChat("near", "sendMessage{range}", ok, err)
+  return ok and err ~= false
+end
+UI.sayNear = sayNear
 
 local function chatter()
   while true do

@@ -42,6 +42,7 @@ function M.put(map, x, y, z, name)
   if not c then c = {}; map.cells[ck] = c end
   local k = key(x, y, z)
   if c[k] == nil then map.n = map.n + 1 end
+  if c[k] ~= name then map.rev = (map.rev or 0) + 1 end -- (what changed: for views of the map)
   c[k] = name
 end
 
@@ -52,6 +53,7 @@ function M.del(map, x, y, z)
   if c and c[k] ~= nil then
     c[k] = nil
     map.n = map.n - 1
+    map.rev = (map.rev or 0) + 1
     if next(c) == nil then map.cells[ck] = nil end
   end
   map.held[k] = nil

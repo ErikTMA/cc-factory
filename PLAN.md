@@ -79,6 +79,22 @@ over rednet. Friends-only server: base-ID pinning, no signing.
   `ItemEntity`s inside that block's box (x..x+1, y..y+1, z..z+1), "No items
   to take" if none. Items on the floor lie in the air cell above it: face
   that cell with `suck()`; `suckDown()` only reaches inside the floor block.
+- JourneyMap 6.0.9 (`journeymap.client.waypoint.WaypointParser`, decompiled):
+  any chat message is searched for `[...]` (StringUtils.substringsBetween) and
+  each matched against `(\w+\s*:\s*-?[\w\d\s'"]+,\s*)+(\w+\s*:\s*-?[\w\d\s'"]+)`;
+  keys `name`, `x`, `y`, `z`, `dim` (default `minecraft:overworld`). So a
+  waypoint is `[name:"spawner 2", x:111, y:50, z:-189]`: no `-` inside a name,
+  and `dim:` would need a `:` in its value (left out). Xaero's
+  `xaero-waypoint:` form is read too. The Chat Box's `[cc-factory]` prefix
+  doesn't match (no key:value).
+- Chat Box `sendMessage(text, { prefix, brackets, bracketsColor, range,
+  player })` (AP 0.8.2a, `ChatBoxPeripheral`): `range` limits it to players
+  that near the Chat Box (a monitor tap doesn't tell who tapped).
+- ATM10 structures: loot chests are Lootr's (`lootr:lootr_chest`,
+  `lootr:lootr_barrel`), dungeons also have `apotheosis:boss_spawner` (seen in
+  the live ore map). Emerald ore: mountain biomes only (none in the mined area
+  around the base; the nearest `#c:is_mountain`, a meadow, is ~346 blocks
+  from it, `/locate biome`).
 - Geo Scanner `scanBlocks(r)` (AP 0.8.2a, `GeoScannerPeripheral` +
   `ScanUtil.traverseBlocks`, decompiled): a CUBE, every block from -r to +r on
   each axis; air is skipped, every other block (stone too) is listed as
