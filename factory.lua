@@ -1426,7 +1426,8 @@ M.FIND_KINDS = {
     names = { "minecraft:spawner", "minecraft:trial_spawner", "apotheosis:boss_spawner" } },
   -- (ATM10: Lootr's chests in structures; a plain chest only away from homes)
   { key = "loot", label = "loot chest", names = { "lootr:", "minecraft:vault" } },
-  { key = "geode", label = "geode", names = { "minecraft:budding_amethyst" } },
+  -- (any mod's budding block: amethyst, certus quartz, ...; named in the detail)
+  { key = "geode", label = "geode", names = { "budding_" } },
   -- (stronghold corridors, and other underground structures: a hint until a
   -- scan sees the portal room)
   { key = "bricks", label = "stone brick structure", names = { "stone_bricks" }, min = 24 },
@@ -1501,6 +1502,10 @@ function M.finds(F)
     if not site then
       site = { i = i, x = x, y = y, z = z, n = 1, sx = x, sy = y, sz = z, mobs = {}, loot = {}, unopened = 0, unknown = 0 }
       sites[#sites + 1] = site
+    end
+    if M.FIND_KINDS[i].key == "geode" then
+      local kind = name:gsub("^[%w_]+:", ""):gsub("^flawless_", ""):gsub("^%a+_budding_", ""):gsub("^budding_", ""):gsub("_", " ")
+      site.mobs[kind] = (site.mobs[kind] or 0) + 1 -- (shown like mobs: what kind, how many)
     end
     -- what an inspection read (or that it is still unknown)
     if INSPECT_KINDS[M.FIND_KINDS[i].key] then

@@ -2596,6 +2596,8 @@ do
     { x = 90, y = -20, z = 90, name = "apotheosis:boss_spawner" },    -- (another, further)
     { x = 14, y = -21, z = 12, name = "lootr:lootr_chest" },
     { x = -30, y = -40, z = 5, name = "minecraft:budding_amethyst" },
+    { x = -30, y = -40, z = 6, name = "minecraft:budding_amethyst" },
+    { x = -120, y = -50, z = 5, name = "ae2:flawless_budding_quartz" }, -- (another mod's geode)
     { x = 3, y = -2, z = 1, name = "minecraft:chest" },               -- (a plain chest: not loot)
     { x = 60, y = -30, z = -60, name = "minecraft:end_portal_frame" },
   }
@@ -2605,7 +2607,10 @@ do
   local list = factory.finds(F)
   local kinds = {}
   for _, f in ipairs(list) do kinds[#kinds + 1] = f.kind .. f.n end
-  check(table.concat(kinds, " ") == "portal1 spawner2 spawner1 loot1 geode1 bricks30",
+  local geodes = {}
+  for _, f in ipairs(list) do if f.kind == "geode" then geodes[#geodes + 1] = f.detail end end
+  check(geodes[1] == "amethyst x2" and geodes[2] == "quartz", "geodes say their kind: " .. table.concat(geodes, " / "))
+  check(table.concat(kinds, " ") == "portal1 spawner2 spawner1 loot1 geode2 geode1 bricks30",
     "by kind (portal room first), nearest first, one site per cluster: " .. table.concat(kinds, " "))
   local sp = list[2]
   -- (the middle of the two: 11,-20,10.5 -> 111,50,-189)
