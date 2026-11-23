@@ -579,20 +579,27 @@ end
 -- At home: fuel for `level` through the home chest (the base sends it there;
 -- no modem on the wired network needed), burnt. It finds the chest by
 -- turning, and turns back.
-local function fuelUp(level)
-  local f = turtle.getFuelLevel()
-  if f == "unlimited" or f >= level then return end
+-- At home: face the chest (what the base sends lands there, and supplies
+-- are taken from in front), run fn, face the way it did. false: no chest.
+local function atChest(fn)
   local turns = 0
   while turns < 4 do
     local ok, b = turtle.inspect()
     if ok and b.name:find("chest") then break end
     turtle.turnRight(); turns = turns + 1
   end
-  if turns < 4 then
+  if turns < 4 then fn() end
+  for _ = 1, (4 - turns) % 4 do turtle.turnRight() end
+  return turns < 4
+end
+
+local function fuelUp(level)
+  local f = turtle.getFuelLevel()
+  if f == "unlimited" or f >= level then return end
+  atChest(function()
     link.supply({ fuel = math.ceil((level - f) / 80) })
     refuel(level)
-  end
-  for _ = 1, (4 - turns) % 4 do turtle.turnRight() end
+  end)
 end
 
 local function needHome()
@@ -1099,7 +1106,7 @@ elseif args[1] == "serve" then
         end
         return #missing > 0
       end
-      if lacking() then link.supply({ tools = missing }) end
+      if lacking() then atChest(function() link.supply({ tools = missing }) end) end
       if turtle.getFuelLevel() ~= "unlimited" and turtle.getFuelLevel() < needFuel then
         log(("Need about %d fuel for that job, have %d: handing it back"):format(needFuel, turtle.getFuelLevel()))
         link.talk("no fuel", { job = j, need = needFuel }, false)

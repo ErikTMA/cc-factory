@@ -1924,10 +1924,19 @@ function M.handle(F, from, msg)
       -- it couldn't get the job's tools: back to the front, for when there are
       table.insert(F.queue, 1, msg.job)
       t.job = nil
+      -- (only what storage has none of is crafted: one it couldn't take from
+      -- its chest is still in storage)
+      local ok, stock = pcall(F.deps.storage.list)
+      stock = ok and type(stock) == "table" and stock or {}
+      local crafting = {}
       for _, item in ipairs(msg.job.tools or {}) do
-        if recipes.CRAFT[item] then F.toolWants = F.toolWants or {}; F.toolWants[item] = true end
+        if (stock[item] or 0) == 0 and recipes.CRAFT[item] then
+          F.toolWants = F.toolWants or {}; F.toolWants[item] = true
+          crafting[#crafting + 1] = item
+        end
       end
-      F.note = ("%s had no %s for its job: crafting one"):format(label(F, from), table.concat(msg.need or msg.job.tools or {}, ", "))
+      F.note = ("%s had no %s for its job%s"):format(label(F, from), table.concat(msg.need or msg.job.tools or {}, ", "),
+        #crafting > 0 and ": crafting one" or " (storage has one: next time)")
     elseif msg.state == "no fuel" and msg.job then
       oremap.release(F.map, msg.job.id)
       table.insert(F.queue, 1, msg.job) -- back to the front for someone else

@@ -855,14 +855,38 @@ do
     ["9,-10,8"] = { id = "lootr:lootr_chest", LootTable = "minecraft:chests/simple_dungeon", LootrHasBeenOpened = 0 },
   }
   local homes = { { x = 0, z = 0, h = 0 } }
+  local stock = { ["advancedperipherals:block_reader"] = 1 }
   local B, fleet = runFleet(W, homes, function(Base, B)
     B.anchor = { wx = 0, wy = 0, wz = 0 }
     table.insert(B.homes, { id = 1, x = 0, y = 0, z = 0, facing = "north", role = "miner", source = "cfg", owner = 101 })
-    B.deps.storage.list()["advancedperipherals:block_reader"] = 1 -- (one in storage: the job may go out)
+    -- storage with one block reader: the base sends it into the miner's home
+    -- chest (behind its home: 0,0,1), as storage.send does; the miner doesn't
+    -- have one, and faces away from its chest at home (live: it sucked from
+    -- the open air, handed the job back, again and again)
+    B.homes[1].chest = "minecraft:chest_home"
+    -- (a listing, as the real one: the base counts its sends down in it)
+    B.deps.storage.list = function() local c = {} for k, v in pairs(stock) do c[k] = v end return c end
+    -- (as storage.store: the chest emptied into storage before anything is sent)
+    B.deps.storage.store = function()
+      local c, n = W.chests["0,1"] or {}, 0
+      for item, k in pairs(c) do
+        if k > 0 then stock[item] = (stock[item] or 0) + k; W.chest[item] = (W.chest[item] or 0) - k; n = n + k end
+      end
+      W.chests["0,1"] = {}
+      return n
+    end
+    B.deps.storage.send = function(_, item, n)
+      local m = math.min(n, stock[item] or 0)
+      stock[item] = (stock[item] or 0) - m
+      W.chests["0,1"] = W.chests["0,1"] or {}
+      W.chests["0,1"][item] = (W.chests["0,1"][item] or 0) + m
+      W.chest[item] = (W.chest[item] or 0) + m
+      return m
+    end
     oremap.scan(B.map, { x = 7, y = -10, z = 8 }, 8, {
       { x = 6, y = -10, z = 8, name = "minecraft:spawner" }, { x = 9, y = -10, z = 8, name = "lootr:lootr_chest" } })
     Base.inspectUnknown(B)
-  end, { inv = { "advancedperipherals:block_reader" } })
+  end)
   local f = fleet[1]
   check(not f.err, "ran without error: " .. tostring(f.err))
   local sp, ch = (B.inspected or {})["6,-10,8"], (B.inspected or {})["9,-10,8"]
@@ -876,7 +900,8 @@ do
     "the scanner is back on (the reader was only swapped in to read)")
   local carried = false
   for i = 1, 16 do local it = f.T.inv[i]; if it and it.name == "advancedperipherals:block_reader" then carried = true end end
-  check(not carried and (W.chest["advancedperipherals:block_reader"] or 0) == 1, "the reader went back into its chest at the end")
+  check(not carried and stock["advancedperipherals:block_reader"] == 1,
+    "it fetched the reader from its chest (facing it), and gave it back: in storage again")
 end
 
 print("scenario: a job above its home (coal's old Y 96 from a base at 77): it mines below home")

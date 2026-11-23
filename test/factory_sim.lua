@@ -2439,8 +2439,10 @@ do
   local r0 = factory.handle(F, 300, { type = "status", state = "idle", role = "miner", label = "m-300", fuel = 9000 })
   check(r0.type == "job" and r0.job.tools and r0.job.tools[1] == READER, "a reader in storage: the job goes out, with its tool list")
   -- a miner that couldn't get it after all hands it back: the front of the queue
+  F.toolWants = nil
   factory.handle(F, 300, { type = "status", state = "no tool", role = "miner", label = "m-300", job = r0.job, need = { READER } })
   check(F.queue[1] == r0.job and F.turtles[300].job == nil, "handed back ('no tool'): first in the queue again")
+  check(not (F.toolWants or {})[READER], "one is in storage: no other crafted for it (live: 3 crafted, one per hand-back)")
   r0 = factory.handle(F, 300, { type = "status", state = "idle", role = "miner", label = "m-300", fuel = 9000 })
   check(r0.type == "job" and r0.inspect and r0.inspect[1].x == 8 and r0.inspect[1].y == -20 and r0.inspect[1].z == 10,
     "the miner with one takes it, blocks in its own frame (from its home 2,0,0)")
