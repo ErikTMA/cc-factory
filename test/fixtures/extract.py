@@ -31,10 +31,11 @@ def read(path):
 
 WANT = {
     "minecraft": ["observer", "diamond_pickaxe", "stick", "oak_planks", "chest", "glass_pane", "compass",
-                  "iron_bars", "redstone_block", "copper_block", "iron_block", "furnace"],
+                  "iron_bars", "redstone_block", "copper_block", "iron_block", "furnace", "shears"],
     "computercraft": ["computer_advanced", "turtle_advanced", "computer_normal", "turtle_normal",
-                      "wired_modem", "wired_modem_full_from", "turtle_upgrade", "wireless_modem_normal"],
-    "advancedperipherals": ["geo_scanner", "peripheral_casing", "environment_detector"],
+                      "wired_modem", "wired_modem_full_from", "turtle_upgrade", "wireless_modem_normal",
+                      "wireless_modem_advanced"],
+    "advancedperipherals": ["geo_scanner", "peripheral_casing", "environment_detector", "block_reader"],
     "utilitarian": ["tiny_fuel/tiny_coal", "tiny_fuel/tiny_charcoal"],
     "alltheores": ["copper_ore_hammer", "iron_ore_hammer", "crafting/hammer/iron/dust_from_raw",
                    "crafting/hammer/gold/dust_from_raw", "crafting/hammer/copper/dust_from_raw"],

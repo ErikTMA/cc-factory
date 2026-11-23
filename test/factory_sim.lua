@@ -1205,6 +1205,45 @@ do
 end
 
 
+print("scenario: READER picked, no block reader in storage: the base crafts one from raw materials")
+print("          (casing, observer with nether quartz, full wired modem, redstone blocks), and sends it")
+do
+  -- (storage as it was, put back after: the scenarios after this one use it)
+  local function copy(t) local o = {} for k, v in pairs(t) do o[k] = type(v) == "table" and copy(v) or v end return o end
+  local kept = {}
+  for _, name in ipairs({ "minecraft:barrel_0", "minecraft:barrel_1" }) do kept[name] = copy(W.inv[name].slots); W.inv[name].slots = {} end
+  local raw = { { "minecraft:iron_ingot", 24 }, { "minecraft:redstone", 64 }, { "minecraft:cobblestone", 16 },
+                { "minecraft:stone", 16 }, { "minecraft:quartz", 2 }, { "minecraft:coal", 32 } }
+  for _, r in ipairs(raw) do W.inv["minecraft:barrel_0"].insert(r[1], r[2]) end
+  newInv("minecraft:chest_79")
+  F.turtles[79] = { id = 79, role = "miner", label = "miner-79", chest = "minecraft:chest_79", state = "idle" }
+  F.selected = 79
+  factory.toggleAccessory(F, "READER")
+  F.selected = nil
+  check(factory.hasAccessory(F, 79, "READER"), "READER picked for miner-79")
+  F.held = nil; F.deps.storage.forget()
+  local r = factory.supply(F, 79, { fuel = 0 }, {})
+  check((F.toolWants or {})["advancedperipherals:block_reader"] and r.short and r.short["advancedperipherals:block_reader"] == 1,
+    "none in storage: short, and queued for crafting")
+  F.failStreak, F.lastFail = 0, nil
+  local ok = runUntil(function() return (F.crafted["advancedperipherals:block_reader"] or 0) >= 1 end, 400000)
+  check(ok, "the assembler crafted a block reader (the recipe from the jar)")
+  if not ok then print("    missing:", textutils.serialize(F.prod and F.prod.missing), "note:", F.note) end
+  for _, part in ipairs({ "advancedperipherals:peripheral_casing", "minecraft:observer", "computercraft:wired_modem_full",
+                          "minecraft:redstone_block" }) do
+    check((F.crafted[part] or 0) >= 1, "crafted " .. part)
+  end
+  F.held = nil; F.deps.storage.forget()
+  local r2 = factory.supply(F, 79, { fuel = 0 }, {})
+  check(W.inv["minecraft:chest_79"].count("advancedperipherals:block_reader") == 1
+        and r2.accessories and r2.accessories[1] == "advancedperipherals:block_reader",
+    "the next supply sends it, and the miner is told to keep it")
+  F.turtles[79], F.toolWants = nil, nil
+  for name, slots in pairs(kept) do W.inv[name].slots = slots end
+  W.inv["minecraft:chest_79"].slots = {}
+  F.held = nil; F.deps.storage.forget()
+end
+
 print("scenario: AE2-style: a plain turtle in storage is used, the build only fits the upgrades;")
 print("          an upgraded turtle in storage is left alone")
 do

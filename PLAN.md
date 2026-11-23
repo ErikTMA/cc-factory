@@ -93,7 +93,7 @@ over rednet. Friends-only server: base-ID pinning, no signing.
   `getBlockData()` (the block entity's NBT), `hasBlockEntity()` of the block
   at `owner.getFacing()`: in FRONT of a turtle only. Recipe: iron ingots,
   redstone blocks, a wired modem (full), a peripheral casing and an observer
-  (nether quartz): crafted by hand. Live data: a spawner's
+  (nether quartz); in the fixture, the base crafts it. Live data: a spawner's
   `SpawnData.entity.id` (+ `active_effects`), an Apotheosis boss spawner's
   `boss_item` (`empty:empty` = a random boss), a Lootr chest's `LootTable`
   (names the structure: `repurposed_structures:chests/dungeons/deep`,

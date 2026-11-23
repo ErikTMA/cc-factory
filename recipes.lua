@@ -56,6 +56,11 @@ R.CRAFT = {
     [1] = "minecraft:stone", [2] = "minecraft:stone", [3] = "minecraft:stone",
     [5] = "minecraft:stone", [6] = "minecraft:ender_pearl", [7] = "minecraft:stone",
     [9] = "minecraft:stone", [10] = "minecraft:stone", [11] = "minecraft:stone" } },
+  -- (IRI / MAO / IRI: iron, redstone block, wired modem (full), casing, observer)
+  ["advancedperipherals:block_reader"] = { count = 1, grid = {
+    [1] = "minecraft:iron_ingot", [2] = "minecraft:redstone_block", [3] = "minecraft:iron_ingot",
+    [5] = "computercraft:wired_modem_full", [6] = "advancedperipherals:peripheral_casing", [7] = "minecraft:observer",
+    [9] = "minecraft:iron_ingot", [10] = "minecraft:redstone_block", [11] = "minecraft:iron_ingot" } },
   ["minecraft:observer"] = { count = 1, grid = {
     [1] = "minecraft:cobblestone", [2] = "minecraft:cobblestone", [3] = "minecraft:cobblestone",
     [5] = "minecraft:redstone", [6] = "minecraft:redstone", [7] = "minecraft:quartz",
