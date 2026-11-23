@@ -429,6 +429,138 @@ do
     "the error names the fuel and the blocks around: " .. tostring(err))
 end
 
+print("scenario: a stale trail (saved deep, the miner since back near home) and the way up blocked:")
+print("          retracing fails cleanly, never 'attempt to index a nil value' (live miner-6)")
+do
+  -- a job 20 down: its trail starts with the shaft (0,-1,0), (0,-2,0), ...
+  local W = newWorld(7, 1, { span = 40, ymin = -40, ymax = 6 })
+  local T, api, sc = newTurtle(W, 1, 0)
+  local hx, hy, hz = T.x, T.y, T.z -- (its home, in the world)
+  T.inv[1] = { name = "minecraft:coal", count = 64 }
+  local files = {}
+  local budget = 120
+  local realForward = api.forward
+  api.forward = function()
+    budget = budget - 1
+    if budget == 0 then error("CHUNK UNLOADED") end
+    return realForward()
+  end
+  runProgram(makeEnv(T, api, sc, files), "y=-20", "at=0", "lanes=2", "length=32")
+  api.forward = realForward
+  local trail = files["oreminer.trail"] or ""
+  check(trail:find('"0,%-2,0"') ~= nil, "its saved trail starts down the shaft")
+  -- its trail on disk still says deep; it is in its shaft 2 below home, the
+  -- job stopped (it heads home), and home sealed off: no way there, so it
+  -- falls back to its (stale) trail
+  local st = load("return " .. files["oreminer.state"])()
+  T.x, T.y, T.z = hx, hy - 2, hz
+  st.pos, st.pending, st.stop = { x = 0, y = -2, z = 0 }, nil, true
+  files["oreminer.state"] = makeEnv(T, api, sc, files).textutils.serialize(st)
+  for _, d in ipairs({ { 1, 0, 0 }, { -1, 0, 0 }, { 0, 0, 1 }, { 0, 0, -1 }, { 0, 1, 0 }, { 0, -1, 0 } }) do
+    local x, y, z = hx + d[1], hy + d[2], hz + d[3]
+    if W.get(x, y, z) ~= "minecraft:chest" then W.set(x, y, z, "minecraft:bedrock") end
+  end
+  -- and the shaft sealed below 0,-3,0: the detour can't get anywhere, so it
+  -- retraces from the shaft (as miner-6 did)
+  for _, d in ipairs({ { 1, -2, 0 }, { -1, -2, 0 }, { 0, -2, 1 }, { 0, -2, -1 },
+                       { 1, -3, 0 }, { -1, -3, 0 }, { 0, -3, 1 }, { 0, -3, -1 }, { 0, -4, 0 } }) do
+    W.set(hx + d[1], hy + d[2], hz + d[3], "minecraft:bedrock")
+  end
+  W.set(hx, hy - 3, hz, nil)
+  local env2 = makeEnv(T, api, sc, files)
+  local said = {}
+  -- (live: the detour gave up without a single step, the stale trail whole;
+  -- here the way down opens only once it has given up)
+  local gaveUp = false
+  env2.print = function(...)
+    local l = table.concat({ ... }, " ")
+    said[#said + 1] = l
+    if l:find("back the way I came") then gaveUp = true end
+  end
+  local realDown, realDigDown = api.down, api.digDown
+  api.down = function() if not gaveUp then return false, "Movement obstructed" end return realDown() end
+  api.digDown = function() if not gaveUp then return false, "Cannot break unbreakable block" end return realDigDown() end
+  local ok, err = runProgram(env2, "resume")
+  api.down, api.digDown = realDown, realDigDown
+  local retraced = false
+  for _, l in ipairs(said) do if l:find("back the way I came") then retraced = true end end
+  check(retraced, "it fell back to its trail (the case that crashed)")
+  check(not tostring(err):find("attempt to index"), "no crash in retrace: " .. tostring(err))
+  check(T.y >= hy - 3, ("it didn't wander off down a stale trail (ends at %d below home)"):format(hy - T.y))
+end
+
+print("scenario: its position drifted (the world says one block down and south of what its file says):")
+print("          it finds home with the scanner (chest behind, modem above), fixes its position and gets home (live miner-6)")
+do
+  local W = newWorld(7, 1, { span = 40, ymin = -40, ymax = 6 })
+  local T, api, sc = newTurtle(W, 1, 0)
+  local hx, hy, hz = T.x, T.y, T.z
+  T.inv[1] = { name = "minecraft:coal", count = 64 }
+  local files = {}
+  local budget = 120
+  local realForward = api.forward
+  api.forward = function()
+    budget = budget - 1
+    if budget == 0 then error("CHUNK UNLOADED") end
+    return realForward()
+  end
+  runProgram(makeEnv(T, api, sc, files), "y=-20", "at=0", "lanes=2", "length=32")
+  api.forward = realForward
+  -- home as live: a wired modem above it
+  W.set(hx, hy + 1, hz, "computercraft:wired_modem_full")
+  -- the file says 2 down the shaft; it is really 1 down and 1 south of it,
+  -- in a dug pocket
+  local st = load("return " .. files["oreminer.state"])()
+  st.pos, st.pending, st.stop = { x = 0, y = -2, z = 0 }, nil, true
+  files["oreminer.state"] = makeEnv(T, api, sc, files).textutils.serialize(st)
+  W.set(hx, hy - 1, hz + 1, nil)
+  T.x, T.y, T.z = hx, hy - 1, hz + 1
+  local env2 = makeEnv(T, api, sc, files)
+  local said = {}
+  env2.print = function(...) said[#said + 1] = table.concat({ ... }, " ") end
+  local ok, err = runProgram(env2, "resume")
+  local fixed = false
+  for _, l in ipairs(said) do if l:find("not where I thought") then fixed = true end end
+  check(fixed, "it says it found itself off and fixed it")
+  check(T.x == hx and T.y == hy and T.z == hz, ("it got home (off by %d,%d,%d): %s"):format(T.x - hx, T.y - hy, T.z - hz, tostring(err)))
+  check(not tostring(err):find("Cannot reach home") and not tostring(err):find("No chest"), "no 'cannot reach home': " .. tostring(err))
+end
+
+print("scenario: two homes side by side, both 1 block from where it thinks home is: it doesn't guess")
+do
+  local W = newWorld(7, 1, { span = 40, ymin = -40, ymax = 6 })
+  local T, api, sc = newTurtle(W, 1, 0)
+  local hx, hy, hz = T.x, T.y, T.z
+  T.inv[1] = { name = "minecraft:coal", count = 64 }
+  local files = {}
+  T.fuel = 2000
+  -- (no job run: a state of its own)
+  W.set(hx, hy + 1, hz, "computercraft:wired_modem_full")
+  -- a second home 2 east: open cell, the same chest behind, a modem above
+  local chestDz
+  for _, dz in ipairs({ -1, 1 }) do if W.get(hx, hy, hz + dz) == "minecraft:chest" then chestDz = dz end end
+  local chestDx
+  for _, dx in ipairs({ -1, 1 }) do if W.get(hx + dx, hy, hz) == "minecraft:chest" then chestDx = dx end end
+  check(chestDz or chestDx, "(the test world has a home chest)")
+  local ox, oz = (chestDz and 2 or 0), (chestDx and 2 or 0)
+  W.set(hx + ox, hy, hz + oz, nil)
+  W.set(hx + ox + (chestDx or 0), hy, hz + oz + (chestDz or 0), "minecraft:chest")
+  W.set(hx + ox, hy + 1, hz + oz, "computercraft:wired_modem_full")
+  -- it is midway, a block below; its file says straight below home
+  W.set(hx + ox / 2, hy - 1, hz + oz / 2, nil)
+  T.x, T.y, T.z = hx + ox / 2, hy - 1, hz + oz / 2
+  local env = makeEnv(T, api, sc, files)
+  files["oreminer.state"] = env.textutils.serialize({
+    pos = { x = 0, y = -1, z = 0 }, heading = 1, homeHeading = 1, stop = true, dy = -10, -- (newTurtle(W, 1, ..): east)
+    lane = 0, lanes = 1, progress = 0, length = 8, sector = 0, along = 0, mined = 0, known = {} })
+  local said = {}
+  env.print = function(...) said[#said + 1] = table.concat({ ... }, " ") end
+  runProgram(env, "resume")
+  local fixed = false
+  for _, l in ipairs(said) do if l:find("not where I thought") then fixed = true end end
+  check(not fixed, "two equally near homes: it doesn't pick one")
+end
+
 -- Scenario 3: inventory fills up -> service trips to the chest
 print("scenario: small inventory budget forces trips home")
 do

@@ -381,22 +381,37 @@ end
 -- trail cell now was put there since: dug, or another turtle waited for.)
 local function retrace()
   log("No way found around: back the way I came")
-  for i = #TRAIL - 1, 0, -1 do
+  -- (from the trail's end, one adjacent cell at a time: never by index into
+  -- a trail each step shortens, never to a cell that isn't next to it)
+  for _ = 1, 100000 do
+    if S.pos.x == 0 and S.pos.y == 0 and S.pos.z == 0 then return true end
+    local n, here = #TRAIL, key(S.pos.x, S.pos.y, S.pos.z)
+    if n == 0 or TRAIL[n] ~= here then
+      -- (a trail saved before its last moves: it doesn't lead from here)
+      log("My trail doesn't lead from here: can't go back the way I came")
+      return false
+    end
     local x, y, z = 0, 0, 0
-    if i > 0 then
-      local a, b, c = TRAIL[i]:match("^(-?%d+),(-?%d+),(-?%d+)$")
+    if n > 1 then
+      local a, b, c = TRAIL[n - 1]:match("^(-?%d+),(-?%d+),(-?%d+)$")
       x, y, z = tonumber(a), tonumber(b), tonumber(c)
     end
+    local dx, dy, dz = x - S.pos.x, y - S.pos.y, z - S.pos.z
+    if math.abs(dx) + math.abs(dy) + math.abs(dz) ~= 1 then
+      log("My trail has a gap here: can't go back the way I came")
+      return false
+    end
     local kind
-    if y > S.pos.y then kind = "up" elseif y < S.pos.y then kind = "down"
+    if dy == 1 then kind = "up" elseif dy == -1 then kind = "down"
     else
-      for h = 0, 3 do
-        if S.pos.x + DIRS[h][1] == x and S.pos.z + DIRS[h][3] == z then turnTo(h); kind = "fwd" end
-      end
+      for h = 0, 3 do if DIRS[h][1] == dx and DIRS[h][3] == dz then turnTo(h); kind = "fwd" end end
     end
     if not kind or not step(kind) then return false end
+    -- the trail ends where it stands now (step() may have cut it already)
+    for j = #TRAIL, n, -1 do TRAIL_AT[TRAIL[j]] = nil; TRAIL[j] = nil end
+    if n > 1 then TRAIL_AT[TRAIL[n - 1]] = n - 1 end
   end
-  return S.pos.x == 0 and S.pos.y == 0 and S.pos.z == 0
+  return false
 end
 
 local function goAround(t, blocked, patience)
@@ -464,7 +479,8 @@ local SHAFT_SWITCH = 12 -- vertical distance that counts as changing level under
 local function goTo(t, patience)
   -- (mining at the home level itself, dy = 0, has no shaft: it works in its
   -- own tunnels around home)
-  local viaShaft = S.dy ~= 0 and t.y ~= S.pos.y
+  -- (above home there is no shaft: its column there is the modem over home)
+  local viaShaft = S.dy ~= 0 and t.y ~= S.pos.y and S.pos.y <= HOME.y and t.y <= HOME.y
                    and (t.y == HOME.y or S.pos.y == HOME.y or math.abs(t.y - S.pos.y) > SHAFT_SWITCH)
   if not viaShaft then return goDirect(t, patience) end
   -- to the shaft at the job's level at least: below it (digging an ore a
@@ -474,6 +490,60 @@ local function goTo(t, patience)
      and goDirect({ x = 0, y = level, z = 0 }, patience)
      and goDirect({ x = 0, y = t.y, z = 0 }, patience)
      and goDirect(t, patience)
+end
+
+-- Its position can be off from the world: a chunk saved before its last
+-- moves, a server that stopped without saving the chunk, ... Then every way
+-- home it plans is wrong. Home looks like nothing else nearby: an open cell
+-- with the home chest behind it and the wired modem above (the base link).
+-- So it asks the world: the scanner finds those cells; the one nearest where
+-- it thinks home is (and only if it is the only one that near, and within a
+-- few blocks) is home. Returns true if it moved its position.
+local RELOCATE_RANGE = 4
+local function relocate()
+  if not link.scanner() then return false end
+  local ok, blocks = pcall(scan)
+  if not ok or type(blocks) ~= "table" then return false end
+  local at = {}
+  for _, b in ipairs(blocks) do at[key(b.x, b.y, b.z)] = b.name end
+  local back = DIRS[(S.homeHeading + 2) % 4]
+  -- where it thinks home is, from where it stands
+  local tx, ty, tz = -S.pos.x, -S.pos.y, -S.pos.z
+  local best, bestD, tie
+  for _, b in ipairs(blocks) do
+    if b.name == "computercraft:wired_modem_full" then
+      local x, y, z = b.x, b.y - 1, b.z
+      local here = at[key(x, y, z)]
+      local chest = at[key(x + back[1], y, z + back[3])]
+      if (not here or isTurtle(here)) and chest and chest:find("chest") then
+        local d = math.abs(x - tx) + math.abs(y - ty) + math.abs(z - tz)
+        if not bestD or d < bestD then best, bestD, tie = { x = x, y = y, z = z }, d, false
+        elseif d == bestD then tie = true end
+      end
+    end
+  end
+  -- (also home itself, where it stands: nothing in the scan at 0,0,0)
+  if not best or tie or bestD == 0 or bestD > RELOCATE_RANGE then return false end
+  log(("I'm not where I thought: home is %d,%d,%d from here, not %d,%d,%d. Fixing my position."):format(
+    best.x, best.y, best.z, tx, ty, tz))
+  S.pos = { x = -best.x, y = -best.y, z = -best.z }
+  TRAIL, TRAIL_AT = {}, {} -- (the old trail was from the wrong position)
+  save()
+  saveTrail()
+  return true
+end
+
+-- Home, and if it can't get there or isn't home when it gets there, checks
+-- its position against the world (relocate) and tries once more.
+local function atHome()
+  turnTo((S.homeHeading + 2) % 4)
+  local ok, b = turtle.inspect()
+  return ok and b.name:find("chest") ~= nil
+end
+local function goHome()
+  if goTo(HOME) and atHome() then return true end
+  if relocate() then return goTo(HOME) end
+  return S.pos.x == 0 and S.pos.y == 0 and S.pos.z == 0
 end
 
 -- -------------------------------------------------------------- inventory --
@@ -628,7 +698,7 @@ end
 local function serviceTrip(reason)
   log("Returning home: " .. reason)
   local back = { x = S.pos.x, y = S.pos.y, z = S.pos.z }
-  if not goTo(HOME) then error("Cannot reach home (" .. nav.surroundings() .. ")", 0) end
+  if not goHome() then error("Cannot reach home (" .. nav.surroundings() .. ")", 0) end
   unload()
   refuel()
   local reply = talk("unloading")
@@ -773,7 +843,7 @@ local function run()
     if not finished() then S.lane, S.progress = S.lane + 1, 0 end
     save()
   end
-  if not goTo(HOME) then error("Cannot reach home (" .. nav.surroundings() .. ")", 0) end
+  if not goHome() then error("Cannot reach home (" .. nav.surroundings() .. ")", 0) end
   unload()
   turnTo(S.homeHeading)
   S.done = true
