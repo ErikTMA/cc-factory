@@ -197,6 +197,7 @@ local function newTurtle(W, startHeading, fuel, start)
 end
 
 local PTYPE = { ["advancedperipherals:geo_scanner"] = "geo_scanner", -- AP 0.8.2a type name
+                ["advancedperipherals:block_reader"] = "block_reader",
                 ["computercraft:wireless_modem_normal"] = "modem",
                 ["computercraft:wireless_modem_advanced"] = "modem" }
 
@@ -217,6 +218,21 @@ local function makeEnv(T, api, scanner, files, bus, id)
     wrap = function(side)
       local t = PTYPE[T and T[side] or ""]
       if t == "geo_scanner" then return scanner end
+      -- AP 0.8.2a BlockReaderPeripheral: the block in FRONT of the turtle only
+      -- (owner.getFacing), its block entity's data; nothing for any other
+      if t == "block_reader" then
+        local function front()
+          local d = DIRS[T.h]
+          return T.x + d[1], T.y, T.z + d[2]
+        end
+        return {
+          getBlockName = function() local x, y, z = front(); return T.W.get(x, y, z) or "minecraft:air" end,
+          getBlockData = function()
+            local x, y, z = front()
+            return T.W.blockData and T.W.blockData[x .. "," .. y .. "," .. z] or nil
+          end,
+        }
+      end
       if t then return {} end
     end,
   }
@@ -725,7 +741,9 @@ local function runFleet(W, homes, setup, opts)
     T.label = "T" .. i
     T.inv[1] = { name = "minecraft:coal", count = opts.coal or 64 }
     T.inv[2] = { name = "computercraft:wireless_modem_normal", count = 1 }
-    for j = 3, 2 + (opts.filler or 0) do T.inv[j] = { name = "filler:" .. j, count = 64 } end
+    for j, it in ipairs(opts.inv or {}) do T.inv[2 + j] = { name = it, count = 1 } end
+    T.W = W
+    for j = 3 + #(opts.inv or {}), 2 + #(opts.inv or {}) + (opts.filler or 0) do T.inv[j] = { name = "filler:" .. j, count = 64 } end
     local files = {}
     local env = makeEnv(T, api, sc, files, bus, 100 + i)
     local co = coroutine.create(function()
@@ -799,6 +817,40 @@ do
   for i = 1, 40 do text = text .. (screen[i] or "") .. "\n" end
   check(text:find("iron%s+64 mined") ~= nil, "monitor shows iron total")
   check(text:find("T1") and text:find("T2") and text:find("T3"), "monitor lists all three turtles")
+end
+
+print("scenario: INSPECT: a miner with a block reader goes to each spawner / chest, faces it, reads it;")
+print("          the base gets the mob, the loot table and whether it was opened")
+do
+  local W = newWorld(21, 0, { span = 40, ymin = -30, ymax = 6 })
+  -- a dungeon: a spawner and a Lootr chest, inside stone
+  W.set(6, -10, 8, "minecraft:spawner")
+  W.set(9, -10, 8, "lootr:lootr_chest")
+  W.blockData = {
+    ["6,-10,8"] = { id = "minecraft:mob_spawner", SpawnData = { entity = { id = "minecraft:skeleton",
+      active_effects = { { id = "minecraft:speed", amplifier = 2 } } } } },
+    ["9,-10,8"] = { id = "lootr:lootr_chest", LootTable = "minecraft:chests/simple_dungeon", LootrHasBeenOpened = 0 },
+  }
+  local homes = { { x = 0, z = 0, h = 0 } }
+  local B, fleet = runFleet(W, homes, function(Base, B)
+    B.anchor = { wx = 0, wy = 0, wz = 0 }
+    table.insert(B.homes, { id = 1, x = 0, y = 0, z = 0, facing = "north", role = "miner", source = "cfg", owner = 101 })
+    B.turtles[101] = { id = 101, role = "miner", state = "idle", label = "T1", accessories = { READER = true } }
+    oremap.scan(B.map, { x = 7, y = -10, z = 8 }, 8, {
+      { x = 6, y = -10, z = 8, name = "minecraft:spawner" }, { x = 9, y = -10, z = 8, name = "lootr:lootr_chest" } })
+    Base.inspectUnknown(B)
+  end, { inv = { "advancedperipherals:block_reader" } })
+  local f = fleet[1]
+  check(not f.err, "ran without error: " .. tostring(f.err))
+  local sp, ch = (B.inspected or {})["6,-10,8"], (B.inspected or {})["9,-10,8"]
+  check(sp and sp.mob == "minecraft:skeleton" and sp.effects == "speed 3", "the spawner: skeleton, speed 3: " ..
+    tostring(sp and (sp.mob or sp.err)) .. " " .. tostring(sp and sp.effects))
+  check(ch and ch.loot == "minecraft:chests/simple_dungeon" and ch.opened == false, "the chest: its loot table, not opened: " ..
+    tostring(ch and (ch.loot or ch.err)))
+  check(W.get(6, -10, 8) == "minecraft:spawner" and W.get(9, -10, 8) == "lootr:lootr_chest", "neither was dug")
+  check(f.T.x == 0 and f.T.y == 0 and f.T.z == 0, "back home")
+  check(f.T.left == "advancedperipherals:geo_scanner" or f.T.right == "advancedperipherals:geo_scanner",
+    "the scanner is back on (the reader was only swapped in to read)")
 end
 
 print("scenario: a job above its home (coal's old Y 96 from a base at 77): it mines below home")

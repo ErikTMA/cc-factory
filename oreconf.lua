@@ -144,7 +144,11 @@ C.ACCESSORIES = {
     what = "ender modem: talks to the base from anywhere (same dimension)" },
   { name = "SHEAR", items = { "minecraft:shears", "advancedperipherals:weak_automata_core" }, roles = { forester = true },
     what = "shears + Weak Automata Core: shears leaves before felling" },
+  -- (crafted by hand: its recipe needs an observer, i.e. nether quartz)
+  { name = "READER", items = { "advancedperipherals:block_reader" }, roles = { miner = true },
+    what = "block reader: INSPECT on FINDS reads spawners (the mob) and chests (loot, opened)" },
 }
+C.READER_ITEM = "advancedperipherals:block_reader"
 C.ACCESSORY_ITEMS = {}
 for _, a in ipairs(C.ACCESSORIES) do for _, item in ipairs(a.items) do C.ACCESSORY_ITEMS[item] = true end end
 

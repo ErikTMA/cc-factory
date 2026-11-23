@@ -282,7 +282,13 @@ local function drawFinds(UI, out, w, row, h)
     put(out, 1, row, "Nothing yet: scouts report spawners, loot, geodes... when they come home.", colors.lightGray)
     return row + 2
   end
-  put(out, 1, row, ("%-22s %5s  %6s %4s %6s %5s"):format("what", "blocks", "x", "y", "z", "dist"):sub(1, w), colors.lightGray)
+  -- INSPECT UNKNOWN: a miner with a block reader reads the spawners and chests
+  local unknown = 0
+  for _, f in ipairs(list) do unknown = unknown + (f.unknown or 0) end
+  local il = ("INSPECT UNKNOWN (%d)"):format(unknown)
+  button(UI, out, 1, row, #il + 2, il, false, function() factory.inspectUnknown(F) end)
+  row = row + 1
+  put(out, 1, row, ("%-31s %3s %5s %4s %5s %4s"):format("what", "n", "x", "y", "z", "dist"):sub(1, w), colors.lightGray)
   row = row + 1
   local per = math.max(1, h - row - 2)
   local pages = math.ceil(#list / per)
@@ -290,8 +296,9 @@ local function drawFinds(UI, out, w, row, h)
   local first = (UI.findPage - 1) * per + 1
   for i = first, math.min(#list, first + per - 1) do
     local f = list[i]
-    put(out, 1, row, ("%-22s %5d  %6s %4d %6s %5d"):format(f.label:sub(1, 22), f.n, tostring(f.wx or "?"),
-      f.wy or f.y, tostring(f.wz or "?"), f.dist):sub(1, w), colors.white)
+    local what = f.label .. (f.detail and (": " .. f.detail) or "")
+    put(out, 1, row, ("%-31s %3d %5s %4d %5s %4d"):format(what:sub(1, 31), math.min(f.n, 999), tostring(f.wx or "?"),
+      f.wy or f.y, tostring(f.wz or "?"), f.dist):sub(1, w), (f.unknown or 0) > 0 and colors.lightGray or colors.white)
     UI.buttons[#UI.buttons + 1] = { x1 = 1, x2 = w, y = row, label = "find " .. f.kind,
       action = function()
         local wp = factory.findWaypoint(F, f)

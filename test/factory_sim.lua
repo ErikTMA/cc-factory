@@ -2294,6 +2294,70 @@ do
   check(#bad == 0, "presets between Y -58 and 64: " .. table.concat(bad, ", "))
 end
 
+print("scenario: a turtle's picked accessories survive its status messages (the record is rebuilt each time)")
+do
+  F.turtles[310] = { id = 310, role = "miner", state = "idle", label = "m-310" }
+  F.selected = 310
+  factory.toggleAccessory(F, "MODEM")
+  F.selected = nil
+  factory.handle(F, 310, { type = "status", state = "idle", role = "miner", label = "m-310", fuel = 10 })
+  check(factory.hasAccessory(F, 310, "MODEM"), "MODEM still picked after it talked")
+  F.turtles[310] = nil
+end
+
+print("scenario: INSPECT UNKNOWN: a miner with a block reader reads spawners and chests; FINDS shows what it read")
+do
+  local oremap = baseEnv.require("oremap")
+  local keepMap, keepAnchor, keepQueue = F.map, F.anchor, F.queue
+  F.map, F.findsCache, F.inspected, F.queue = oremap.new(), nil, nil, {}
+  F.anchor = { wx = 100, wy = 70, wz = -200 }
+  oremap.scan(F.map, { x = 0, y = -20, z = 0 }, 200, {
+    { x = 10, y = -20, z = 10, name = "minecraft:spawner" },
+    { x = 14, y = -21, z = 12, name = "lootr:lootr_chest" },
+    { x = 90, y = -20, z = 90, name = "apotheosis:boss_spawner" },
+    { x = -30, y = -40, z = 5, name = "minecraft:budding_amethyst" }, -- (nothing to read)
+  })
+  table.insert(F.homes, { id = 7001, x = 2, y = 0, z = 0, facing = "north", role = "miner", source = "cfg", owner = 300 })
+  table.insert(F.homes, { id = 7002, x = 4, y = 0, z = 0, facing = "north", role = "miner", source = "cfg", owner = 301 })
+  F.turtles[300] = { id = 300, role = "miner", state = "idle", label = "m-300" }
+  F.turtles[301] = { id = 301, role = "miner", state = "idle", label = "m-301" }
+  check(factory.inspectUnknown(F) == nil and F.note:find("READER"), "no miner with a block reader: says so: " .. F.note)
+  F.selected = 300
+  factory.toggleAccessory(F, "READER")
+  F.selected = nil
+  local job = factory.inspectUnknown(F)
+  check(job and #job.inspect == 3 and job.inspect[1].name == "minecraft:spawner" and job.inspect[3].name == "apotheosis:boss_spawner",
+    "queued: the 3 readable blocks, nearest first (not the geode)")
+  check(factory.inspectUnknown(F) == nil and F.note:find("Nothing left"), "asked again: they're in a job already")
+  local r1 = factory.handle(F, 301, { type = "status", state = "idle", role = "miner", label = "m-301", fuel = 9000 })
+  check(r1.type ~= "job", "a miner without a block reader doesn't take it")
+  local r0 = factory.handle(F, 300, { type = "status", state = "idle", role = "miner", label = "m-300", fuel = 9000 })
+  check(r0.type == "job" and r0.inspect and r0.inspect[1].x == 8 and r0.inspect[1].y == -20 and r0.inspect[1].z == 10,
+    "the miner with one takes it, blocks in its own frame (from its home 2,0,0)")
+  check(factory.jobText(r0.job) == "inspect 3 blocks", "job text: " .. factory.jobText(r0.job))
+  -- it comes back with what it read (its frame)
+  factory.handle(F, 300, { type = "status", state = "done", role = "miner", label = "m-300", job = r0.job, mined = 0,
+    inspected = {
+      { x = 8, y = -20, z = 10, name = "minecraft:spawner", mob = "minecraft:zombie" },
+      { x = 12, y = -21, z = 12, name = "lootr:lootr_chest", loot = "minecraft:chests/simple_dungeon", opened = false },
+      { x = 88, y = -20, z = 90, name = "apotheosis:boss_spawner", boss = "random" } } })
+  check(F.inspected["10,-20,10"] and F.inspected["10,-20,10"].mob == "minecraft:zombie", "stored in the base's frame")
+  local byKind = {}
+  for _, f in ipairs(factory.finds(F)) do byKind[f.kind] = byKind[f.kind] or f end
+  local sp = byKind.spawner
+  check(sp and sp.detail and sp.detail:find("zombie") and sp.detail:find("simple dungeon"),
+    "FINDS: the spawner's mob, and the structure from the chest beside it: " .. tostring(sp and sp.detail))
+  check(byKind.loot and byKind.loot.detail:find("1 unopened"), "the chest: unopened: " .. tostring(byKind.loot and byKind.loot.detail))
+  check(factory.findWaypoint(F, sp):find('name:"spawner zombie 1"'), "the waypoint names the mob: " .. factory.findWaypoint(F, sp))
+  local unknown = 0
+  for _, f in ipairs(factory.finds(F)) do unknown = unknown + (f.unknown or 0) end
+  check(unknown == 0, "nothing unknown left: " .. unknown)
+  check(F.turtles[300].job == nil, "(done: idle means idle)")
+  for _, id in ipairs({ 300, 301 }) do F.turtles[id] = nil end
+  for i = #F.homes, 1, -1 do if F.homes[i].id == 7001 or F.homes[i].id == 7002 then table.remove(F.homes, i) end end
+  F.map, F.anchor, F.queue, F.findsCache, F.inspected = keepMap, keepAnchor, keepQueue, nil, nil
+end
+
 print("scenario: ORES tab: every ore the scans found, by kind, most first; MINE queues a job for them")
 do
   local oremap = baseEnv.require("oremap")

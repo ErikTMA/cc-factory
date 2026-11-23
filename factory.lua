@@ -25,7 +25,7 @@ M.QTY = { 8, 16, 32, 64, 128, 256, 0 } -- job sizes on the monitor; 0 = no limit
 local PERSIST = { "turtles", "queue", "nextJobId", "nextSector", "totals", "counted", "toolWants",
                   "orders", "nextOrderId", "homes", "nextHomeId", "buildSpot", "gpsWanted", "anchor", "ruleJobs", "lastFail", "failStreak",
                   "hammer", "tinyFuel", "craft", "nextCraftId", "crafted",
-                  "saplings", "boneMeal", "dismantle", "scoutAuto", "scouted", "mineAuto", "minedLanes" }
+                  "saplings", "boneMeal", "dismantle", "scoutAuto", "scouted", "mineAuto", "minedLanes", "inspected" }
 
 local CRAFT_PAUSE = 60      -- seconds without craft jobs after one failed
 
@@ -270,6 +270,7 @@ local function oreKey(job) return job and (job.only or "all") or "-" end
 
 function M.jobText(job)
   if not job then return "-" end
+  if job.inspect then return ("inspect %d block%s"):format(#job.inspect, #job.inspect == 1 and "" or "s") end
   if job.scout then
     return ("scout %s@Y%s"):format(job.area and ("area " .. (job.area + 1) .. " ") or "", tostring(job.y))
   end
@@ -1431,6 +1432,7 @@ M.FIND_KINDS = {
   { key = "bricks", label = "stone brick structure", names = { "stone_bricks" }, min = 24 },
 }
 local FIND_JOIN = 24
+local INSPECT_KINDS = { spawner = true, loot = true } -- (what a block reader can tell more about)
 local function findKind(name)
   for i, k in ipairs(M.FIND_KINDS) do
     for _, pat in ipairs(k.names) do
@@ -1449,26 +1451,69 @@ local function toWorld(F, x, y, z)
   return nil, absY(F, y), nil
 end
 
+-- A loot table as a structure name: "repurposed_structures:chests/dungeons/deep"
+-- -> "dungeons deep (repurposed structures)", "minecraft:chests/simple_dungeon"
+-- -> "simple dungeon".
+function M.structureOf(lootTable)
+  local mod, path = tostring(lootTable):match("^([%w_]+):(.+)$")
+  if not mod then return tostring(lootTable) end
+  local what = path:gsub("^chests/", ""):gsub("[/_]", " ")
+  if mod == "minecraft" then return what end
+  return what .. " (" .. mod:gsub("_", " ") .. ")"
+end
+
+-- One line: what the inspections read at a site (nil: nothing yet).
+function M.findDetail(f)
+  local parts = {}
+  local mobs = {}
+  for m, n in pairs(f.mobs or {}) do mobs[#mobs + 1] = n > 1 and (m .. " x" .. n) or m end
+  table.sort(mobs)
+  if #mobs > 0 then parts[#parts + 1] = table.concat(mobs, ", ") end
+  if f.structure then parts[#parts + 1] = f.structure end
+  if (f.unopened or 0) > 0 then parts[#parts + 1] = f.unopened .. " unopened" end
+  if (f.unknown or 0) > 0 then parts[#parts + 1] = f.unknown .. " not inspected" end
+  return #parts > 0 and table.concat(parts, "; ") or nil
+end
+
 -- { { kind, label, n, x, y, z (frame), wx, wy, wz (world, nil without an
 -- anchor), dist (from the base) } }: by kind, then nearest first.
 function M.finds(F)
   local map = F.map
   local a = F.anchor
   local stamp = tostring(map.rev or 0) .. ":" .. map.n .. ":" .. (a and (a.wx .. "," .. a.wy .. "," .. a.wz) or "-")
+                .. ":" .. tostring(F.inspectedRev or 0)
+  local seen = F.inspected or {}
   if F.findsCache and F.findsCache.stamp == stamp then return F.findsCache.list end
   local kindOf, sites = {}, {}
   oremap.each(map, function(x, y, z, name)
     local i = kindOf[name]
     if i == nil then i = findKind(name) or false; kindOf[name] = i end
     if not i then return end
+    local site
     for _, st in ipairs(sites) do
       if st.i == i and math.abs(st.x - x) <= FIND_JOIN and math.abs(st.y - y) <= FIND_JOIN
          and math.abs(st.z - z) <= FIND_JOIN then
         st.n, st.sx, st.sy, st.sz = st.n + 1, st.sx + x, st.sy + y, st.sz + z
-        return
+        site = st
+        break
       end
     end
-    sites[#sites + 1] = { i = i, x = x, y = y, z = z, n = 1, sx = x, sy = y, sz = z }
+    if not site then
+      site = { i = i, x = x, y = y, z = z, n = 1, sx = x, sy = y, sz = z, mobs = {}, loot = {}, unopened = 0, unknown = 0 }
+      sites[#sites + 1] = site
+    end
+    -- what an inspection read (or that it is still unknown)
+    if INSPECT_KINDS[M.FIND_KINDS[i].key] then
+      local r = seen[oremap.key(x, y, z)]
+      if not r or r.err then site.unknown = site.unknown + 1
+      else
+        local mob = r.mob and (tostring(r.mob):gsub("^minecraft:", "") .. (r.effects and (" (" .. r.effects .. ")") or ""))
+                 or (r.boss and (r.boss == "random" and "random boss" or ("boss " .. r.boss)))
+        if mob then site.mobs[mob] = (site.mobs[mob] or 0) + 1 end
+        if r.loot then site.loot[r.loot] = (site.loot[r.loot] or 0) + 1 end
+        if r.opened == false then site.unopened = site.unopened + 1 end
+      end
+    end
   end)
   local list = {}
   for _, st in ipairs(sites) do
@@ -1481,8 +1526,24 @@ function M.finds(F)
       local z = math.floor(st.sz / st.n + 0.5)
       local wx, wy, wz = toWorld(F, x, y, z)
       list[#list + 1] = { i = st.i, kind = k.key, label = k.label, n = st.n, x = x, y = y, z = z,
-                          wx = wx, wy = wy, wz = wz, dist = math.floor(math.sqrt(x * x + z * z) + 0.5) }
+                          wx = wx, wy = wy, wz = wz, dist = math.floor(math.sqrt(x * x + z * z) + 0.5),
+                          mobs = st.mobs, loot = st.loot, unopened = st.unopened,
+                          unknown = INSPECT_KINDS[k.key] and st.unknown or nil }
     end
+  end
+  -- structures: what the loot tables of chests in or near a site say
+  for _, f in ipairs(list) do
+    local near = {}
+    for _, g in ipairs(list) do
+      if g.loot and math.abs(g.x - f.x) <= 32 and math.abs(g.y - f.y) <= 32 and math.abs(g.z - f.z) <= 32 then
+        for t in pairs(g.loot) do near[t] = true end
+      end
+    end
+    local names = {}
+    for t in pairs(near) do names[#names + 1] = M.structureOf(t) end
+    table.sort(names)
+    f.structure = #names > 0 and table.concat(names, ", ") or nil
+    f.detail = M.findDetail(f)
   end
   table.sort(list, function(p, q)
     if p.i ~= q.i then return p.i < q.i end
@@ -1499,8 +1560,94 @@ end
 -- value would hold a ":"; the overworld is the default)). nil: no anchor.
 function M.findWaypoint(F, f)
   if not f.wx then return nil end
-  local name = (f.label .. " " .. f.n):gsub("[^%w ]", " ")
+  local what = f.label
+  local mobs = {}
+  for m in pairs(f.mobs or {}) do mobs[#mobs + 1] = (m:gsub(" %(.*", "")) end
+  table.sort(mobs)
+  if #mobs > 0 then what = what .. " " .. table.concat(mobs, " ") end
+  local name = (what .. " " .. f.n):gsub("[^%w ]", " "):gsub("  +", " ")
   return ('[name:"%s", x:%d, y:%d, z:%d]'):format(name, f.wx, f.wy, f.wz)
+end
+
+-- ---------------------------------------------------------------- inspect --
+local inspectFor
+-- What a block reader can tell (oreminer: spawner mob, loot table, opened):
+-- F.inspected = { ["x,y,z"] = { name, mob, effects, boss, loot, opened, err,
+-- at } }, in the base's frame. INSPECT UNKNOWN on FINDS queues a job for the
+-- nearest spawners and loot chests not read yet; only a miner with a block
+-- reader (READER accessory) takes it.
+M.INSPECT_MAX = 8
+
+-- every block in a queued or running inspect job (not to queue twice)
+local function inspecting(F)
+  local set = {}
+  local function mark(j)
+    for _, b in ipairs(j and j.inspect or {}) do set[oremap.key(b.x, b.y, b.z)] = true end
+  end
+  for _, j in ipairs(F.queue) do mark(j) end
+  for _, t in pairs(F.turtles) do if t.state ~= "idle" and t.state ~= "done" then mark(t.job) end end
+  return set
+end
+
+-- the blocks worth reading not read (or being read) yet, nearest the base first
+function M.inspectTargets(F)
+  local done, busy, out = F.inspected or {}, inspecting(F), {}
+  oremap.each(F.map, function(x, y, z, name)
+    local i = findKind(name)
+    if i and INSPECT_KINDS[M.FIND_KINDS[i].key] then
+      local k = oremap.key(x, y, z)
+      if not done[k] and not busy[k] then out[#out + 1] = { x = x, y = y, z = z, name = name } end
+    end
+  end)
+  table.sort(out, function(a, b)
+    local da, db = a.x * a.x + a.z * a.z + a.y * a.y, b.x * b.x + b.z * b.z + b.y * b.y
+    if da ~= db then return da < db end
+    return oremap.key(a.x, a.y, a.z) < oremap.key(b.x, b.y, b.z)
+  end)
+  return out
+end
+
+function M.inspectUnknown(F)
+  local reader = false
+  for id, t in pairs(F.turtles) do if t.role == "miner" and M.hasAccessory(F, id, "READER") then reader = true end end
+  if not reader then
+    F.note = "Pick READER (block reader) for a miner on the TURTLES tab first"
+    return nil
+  end
+  local all = M.inspectTargets(F)
+  if #all == 0 then F.note = "Nothing left to inspect"; return nil end
+  local list = {}
+  for i = 1, math.min(M.INSPECT_MAX, #all) do list[i] = all[i] end
+  local job = { inspect = list, lanes = 0, length = 0, id = F.nextJobId }
+  F.nextJobId = F.nextJobId + 1
+  F.queue[#F.queue + 1] = job
+  F.note = ("Queued: inspect %d of %d unknown"):format(#list, #all)
+  return job
+end
+
+-- the blocks of an inspect job, in the miner's frame (from its home)
+inspectFor = function(F, id, job)
+  if not job.inspect then return nil end
+  local h = homeOf(F, id)
+  if not h then return nil end
+  local out = {}
+  for i, b in ipairs(job.inspect) do out[i] = { x = b.x - h.x, y = b.y - h.y, z = b.z - h.z, name = b.name } end
+  return out
+end
+
+-- what a miner read (its frame) into F.inspected (the base's frame)
+function M.storeInspected(F, id, list)
+  local h = homeOf(F, id)
+  if not h or type(list) ~= "table" then return end
+  F.inspected = F.inspected or {}
+  for _, r in ipairs(list) do
+    if type(r) == "table" and r.x and r.y and r.z then
+      local k = oremap.key(h.x + r.x, h.y + r.y, h.z + r.z)
+      F.inspected[k] = { name = r.name, mob = r.mob, effects = r.effects, boss = r.boss, loot = r.loot,
+                         opened = r.opened, err = r.err, at = now(F) }
+    end
+  end
+  F.inspectedRev = (F.inspectedRev or 0) + 1
 end
 
 -- The known ores a job of turtle `id` should go for first, nearest its home,
@@ -1509,7 +1656,7 @@ end
 local KNOWN_MAX = 64
 local KNOWN_BELOW = 8 -- known ores this far below the home at least (never up through the base)
 local function knownFor(F, id, job)
-  if job.scout then return nil end -- (it maps; it digs nothing)
+  if job.scout or job.inspect then return nil end -- (it maps / reads; it digs nothing)
   local h = homeOf(F, id)
   if not h then return nil end
   local max = job.quantity and math.min(KNOWN_MAX, job.quantity * 2) or KNOWN_MAX
@@ -1549,9 +1696,12 @@ function M.handle(F, from, msg)
                       seen = now(F), version = msg.version,
                       delivered = msg.total or prev.delivered,
                       inv = msg.inv or prev.inv, -- (the assembler's slots)
-                      chest = msg.chest or prev.chest } -- the chest it claimed itself
+                      chest = msg.chest or prev.chest, -- the chest it claimed itself
+                      -- (picked on the TURTLES tab: the base's, not the turtle's)
+                      accessories = prev.accessories, shear = prev.shear }
   local t = F.turtles[from]
   local reply = { type = "ok" }
+  if msg.inspected then M.storeInspected(F, from, msg.inspected) end
   if msg.state ~= "supply" then -- it has taken its delivery: its chest may be emptied
     for chest, h in pairs(F.held or {}) do if h.by == from then F.held[chest] = nil end end
   end
@@ -1643,10 +1793,17 @@ function M.handle(F, from, msg)
       if prevNoFuel and (msg.fuel or 0) <= prevNoFuel then
         t.noFuel = prevNoFuel -- still too little fuel: no job for it
       elseif msg.state == "idle" and #F.queue > 0 then
-        local job = table.remove(F.queue, 1)
-        t.job, t.mined, t.state = job, 0, "assigned"
-        F.note = ("%s took job: %s"):format(label(F, from), M.jobText(job))
-        reply = { type = "job", job = job, known = knownFor(F, from, job) }
+        -- the first job it can do (an inspect job needs a block reader and a home)
+        local pick
+        for i, j in ipairs(F.queue) do
+          if not j.inspect or (M.hasAccessory(F, from, "READER") and homeOf(F, from)) then pick = i; break end
+        end
+        if pick then
+          local job = table.remove(F.queue, pick)
+          t.job, t.mined, t.state = job, 0, "assigned"
+          F.note = ("%s took job: %s"):format(label(F, from), M.jobText(job))
+          reply = { type = "job", job = job, known = knownFor(F, from, job), inspect = inspectFor(F, from, job) }
+        end
       end
     elseif F.stopFor[from] then
       F.stopFor[from] = nil

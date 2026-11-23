@@ -650,7 +650,8 @@ end
 -- -------------------------------------------------------------- base link --
 local function status()
   -- (lanesDone: lanes finished; the base records what a scout job covered)
-  return { job = S and S.job, mined = S and S.mined or 0, map = pending(), lanesDone = S and S.lane or nil }
+  return { job = S and S.job, mined = S and S.mined or 0, map = pending(), lanesDone = S and S.lane or nil,
+           inspected = S and S.inspected or nil }
 end
 
 -- Report to the base (only at home). Code updates wait until the job is done.
@@ -814,8 +815,72 @@ local function detectHeading(journal)
   return nav.scanHeading(mayDig)
 end
 
+-- --------------------------------------------------------------- inspect --
+-- What the block reader says about a block, cut to what the base shows:
+-- a spawner's mob (and its effects), a boss spawner's boss, a chest's loot
+-- table (which says what structure it is in) and whether it was opened
+-- (Lootr). AP's getBlockData is the block entity's NBT as Lua (bytes as
+-- numbers).
+local function summarize(t, name, d)
+  local out = { x = t.x, y = t.y, z = t.z, name = name or t.name }
+  if type(d) ~= "table" then return out end
+  local sd = type(d.SpawnData) == "table" and d.SpawnData.entity
+  if type(sd) == "table" and sd.id then
+    out.mob = sd.id
+    local fx = {}
+    for _, e in ipairs(type(sd.active_effects) == "table" and sd.active_effects or {}) do
+      if e.id then fx[#fx + 1] = tostring(e.id):gsub("^minecraft:", "") .. " " .. ((tonumber(e.amplifier) or 0) + 1) end
+    end
+    if #fx > 0 then out.effects = table.concat(fx, ", ") end
+  end
+  if d.boss_item then out.boss = (d.boss_item == "empty:empty") and "random" or tostring(d.boss_item) end
+  if d.LootTable then out.loot = tostring(d.LootTable) end
+  if d.LootrHasBeenOpened ~= nil then out.opened = d.LootrHasBeenOpened == true or d.LootrHasBeenOpened == 1 end
+  return out
+end
+
+-- Stand next to it (one of its four sides: the reader reads what is in
+-- front), face it, read it with the block reader swapped in for the call.
+local function inspectOne(t)
+  local sides = {}
+  for h = 0, 3 do
+    local d = DIRS[h]
+    local at = { x = t.x - d[1], y = t.y, z = t.z - d[3] }
+    sides[#sides + 1] = { h = h, at = at, d = dist(S.pos, at) }
+  end
+  table.sort(sides, function(a, b) return a.d < b.d end)
+  for _, sd in ipairs(sides) do
+    if goTo(sd.at) then
+      turnTo(sd.h)
+      local res = link.withTool("block_reader", function(p)
+        return { name = p.getBlockName and p.getBlockName() or nil, data = p.getBlockData and p.getBlockData() or nil }
+      end)
+      if not res then return { x = t.x, y = t.y, z = t.z, name = t.name, err = "no block reader" } end
+      local info = summarize(t, res.name, res.data)
+      log(("Inspected %s at %s: %s"):format(tostring(info.name), key(t.x, t.y, t.z),
+        tostring(info.mob or info.loot or info.boss or "nothing to read")))
+      return info
+    end
+  end
+  return { x = t.x, y = t.y, z = t.z, name = t.name, err = "can't get next to it" }
+end
+
+local function inspectAll()
+  while S.inspectAt <= #S.inspect do
+    local why = needHome()
+    if why then serviceTrip(why) end
+    if finished() then return end
+    S.inspected[#S.inspected + 1] = inspectOne(S.inspect[S.inspectAt])
+    S.inspectAt = S.inspectAt + 1
+    save()
+  end
+end
+
 local function run()
-  if not S.scout then mineKnown() end
+  if S.inspect then
+    inspectAll()
+    S.lane = S.lanes -- (no lanes: done when every block is read)
+  elseif not S.scout then mineKnown() end
   while S.lane < S.lanes and not finished() do
     while S.progress <= S.length and not finished() do
       local why = needHome()
@@ -858,10 +923,12 @@ end
 
 -- A job: { only = "diamond" | nil, y = <absolute Y> | nil, quantity = n | nil,
 --          lanes = n | nil, length = n | nil, sector = first lane | nil, id = n | nil }
-local function newJob(job, home, known)
+local function newJob(job, home, known, inspect)
   TRAIL, TRAIL_AT = {}, {}
   S = { pos = { x = 0, y = 0, z = 0 }, heading = home.heading, homeHeading = home.heading,
         known = known or {},
+        -- an inspect job: the blocks to read (from its home), what it read
+        inspect = inspect, inspected = inspect and {} or nil, inspectAt = inspect and 1 or nil,
         lane = 0, progress = 0, lanes = job.lanes or CFG.lanes, length = job.length or CFG.length,
         dy = job.y and math.max(math.min(job.y - home.y, -CFG.minDepth), CFG.floorY - home.y) or 0,
         only = job.only, quantity = job.quantity,
@@ -872,7 +939,9 @@ local function newJob(job, home, known)
   elseif job.y and job.y - home.y > -CFG.minDepth then
     log(("Y %d is not below home (Y %d): mining at Y %d instead"):format(job.y, home.y, home.y + S.dy))
   end
-  if job.scout then
+  if inspect then
+    log(("Job: inspect %d block(s) with the block reader."):format(#inspect))
+  elseif job.scout then
     log(("Job: scout at %s, %d lane(s) of %d: scans every %d, mines nothing."):format(
       job.y and ("Y " .. job.y) or "this level", S.lanes, S.length, CFG.spacing))
   else
@@ -980,14 +1049,19 @@ elseif args[1] == "serve" then
       local j = reply.job
       -- rough fuel for the job: shaft both ways plus the furthest lane and back
       local reach = ((j.sector or 0) + (j.lanes or CFG.lanes)) * CFG.spacing + (j.length or CFG.length)
-      local needFuel = 2 * (math.abs((j.y or home.y) - home.y) + reach) + CFG.fuelMargin
+      local jy = j.y or home.y
+      if reply.inspect then -- (an inspect job: the furthest block, there and back)
+        reach, jy = 0, home.y
+        for _, t in ipairs(reply.inspect) do reach = math.max(reach, math.abs(t.x) + math.abs(t.y) + math.abs(t.z) + 2) end
+      end
+      local needFuel = 2 * (math.abs(jy - home.y) + reach) + CFG.fuelMargin
       fuelUp(needFuel + CFG.fuelMargin)
       if turtle.getFuelLevel() ~= "unlimited" and turtle.getFuelLevel() < needFuel then
         log(("Need about %d fuel for that job, have %d: handing it back"):format(needFuel, turtle.getFuelLevel()))
         link.talk("no fuel", { job = j, need = needFuel }, false)
         sleep(30)
       else
-        newJob(j, home, reply.known)
+        newJob(reply.job, home, reply.known, reply.inspect)
         run()
         reportDone()
       end

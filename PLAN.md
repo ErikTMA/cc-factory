@@ -87,6 +87,18 @@ over rednet. Friends-only server: base-ID pinning, no signing.
   and `dim:` would need a `:` in its value (left out). Xaero's
   `xaero-waypoint:` form is read too. The Chat Box's `[cc-factory]` prefix
   doesn't match (no key:value).
+- Block Reader (AP 0.8.2a, `BlockReaderPeripheral`, type `block_reader`, item
+  `advancedperipherals:block_reader`, also a turtle upgrade
+  `block_reader_turtle`): `getBlockName()`, `getBlockState()`,
+  `getBlockData()` (the block entity's NBT), `hasBlockEntity()` of the block
+  at `owner.getFacing()`: in FRONT of a turtle only. Recipe: iron ingots,
+  redstone blocks, a wired modem (full), a peripheral casing and an observer
+  (nether quartz): crafted by hand. Live data: a spawner's
+  `SpawnData.entity.id` (+ `active_effects`), an Apotheosis boss spawner's
+  `boss_item` (`empty:empty` = a random boss), a Lootr chest's `LootTable`
+  (names the structure: `repurposed_structures:chests/dungeons/deep`,
+  `minecraft:chests/simple_dungeon`, `apotheosis:chests/spawner_swarm`,
+  `artifacts:chests/campsite_chest`) and `LootrHasBeenOpened` (0b/1b).
 - Chat Box `sendMessage(text, { prefix, brackets, bracketsColor, range,
   player })` (AP 0.8.2a, `ChatBoxPeripheral`): `range` limits it to players
   that near the Chat Box (a monitor tap doesn't tell who tapped).

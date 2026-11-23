@@ -39,7 +39,8 @@ local SWAPPABLE_TYPE = { geo_scanner = true, geoScanner = true, compass = true,
 -- a tool's item, by the peripheral type it gives
 local TOOL_ITEM = { geo_scanner = { [C.SCANNER_ITEM] = true }, compass = { ["minecraft:compass"] = true },
                     environment_detector = { [C.DETECTOR_ITEM] = true }, modem = C.MODEM_ITEMS,
-                    weak_automata = { [C.AUTOMATA_ITEM] = true } }
+                    weak_automata = { [C.AUTOMATA_ITEM] = true },
+                    block_reader = { [C.READER_ITEM] = true } }
 
 local EQUIP = { left = turtle.equipLeft, right = turtle.equipRight }
 
@@ -137,7 +138,7 @@ function L.restoreUpgrade()
   local side
   for _, s in ipairs({ "left", "right" }) do
     local t = peripheral.getType(s)
-    if t == "modem" or t == "environment_detector" or t == "weak_automata" then side = s end
+    if t == "modem" or t == "environment_detector" or t == "weak_automata" or t == "block_reader" then side = s end
   end
   local slot = L.findItem(function(n) return HOME_ITEMS[n] end)
   if side and slot then
