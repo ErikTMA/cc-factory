@@ -2395,6 +2395,16 @@ do
   F.map, F.inspected, F.findsCache = keepMap, keepIns, nil
 end
 
+print("scenario: the floor, asked of the world: scout levels from the highest bedrock a miner found")
+do
+  local keep = F.floorY
+  F.floorY = nil
+  check(table.concat(factory.scoutLevels(F), " ") == "-51 -35 -19 -3 13 29 45", "no floor known: the overworld's levels")
+  F.floorY = 4 -- (the Nether's)
+  check(table.concat(factory.scoutLevels(F), " ") == "13 29 45 61 77 93 109", "the Nether's floor: 13 .. 109, under its roof")
+  F.floorY = keep
+end
+
 print("scenario: INSPECT UNKNOWN: a miner with a block reader reads spawners and chests; FINDS shows what it read")
 do
   local oremap = baseEnv.require("oremap")
@@ -2455,8 +2465,9 @@ do
   F.map = oremap.new()
   -- the map is in the base's frame (relative to the build spot); world Y is
   -- the build spot's Y plus that (live: a job went to Y -139 below bedrock)
-  local keepBuildY, keepSpot = F.cfg.build.y, F.buildSpot
+  local keepBuildY, keepSpot, keepFloor = F.cfg.build.y, F.buildSpot, F.floorY
   F.cfg.build.y, F.buildSpot = 70, { x = 0, y = 0, z = 0 }
+  F.floorY = nil -- (the overworld's levels: the whole-factory run found its own shallow sim floor)
   F.oreSummaryCache = nil
   -- what miners reported: iron as two block kinds, gold, one amethyst (not an ore)
   local ores = {}
@@ -2505,7 +2516,7 @@ do
   -- MINE still starts in area 1 (its ores are still in the ground)
   F.mineAuto, F.scoutAuto, F.minedLanes = nil, nil, nil
   F.scouted = {}
-  for _, y in ipairs(factory.SCOUT_LEVELS) do F.scouted[y .. "|0"] = { [0] = true, [1] = true, [2] = true, [3] = true } end
+  for _, y in ipairs(factory.scoutLevels(F)) do F.scouted[y .. "|0"] = { [0] = true, [1] = true, [2] = true, [3] = true } end
   factory.toggleAutoMine(F)
   local qa = #F.queue
   factory.tick(F)
@@ -2630,7 +2641,7 @@ do
     "coverage map: Y -35 area 1 scouted (s), Y -51 under way (~), Y 45 not yet (.)")
   factory.toggleAutoScout(F)
   F.queue, F.scoutAuto, F.scouted = {}, nil, nil
-  F.cfg.build.y, F.buildSpot = keepBuildY, keepSpot
+  F.cfg.build.y, F.buildSpot, F.floorY = keepBuildY, keepSpot, keepFloor
   F.map = keepMap
   F.oreSummaryCache = nil
 end
@@ -2686,7 +2697,18 @@ do
       end
     end
   end
-  check(okJM, "every waypoint is one JourneyMap parses (no '-' in a name, no dim)")
+  check(okJM, "every waypoint is one JourneyMap parses (no '-' in a name)")
+  F.anchor.dim = "minecraft:the_nether"
+  local wd = factory.findWaypoint(F, sp)
+  -- JourneyMap: split on ",", each on ":"; 3 parts with "dim:" -> the dimension
+  local dimOk
+  for pair in (wd:match("^%[(.*)%]$") .. ","):gmatch("%s*([^,]+),") do
+    local parts = {}
+    for p in pair:gmatch("[^:]+") do parts[#parts + 1] = p end
+    if #parts == 3 and pair:find("dim:", 1, true) then dimOk = parts[2] .. ":" .. parts[3] end
+  end
+  check(dimOk == "minecraft:the_nether", "the waypoint carries the base's dimension: " .. wd)
+  F.anchor.dim = nil
   -- a scan that finds more: the view follows
   oremap.scan(F.map, { x = 0, y = -20, z = 0 }, 1, { { x = 0, y = -20, z = 1, name = "minecraft:trial_spawner" } })
   local again = factory.finds(F)

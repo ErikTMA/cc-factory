@@ -224,8 +224,9 @@ local function drawOres(UI, out, w, row, h)
   local last = math.min(cols, (factory.nextScoutArea(F) or cols) + 6)
   put(out, 1, row, ("covered, areas 1..%d (# mined  s scouted  + part  ~ busy  . not yet)"):format(last):sub(1, w), colors.lightGray)
   row = row + 1
-  for i = #factory.SCOUT_LEVELS, 1, -1 do
-    local y = factory.SCOUT_LEVELS[i]
+  local levels = factory.scoutLevels(F)
+  for i = #levels, 1, -1 do
+    local y = levels[i]
     local cells = {}
     for a = 0, last - 1 do cells[#cells + 1] = factory.scoutCell(F, a, y) end
     put(out, 1, row, ("Y%4d %s"):format(y, table.concat(cells)):sub(1, w), colors.white)
@@ -766,7 +767,8 @@ local function playerPos(user)
       if ok and type(p) == "table" then
         local pos = p.position or p.pos or p
         local x, y, z = pos.x or p.x, pos.y or p.y, pos.z or p.z
-        if x and y and z then return { x = x, y = y, z = z, yaw = p.yaw or pos.yaw or 0 } end
+        -- (AP 0.8.2a getPlayer: "dimension", LuaConverter, checked in the jar)
+        if x and y and z then return { x = x, y = y, z = z, yaw = p.yaw or pos.yaw or 0, dim = p.dimension } end
       end
     end
   end

@@ -46,6 +46,10 @@ local function newWorld(seed, startHeading, opts)
     elseif r < 0.02 then name = "minecraft:coal_ore"
     elseif r < 0.05 then name = "minecraft:cobblestone" end
     if y == YMIN then name = "minecraft:bedrock" end
+    -- a ragged floor, as the overworld's (bedrock from -64 up to -60)
+    if opts.raggedFloor and y > YMIN and y <= YMIN + 4 and math.random() < (5 - (y - YMIN)) / 5 then
+      name = "minecraft:bedrock"
+    end
     W.set(x, y, z, name)
   end end end
   -- start cell open, chest behind the turtle
@@ -989,13 +993,17 @@ do
   check(rec[0] and rec[1], "the base recorded both lanes as scouted at Y -20")
 end
 
-print("scenario: a job below the world's floor (live: Y -139 from a frame mix-up): the miner works at")
-print("          Y -58 instead, above bedrock, and comes home")
+print("scenario: a job below the world's floor (live: Y -139 from a frame mix-up): the miner finds the")
+print("          floor (bedrock, ragged) on its way down, works one above its highest block, tells the base")
 do
-  -- home at world Y 0 here; the world's floor (bedrock) at -60
-  local W = newWorld(41, 0, { span = 40, ymin = -60, ymax = 6 })
-  local minY = 0
+  -- home at world Y 0 here; bedrock from -60 up to -56, ragged
+  local W = newWorld(41, 0, { span = 40, ymin = -60, ymax = 6, raggedFloor = true })
+  local minY, top = 0, -60
+  for x = -8, 8 do for y = -60, -56 do for z = -8, 8 do
+    if W.get(x, y, z) == "minecraft:bedrock" and y > top then top = y end
+  end end end
   local B, fleet = runFleet(W, { { x = 0, z = 0, h = 0 } }, function(Base, B)
+    B.cfg.build = { y = 0 }
     table.insert(B.homes, { id = 1, x = 0, y = 0, z = 0, facing = "north", role = "miner", owner = 101 })
     Base.queueJob(B, { only = "iron", y = -139, quantity = 2, lanes = 1, length = 16 })
   end, { onTick = function(_, _, fl)
@@ -1005,8 +1013,10 @@ do
   local f = fleet[1]
   check(not f.err, "ran without error: " .. tostring(f.err))
   local st = f.files["oreminer.state"] and load("return " .. f.files["oreminer.state"])()
-  check(st and st.dy == -58, "it worked at Y -58 (dy " .. tostring(st and st.dy) .. ")")
-  check(minY > -60, "never into the bedrock floor (it may dig an ore it sees just below): lowest " .. minY)
+  check(st and st.floor == top and st.dy == top + 1,
+    ("it worked one above the floor's highest bedrock in reach (%d): dy %s, floor %s"):format(top, tostring(st and st.dy), tostring(st and st.floor)))
+  check((W.dug or {})["minecraft:bedrock"] == nil, "no bedrock dug")
+  check(B.floorY == top, "the base knows the floor: " .. tostring(B.floorY))
   check(st and st.done and st.pos.x == 0 and st.pos.y == 0 and st.pos.z == 0, "done and back home")
 end
 

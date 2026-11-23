@@ -25,7 +25,7 @@ M.QTY = { 8, 16, 32, 64, 128, 256, 0 } -- job sizes on the monitor; 0 = no limit
 local PERSIST = { "turtles", "queue", "nextJobId", "nextSector", "totals", "counted", "toolWants",
                   "orders", "nextOrderId", "homes", "nextHomeId", "buildSpot", "gpsWanted", "anchor", "ruleJobs", "lastFail", "failStreak",
                   "hammer", "tinyFuel", "craft", "nextCraftId", "crafted",
-                  "saplings", "boneMeal", "dismantle", "scoutAuto", "scouted", "mineAuto", "minedLanes", "inspected" }
+                  "saplings", "boneMeal", "dismantle", "scoutAuto", "scouted", "mineAuto", "minedLanes", "inspected", "floorY" }
 
 local CRAFT_PAUSE = 60      -- seconds without craft jobs after one failed
 
@@ -226,7 +226,8 @@ function M.chatCommand(F, user, text, pos)
   local wx, wy, wz = math.floor(pos.x), math.floor(pos.y), math.floor(pos.z)
   if cmd == "build" then
     local b = F.buildSpot or { x = 0, y = 0, z = 0 }
-    F.anchor = { wx = wx - b.x, wy = wy - b.y, wz = wz - b.z } -- world position of home-frame (0,0,0)
+    F.anchor = { wx = wx - b.x, wy = wy - b.y, wz = wz - b.z, -- world position of home-frame (0,0,0)
+                 dim = pos.dim } -- (and its dimension: the Player Detector says)
     F.cfg.build.y = wy
     return ("build spot set at %d %d %d"):format(wx, wy, wz)
   elseif cmd == "home" then
@@ -367,7 +368,17 @@ end
 -- What was scouted: F.scouted["<y>|<along>"] = { [lane] = true }, from what
 -- each scout job reports done (lanes finished); a job cut short leaves its
 -- other lanes for the next one. F.scoutAuto = { on }.
-M.SCOUT_LEVELS = { -51, -35, -19, -3, 13, 29, 45 }
+-- The levels: from the world's floor up, every 16. The floor is asked of
+-- the world: the highest bedrock top a miner found on its way down
+-- (F.floorY, world Y; oreminer settleLevel); until one did, the overworld's
+-- (-60: levels -51 .. 45). Any dimension: the Nether's (~4) gives 13 .. 109.
+local DEFAULT_FLOOR = -60
+function M.scoutLevels(F)
+  local first, out = ((F and F.floorY) or DEFAULT_FLOOR) + 9, {}
+  for i = 0, 6 do out[#out + 1] = first + 16 * i end
+  return out
+end
+M.SCOUT_LEVELS = M.scoutLevels(nil) -- (the overworld's, before any floor is known)
 M.SCOUT_MAX_AREAS = 60
 local function across(F) return math.max(1, math.floor((F.cfg.job.maxLanes or 24) / M.SCOUT_LANES)) end
 local function scoutArea(F, area)
@@ -450,7 +461,7 @@ end
 -- the first area with something still to do (at any level)
 function M.nextScoutArea(F)
   for area = 0, M.SCOUT_MAX_AREAS - 1 do
-    for _, y in ipairs(M.SCOUT_LEVELS) do
+    for _, y in ipairs(M.scoutLevels(F)) do
       for _, x in ipairs((laneStates(F, area, y, false))) do if x == "todo" then return area end end
     end
   end
@@ -460,7 +471,7 @@ function M.scoutAllLevels(F)
   local area = M.nextScoutArea(F)
   if not area then F.note = "Everything within reach is scouted"; return end
   local n = 0
-  for _, y in ipairs(M.SCOUT_LEVELS) do if scoutGap(F, area, y) then n = n + 1 end end
+  for _, y in ipairs(M.scoutLevels(F)) do if scoutGap(F, area, y) then n = n + 1 end end
   F.note = ("Queued scouting area %d at %d levels (%d in queue)"):format(area + 1, n, #F.queue)
 end
 function M.toggleAutoScout(F)
@@ -473,7 +484,7 @@ end
 -- queued meanwhile go after it
 local function autoArea(F, mine)
   for area = 0, M.SCOUT_MAX_AREAS - 1 do
-    for _, y in ipairs(M.SCOUT_LEVELS) do
+    for _, y in ipairs(M.scoutLevels(F)) do
       if scoutGap(F, area, y, mine) then return end
     end
   end
@@ -1664,6 +1675,12 @@ function M.findWaypoint(F, f)
   table.sort(mobs)
   if #mobs > 0 then what = what .. " " .. table.concat(mobs, " ") end
   local name = (what .. " " .. f.n):gsub("[^%w ]", " "):gsub("  +", " ")
+  -- (JourneyMap 6.0.9 splits each "key:value" on ":"; three parts with
+  -- "dim:" are put back together as the dimension: dim:minecraft:the_nether)
+  local dim = F.anchor and F.anchor.dim
+  if type(dim) == "string" and dim:match("^[%w_]+:[%w_/]+$") then
+    return ('[name:"%s", x:%d, y:%d, z:%d, dim:%s]'):format(name, f.wx, f.wy, f.wz, dim)
+  end
   return ('[name:"%s", x:%d, y:%d, z:%d]'):format(name, f.wx, f.wy, f.wz)
 end
 
@@ -1800,6 +1817,15 @@ function M.handle(F, from, msg)
   local t = F.turtles[from]
   local reply = { type = "ok" }
   if msg.inspected then M.storeInspected(F, from, msg.inspected) end
+  if type(msg.floor) == "number" then
+    -- a miner found the floor (bedrock top, from its home): in world Y; the
+    -- highest seen (a floor is ragged)
+    local h = homeOf(F, from)
+    if h then
+      local wy = absY(F, h.y + msg.floor)
+      if not F.floorY or wy > F.floorY then F.floorY = wy end
+    end
+  end
   if msg.state ~= "supply" then -- it has taken its delivery: its chest may be emptied
     for chest, h in pairs(F.held or {}) do if h.by == from then F.held[chest] = nil end end
   end

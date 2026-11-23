@@ -113,6 +113,18 @@ over rednet. Friends-only server: base-ID pinning, no signing.
   `suspicious_dusted_gravel`. (Chipped's `suspicious_*` trapdoors/pumpkins
   and SecurityCraft's `suspicious_*_mine` are not brushable loot: the mines
   are why miners never dig `suspicious_` anything.)
+- Player Detector `getPlayer(name)` (AP 0.8.2a, `LuaConverter` entity
+  context) includes `dimension` ("minecraft:overworld", ...): `$build`
+  records it; FINDS waypoints carry it as `dim:` (JourneyMap splits each pair
+  on ":" and puts a 3-part one with "dim:" back together).
+- Dimensions on this server (dimension / dimension_type JSONs in the jars;
+  overworld -64..319, Nether 0..127 under a bedrock roof are built in): End
+  and Aether 0..255 (no bedrock floor), Twilight Forest -32..255, Undergarden
+  -64..127 (ceiling), Deeper Darker otherside 0..127 (ceiling), Bumblezone
+  0..255 (ceiling), Allthemodium the_other -64..447, mining / the_beyond, Ad
+  Astra planets, Eternal Starlight, Dread Land -64..319. No floor Y is
+  assumed anywhere: a miner finds bedrock on its way down (and the floor is
+  ragged: one above the highest bedrock its scan sees).
 - Turtles can't cross dimensions (a block doesn't go through a portal) and
   no modem reaches across them (the ender modem: same dimension): a Nether
   or End fleet needs its own base there.

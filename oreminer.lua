@@ -42,7 +42,7 @@ local CFG = {
   trailFile = "oreminer.trail", -- the way it came (its way out, whatever the planner finds)
   askFuelBelow = 1000, -- at home, ask the base for fuel below this
   minDepth = 16,       -- a job's level is at least this far below home (never up through the base)
-  floorY = -58,        -- never below this world Y (bedrock is -64 .. -60): a deeper job is lifted
+  -- (no floor Y: bedrock is found on the way down, whatever the dimension: settleLevel)
   mapEvery = 3,        -- out on a job: send the base its scans every this many (wireless modem)
   stateFile = "oreminer.state",
   mapFile = "oremap.pending", -- what it saw and dug, until the base has it
@@ -652,7 +652,7 @@ end
 local function status()
   -- (lanesDone: lanes finished; the base records what a scout job covered)
   return { job = S and S.job, mined = S and S.mined or 0, map = pending(), lanesDone = S and S.lane or nil,
-           inspected = S and S.inspected or nil }
+           inspected = S and S.inspected or nil, floor = S and S.floor or nil }
 end
 
 -- Report to the base (only at home). Code updates wait until the job is done.
@@ -877,7 +877,39 @@ local function inspectAll()
   end
 end
 
+-- The world's floor, asked of the world: down its shaft to the job's level;
+-- bedrock (or the bottom of the world) before it, and the level is one above
+-- the HIGHEST bedrock the scanner sees around (a floor is ragged: the
+-- overworld's from Y -64 to -60), so lanes run clear of it. Any dimension:
+-- no floor Y is assumed. S.floor: that bedrock top, from home (reported).
+local function settleLevel()
+  if S.settled or S.inspect or S.dy >= 0 then return end
+  goTo({ x = 0, y = math.max(S.pos.y, -1), z = 0 }) -- (into its shaft)
+  while S.pos.y > S.dy do
+    if not step("down") then break end
+  end
+  if S.pos.y > S.dy then
+    local ok, below = turtle.inspectDown()
+    if ok and below.name ~= "minecraft:bedrock" then
+      S.settled = true -- (something else it may not dig: the way down goes round it)
+      save()
+      return
+    end
+    local top = S.pos.y - 1 -- (the bedrock below, or the bottom of the world)
+    local okScan, blocks = pcall(scan)
+    for _, b in ipairs(okScan and type(blocks) == "table" and blocks or {}) do
+      if b.name == "minecraft:bedrock" then top = math.max(top, S.pos.y + math.floor(b.y + 0.5)) end
+    end
+    S.floor = top
+    S.dy = math.min(top + 1, -CFG.minDepth)
+    log(("Bedrock below: the floor's top is %d from home; working %d down instead"):format(top, -S.dy))
+  end
+  S.settled = true
+  save()
+end
+
 local function run()
+  settleLevel()
   if S.inspect then
     inspectAll()
     S.lane = S.lanes -- (no lanes: done when every block is read)
@@ -931,13 +963,11 @@ local function newJob(job, home, known, inspect)
         -- an inspect job: the blocks to read (from its home), what it read
         inspect = inspect, inspected = inspect and {} or nil, inspectAt = inspect and 1 or nil,
         lane = 0, progress = 0, lanes = job.lanes or CFG.lanes, length = job.length or CFG.length,
-        dy = job.y and math.max(math.min(job.y - home.y, -CFG.minDepth), CFG.floorY - home.y) or 0,
+        dy = job.y and math.min(job.y - home.y, -CFG.minDepth) or 0,
         only = job.only, quantity = job.quantity,
         sector = job.sector or 0, along = job.along or 0, mined = 0, job = job, scout = job.scout or nil }
   save()
-  if job.y and job.y < CFG.floorY then
-    log(("Y %d is below the world's floor: mining at Y %d instead"):format(job.y, home.y + S.dy))
-  elseif job.y and job.y - home.y > -CFG.minDepth then
+  if job.y and job.y - home.y > -CFG.minDepth then
     log(("Y %d is not below home (Y %d): mining at Y %d instead"):format(job.y, home.y, home.y + S.dy))
   end
   if inspect then
@@ -966,12 +996,6 @@ local function resumeUnfinished()
   if s and not s.done then
     S = s
     S.dy, S.mined, S.lanes, S.length = S.dy or 0, S.mined or 0, S.lanes or CFG.lanes, S.length or CFG.length
-    -- (a job saved before the floor existed: lifted too)
-    local home = readFile(CFG.homeFile)
-    if home and home.y and S.dy < CFG.floorY - home.y then
-      S.dy = CFG.floorY - home.y
-      log(("Job level below the world's floor: Y %d instead"):format(CFG.floorY))
-    end
     -- settle a move that was in flight when it stopped, and re-measure the
     -- heading: a turn may have happened without being saved
     tmove.recover(S, save, applyMove)
