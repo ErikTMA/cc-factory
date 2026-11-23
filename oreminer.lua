@@ -609,7 +609,13 @@ end
 
 local talk -- defined in the base link section below
 
-local function unload()
+-- The tools a job brought (job.tools: an inspect job's block reader): kept
+-- through its trips home, given back with the last unload (`final`).
+local TOOL_TYPE = { [C.READER_ITEM] = "block_reader" }
+
+-- final: the job's last unload: the tools it brought go back too
+local function unload(final)
+  if final then link.holdTools(nil) end
   turnTo((S.homeHeading + 2) % 4) -- chest is behind the start position
   -- never empty the inventory anywhere but into the home chest
   local ok, b = turtle.inspect()
@@ -909,6 +915,7 @@ local function settleLevel()
 end
 
 local function run()
+  link.holdTools(S.job and S.job.tools) -- (also after a restart mid-job)
   settleLevel()
   if S.inspect then
     inspectAll()
@@ -947,7 +954,7 @@ local function run()
     save()
   end
   if not goHome() then error("Cannot reach home (" .. nav.surroundings() .. ")", 0) end
-  unload()
+  unload(true) -- (the job's tools go back too)
   turnTo(S.homeHeading)
   S.done = true
   save()
@@ -1081,9 +1088,25 @@ elseif args[1] == "serve" then
       end
       local needFuel = 2 * (math.abs(jy - home.y) + reach) + CFG.fuelMargin
       fuelUp(needFuel + CFG.fuelMargin)
+      -- the tools the job needs (an inspect job: a block reader), from the base
+      local missing = {}
+      local function lacking()
+        missing = {}
+        for _, t in ipairs(j.tools or {}) do
+          if not link.findItem(function(n) return n == t end) and not link.equippedSide(TOOL_TYPE[t] or "") then
+            missing[#missing + 1] = t
+          end
+        end
+        return #missing > 0
+      end
+      if lacking() then link.supply({ tools = missing }) end
       if turtle.getFuelLevel() ~= "unlimited" and turtle.getFuelLevel() < needFuel then
         log(("Need about %d fuel for that job, have %d: handing it back"):format(needFuel, turtle.getFuelLevel()))
         link.talk("no fuel", { job = j, need = needFuel }, false)
+        sleep(30)
+      elseif lacking() then
+        log("The base had no " .. table.concat(missing, ", ") .. " for that job: handing it back")
+        link.talk("no tool", { job = j, need = missing }, false)
         sleep(30)
       else
         newJob(reply.job, home, reply.known, reply.inspect)

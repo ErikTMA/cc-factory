@@ -104,7 +104,17 @@ local adjacentModem -- (below)
 -- to carry (agent.cfg `accessories`, from the last supply answer). One it is
 -- no longer meant to carry goes into the chest with the rest. Never told
 -- (an older turtle): everything as before.
+-- The tools a job brought (an inspect job's block reader): kept while the
+-- job runs, whatever drops items (unload, the chest marker, a supply);
+-- L.holdTools(nil) gives them up (its last unload).
+local HELD = {}
+function L.holdTools(list)
+  HELD = {}
+  for _, t in ipairs(list or {}) do HELD[t] = true end
+end
+
 function L.isKeptItem(name)
+  if HELD[name] then return true end
   if C.ACCESSORY_ITEMS[name] then
     -- (a modem it talks through: no wired modem at its home: always kept,
     -- or it couldn't even ask for it back)

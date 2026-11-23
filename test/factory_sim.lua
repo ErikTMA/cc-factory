@@ -2405,7 +2405,8 @@ do
   F.floorY = keep
 end
 
-print("scenario: INSPECT UNKNOWN: a miner with a block reader reads spawners and chests; FINDS shows what it read")
+print("scenario: INSPECT UNKNOWN: any miner reads spawners and chests with a block reader the job brings")
+print("          (from storage, else crafted first); FINDS shows what it read")
 do
   local oremap = baseEnv.require("oremap")
   local keepMap, keepAnchor, keepQueue = F.map, F.anchor, F.queue
@@ -2421,17 +2422,26 @@ do
   table.insert(F.homes, { id = 7002, x = 4, y = 0, z = 0, facing = "north", role = "miner", source = "cfg", owner = 301 })
   F.turtles[300] = { id = 300, role = "miner", state = "idle", label = "m-300" }
   F.turtles[301] = { id = 301, role = "miner", state = "idle", label = "m-301" }
-  check(factory.inspectUnknown(F) == nil and F.note:find("READER"), "no miner with a block reader: says so: " .. F.note)
-  F.selected = 300
-  factory.toggleAccessory(F, "READER")
-  F.selected = nil
+  local READER = "advancedperipherals:block_reader"
+  F.toolWants = nil
+  F.deps.storage.forget()
   local job = factory.inspectUnknown(F)
   check(job and #job.inspect == 3 and job.inspect[1].name == "minecraft:spawner" and job.inspect[3].name == "apotheosis:boss_spawner",
-    "queued: the 3 readable blocks, nearest first (not the geode)")
+    "queued: the 3 readable blocks, nearest first (not the geode), no READER picked anywhere")
+  check(job.tools and job.tools[1] == READER, "the job brings a block reader")
+  check(F.toolWants and F.toolWants[READER] and F.note:find("crafting"), "none in storage: one is crafted first: " .. F.note)
   check(factory.inspectUnknown(F) == nil and F.note:find("Nothing left"), "asked again: they're in a job already")
   local r1 = factory.handle(F, 301, { type = "status", state = "idle", role = "miner", label = "m-301", fuel = 9000 })
-  check(r1.type ~= "job", "a miner without a block reader doesn't take it")
+  check(r1.type ~= "job", "no block reader anywhere yet: no miner takes it")
+  -- the reader is made (or put in storage): the next idle miner takes the job
+  W.inv["minecraft:barrel_1"].insert(READER, 1)
+  F.deps.storage.forget()
   local r0 = factory.handle(F, 300, { type = "status", state = "idle", role = "miner", label = "m-300", fuel = 9000 })
+  check(r0.type == "job" and r0.job.tools and r0.job.tools[1] == READER, "a reader in storage: the job goes out, with its tool list")
+  -- a miner that couldn't get it after all hands it back: the front of the queue
+  factory.handle(F, 300, { type = "status", state = "no tool", role = "miner", label = "m-300", job = r0.job, need = { READER } })
+  check(F.queue[1] == r0.job and F.turtles[300].job == nil, "handed back ('no tool'): first in the queue again")
+  r0 = factory.handle(F, 300, { type = "status", state = "idle", role = "miner", label = "m-300", fuel = 9000 })
   check(r0.type == "job" and r0.inspect and r0.inspect[1].x == 8 and r0.inspect[1].y == -20 and r0.inspect[1].z == 10,
     "the miner with one takes it, blocks in its own frame (from its home 2,0,0)")
   check(factory.jobText(r0.job) == "inspect 3 blocks", "job text: " .. factory.jobText(r0.job))
@@ -2454,6 +2464,9 @@ do
   check(unknown == 0, "nothing unknown left: " .. unknown)
   check(F.turtles[300].job == nil, "(done: idle means idle)")
   for _, id in ipairs({ 300, 301 }) do F.turtles[id] = nil end
+  for q, st in pairs(W.inv["minecraft:barrel_1"].slots) do if st.name == READER then W.inv["minecraft:barrel_1"].slots[q] = nil end end
+  F.deps.storage.forget()
+  F.toolWants = nil
   for i = #F.homes, 1, -1 do if F.homes[i].id == 7001 or F.homes[i].id == 7002 then table.remove(F.homes, i) end end
   F.map, F.anchor, F.queue, F.findsCache, F.inspected = keepMap, keepAnchor, keepQueue, nil, nil
 end

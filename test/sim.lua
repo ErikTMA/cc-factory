@@ -841,7 +841,8 @@ do
   check(text:find("T1") and text:find("T2") and text:find("T3"), "monitor lists all three turtles")
 end
 
-print("scenario: INSPECT: a miner with a block reader goes to each spawner / chest, faces it, reads it;")
+print("scenario: INSPECT: a miner (nothing picked for it) takes the job with the block reader it brings,")
+print("          goes to each spawner / chest, faces it, reads it, gives the reader back at the end;")
 print("          the base gets the mob, the loot table and whether it was opened")
 do
   local W = newWorld(21, 0, { span = 40, ymin = -30, ymax = 6 })
@@ -857,7 +858,7 @@ do
   local B, fleet = runFleet(W, homes, function(Base, B)
     B.anchor = { wx = 0, wy = 0, wz = 0 }
     table.insert(B.homes, { id = 1, x = 0, y = 0, z = 0, facing = "north", role = "miner", source = "cfg", owner = 101 })
-    B.turtles[101] = { id = 101, role = "miner", state = "idle", label = "T1", accessories = { READER = true } }
+    B.deps.storage.list()["advancedperipherals:block_reader"] = 1 -- (one in storage: the job may go out)
     oremap.scan(B.map, { x = 7, y = -10, z = 8 }, 8, {
       { x = 6, y = -10, z = 8, name = "minecraft:spawner" }, { x = 9, y = -10, z = 8, name = "lootr:lootr_chest" } })
     Base.inspectUnknown(B)
@@ -873,6 +874,9 @@ do
   check(f.T.x == 0 and f.T.y == 0 and f.T.z == 0, "back home")
   check(f.T.left == "advancedperipherals:geo_scanner" or f.T.right == "advancedperipherals:geo_scanner",
     "the scanner is back on (the reader was only swapped in to read)")
+  local carried = false
+  for i = 1, 16 do local it = f.T.inv[i]; if it and it.name == "advancedperipherals:block_reader" then carried = true end end
+  check(not carried and (W.chest["advancedperipherals:block_reader"] or 0) == 1, "the reader went back into its chest at the end")
 end
 
 print("scenario: a job above its home (coal's old Y 96 from a base at 77): it mines below home")

@@ -1722,21 +1722,35 @@ function M.inspectTargets(F)
   return out
 end
 
+-- A block reader for an inspect job: one in storage, or one a miner always
+-- carries (READER picked); none: the base crafts one (it has the recipe).
+local function readerInStorage(F)
+  local ok, stock = pcall(F.deps.storage.list)
+  return ok and type(stock) == "table" and (stock[C.READER_ITEM] or 0) > 0
+end
+local function canInspect(F, id)
+  if not homeOf(F, id) then return false end
+  return M.hasAccessory(F, id, "READER") or readerInStorage(F)
+end
+
 function M.inspectUnknown(F)
-  local reader = false
-  for id, t in pairs(F.turtles) do if t.role == "miner" and M.hasAccessory(F, id, "READER") then reader = true end end
-  if not reader then
-    F.note = "Pick READER (block reader) for a miner on the TURTLES tab first"
-    return nil
-  end
   local all = M.inspectTargets(F)
   if #all == 0 then F.note = "Nothing left to inspect"; return nil end
   local list = {}
   for i = 1, math.min(M.INSPECT_MAX, #all) do list[i] = all[i] end
-  local job = { inspect = list, lanes = 0, length = 0, id = F.nextJobId }
+  -- (the job brings its own block reader: fetched with its supply, given
+  -- back with its last unload)
+  local job = { inspect = list, tools = { C.READER_ITEM }, lanes = 0, length = 0, id = F.nextJobId }
   F.nextJobId = F.nextJobId + 1
   F.queue[#F.queue + 1] = job
-  F.note = ("Queued: inspect %d of %d unknown"):format(#list, #all)
+  local reader = readerInStorage(F)
+  for id in pairs(F.turtles) do if M.hasAccessory(F, id, "READER") then reader = true end end
+  if not reader and recipes.CRAFT[C.READER_ITEM] then
+    F.toolWants = F.toolWants or {}
+    F.toolWants[C.READER_ITEM] = true
+  end
+  F.note = ("Queued: inspect %d of %d unknown%s"):format(#list, #all,
+    reader and "" or " (crafting a block reader for it first)")
   return job
 end
 
@@ -1906,7 +1920,15 @@ function M.handle(F, from, msg)
       M.scoutDone(F, msg.job, msg.lanesDone) -- (scout or auto-mine: lanes covered)
       F.note = ("%s finished: %d %s"):format(label(F, from), msg.mined or 0, k)
     end
-    if msg.state == "no fuel" and msg.job then
+    if msg.state == "no tool" and msg.job then
+      -- it couldn't get the job's tools: back to the front, for when there are
+      table.insert(F.queue, 1, msg.job)
+      t.job = nil
+      for _, item in ipairs(msg.job.tools or {}) do
+        if recipes.CRAFT[item] then F.toolWants = F.toolWants or {}; F.toolWants[item] = true end
+      end
+      F.note = ("%s had no %s for its job: crafting one"):format(label(F, from), table.concat(msg.need or msg.job.tools or {}, ", "))
+    elseif msg.state == "no fuel" and msg.job then
       oremap.release(F.map, msg.job.id)
       table.insert(F.queue, 1, msg.job) -- back to the front for someone else
       t.noFuel, t.job = msg.fuel or 0, nil
@@ -1920,7 +1942,7 @@ function M.handle(F, from, msg)
         -- the first job it can do (an inspect job needs a block reader and a home)
         local pick
         for i, j in ipairs(F.queue) do
-          if not j.inspect or (M.hasAccessory(F, from, "READER") and homeOf(F, from)) then pick = i; break end
+          if not j.inspect or canInspect(F, from) then pick = i; break end
         end
         if pick then
           local job = table.remove(F.queue, pick)
