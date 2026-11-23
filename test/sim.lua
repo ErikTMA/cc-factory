@@ -489,6 +489,61 @@ do
   check(T.y >= hy - 3, ("it didn't wander off down a stale trail (ends at %d below home)"):format(hy - T.y))
 end
 
+print("scenario: stopped (chunk unloaded) in the middle of measuring its heading, twice:")
+print("          it is never left a block off (live miners 6 and 12 drifted 1 and 2 this way)")
+do
+  local W = newWorld(7, 1, { span = 40, ymin = -40, ymax = 6 })
+  local T, api, sc = newTurtle(W, 1, 0)
+  local hx, hy, hz = T.x, T.y, T.z
+  T.inv[1] = { name = "minecraft:coal", count = 64 }
+  local files = {}
+  local budget = 120
+  local realForward = api.forward
+  api.forward = function()
+    budget = budget - 1
+    if budget == 0 then error("CHUNK UNLOADED") end
+    return realForward()
+  end
+  runProgram(makeEnv(T, api, sc, files), "y=-20", "at=0", "lanes=2", "length=32")
+  api.forward = realForward
+  local st0 = load("return " .. files["oreminer.state"])()
+  local ex, ey, ez = T.x, T.y, T.z -- (where it is, and its file agrees)
+  -- twice: resumed, and stopped again right after the probe's step forward
+  -- (the scan before the step back takes up to 2 s)
+  for _ = 1, 2 do
+    -- (an unload halts the computer: nothing after it runs, a pcall
+    -- around the probe included)
+    local halted = false
+    local real = {}
+    for k, f in pairs(api) do
+      real[k] = f
+      api[k] = function(...) if halted then error("CHUNK UNLOADED") end return f(...) end
+    end
+    local realScan = sc.scanBlocks
+    local n = 0
+    sc.scanBlocks = function(r)
+      if halted then error("CHUNK UNLOADED") end
+      n = n + 1
+      if n == 2 then halted = true; error("CHUNK UNLOADED") end -- (the scan after the step)
+      return realScan(r)
+    end
+    local env = makeEnv(T, api, sc, files)
+    local realWrite = env.fs and env.fs.open
+    runProgram(env, "resume")
+    for k, f in pairs(real) do api[k] = f end
+    sc.scanBlocks = realScan
+    _ = realWrite
+  end
+  -- the third resume runs to the end: from where it really was
+  local st = load("return " .. files["oreminer.state"])()
+  check(st.probe ~= nil or (T.x == ex and T.y == ey and T.z == ez),
+    "(stopped mid-probe: the probe is in its state)")
+  runProgram(makeEnv(T, api, sc, files), "resume")
+  check(T.x == hx and T.y == hy and T.z == hz,
+    ("it ends at home, not a block or two off: off by %d,%d,%d"):format(T.x - hx, T.y - hy, T.z - hz))
+  _ = st0
+end
+
 print("scenario: its position drifted (the world says one block down and south of what its file says):")
 print("          it finds home with the scanner (chest behind, modem above), fixes its position and gets home (live miner-6)")
 do

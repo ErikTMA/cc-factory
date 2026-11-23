@@ -152,7 +152,7 @@ function T.toBuildSpot()
   refuel()
   st = readState() or { pos = { x = slot.x or slot.east or 0, y = slot.y or 0, z = slot.z or -(slot.north or 0) } }
   tmove.recover(st, save, apply)
-  st.heading = nav.heading(nil)
+  st.heading = nav.heading(nil, st, save)
   save()
   goTo({ x = 0, y = 0, z = 0 })
   fs.delete(STATE)
@@ -176,7 +176,7 @@ function T.toHomeSlot()
   st = readState() or { pos = { x = 0, y = 0, z = 0 } }
   tmove.recover(st, save, apply)
   -- turns are not journaled: measure the heading on every start
-  st.heading = nav.heading(nil) -- nil: never dig inside the base
+  st.heading = nav.heading(nil, st, save) -- nil: never dig inside the base
   save()
 
   -- slot: { x, y, z } from the build spot (older bases sent { east, north })

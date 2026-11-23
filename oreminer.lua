@@ -805,8 +805,13 @@ local function laneTarget(lane, progress)
   return { x = f[1] * along + r[1] * side, y = S.dy, z = f[3] * along + r[3] * side }
 end
 
-local function detectHeading()
-  return nav.scanHeading(function(name) return not isProtected(name) end)
+-- journal: on a resume, the probe is journaled in its state (a stop in the
+-- middle of it must not leave it a block off its saved position); a new job
+-- has no state on disk yet to journal into.
+local function detectHeading(journal)
+  local mayDig = function(name) return not isProtected(name) end
+  if journal then return nav.scanHeading(mayDig, S, save) end
+  return nav.scanHeading(mayDig)
 end
 
 local function run()
@@ -914,7 +919,7 @@ local function resumeUnfinished()
     else
       -- re-measured (a turn may not have been saved); boxed in sideways it
       -- can't be: then the saved heading (the way out may be up or down)
-      local ok, h = pcall(detectHeading)
+      local ok, h = pcall(detectHeading, true)
       if ok then S.heading = h
       else log("Keeping my saved heading: " .. tostring(h)) end
     end

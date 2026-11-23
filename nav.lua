@@ -5,6 +5,7 @@
 -- steps one block, scans again and sees which shift lines the scans up.
 
 local link = require("link")
+local tmove = require("tmove")
 
 local N = {}
 
@@ -62,9 +63,12 @@ function N.surroundings()
     okU and up.name or "nothing", okD and down.name or "nothing")
 end
 
-function N.scanHeading(mayDig)
+-- st, save: the caller's state, to journal the probe in (tmove.probeStart);
+-- its tmove.recover settles a probe a stop interrupted.
+function N.scanHeading(mayDig, st, save)
   local a = N.scan(8)
   local moved = false
+  tmove.probeStart(st, save)
   for _ = 1, 4 do
     moved = turtle.forward()
     if not moved and turtle.detect() and mayDig then
@@ -74,7 +78,10 @@ function N.scanHeading(mayDig)
     if moved then break end
     turtle.turnRight()
   end
-  if not moved then error("Need room to move 1 block in some direction to find my heading (" .. N.surroundings() .. ")", 0) end
+  if not moved then
+    tmove.probeDone(st, save)
+    error("Need room to move 1 block in some direction to find my heading (" .. N.surroundings() .. ")", 0)
+  end
   local b = {}
   for _, blk in ipairs(N.scan(8)) do b[key(blk.x, blk.y, blk.z)] = blk.name end
   local best, bestScore = nil, -1
@@ -87,20 +94,14 @@ function N.scanHeading(mayDig)
     end
     if score > bestScore then best, bestScore = h, score end
   end
-  -- step back to where we started; a mob behind us must not leave us 1 off
-  for _ = 1, 20 do
-    if turtle.back() then return best end
-    turtle.turnRight(); turtle.turnRight()
-    turtle.attack()
-    turtle.turnRight(); turtle.turnRight()
-    sleep(0.5)
-  end
+  -- step back to where we started
+  if tmove.stepBack() then tmove.probeDone(st, save); return best end
   error("Could not step back after measuring my heading", 0)
 end
 
 -- Compass if equipped, else the scanner method.
-function N.heading(mayDig)
-  return N.compass() or N.scanHeading(mayDig)
+function N.heading(mayDig, st, save)
+  return N.compass() or N.scanHeading(mayDig, st, save)
 end
 
 return N
